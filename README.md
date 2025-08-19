@@ -7,7 +7,8 @@ A fast Git repository synchronization tool. Automatically discovers all Git repo
 - 🔍 **Automatic Discovery**: Recursively finds all Git repositories
 - 🚀 **Smart Sync**: Pushes unpushed commits automatically
 - 📊 **Live Updates**: Real-time status with colored output
-- ⚡ **Parallel Processing**: Handles up to 3 repositories concurrently
+- ⚡ **Parallel Processing**: Handles up to 5 repositories concurrently
+- ⏱️ **Timeout Protection**: 3-minute timeout per repository prevents hanging
 - 🔒 **Secure**: Uses your existing Git authentication
 - 📦 **Portable**: Single binary with no dependencies
 

@@ -11,13 +11,16 @@ use std::time::Duration;
 use tokio::process::Command;
 use walkdir::WalkDir;
 
-// Constants for magic numbers and strings
-const DEFAULT_CONCURRENT_LIMIT: usize = 3;
+// Constants for magic numbers and strings  
+const DEFAULT_CONCURRENT_LIMIT: usize = 5; // Optimal for I/O-bound git operations
 const PROGRESS_TICK_INTERVAL_MS: u64 = 100;
 const DEFAULT_PROGRESS_BAR_LENGTH: u64 = 100;
 const DEFAULT_REPO_NAME: &str = "current";
 const UNKNOWN_REPO_NAME: &str = "unknown";
 const DETACHED_HEAD_BRANCH: &str = "HEAD";
+
+// Timeout constants
+const GIT_OPERATION_TIMEOUT_SECS: u64 = 180; // 3 minutes per repository
 
 // UI Constants
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -143,20 +146,31 @@ impl Status {
     }
 }
 
-/// Runs a git command in the specified directory
+/// Runs a git command in the specified directory with a timeout
 /// Returns (success, stdout, stderr)
 async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String)> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .output()
-        .await?;
+    let timeout_duration = Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS);
+    
+    let result = tokio::time::timeout(
+        timeout_duration,
+        Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+    ).await;
 
-    Ok((
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        String::from_utf8_lossy(&output.stderr).trim().to_string(),
-    ))
+    match result {
+        Ok(Ok(output)) => Ok((
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        )),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Err(anyhow::anyhow!(
+            "Git operation timed out after {} seconds", 
+            GIT_OPERATION_TIMEOUT_SECS
+        )),
+    }
 }
 
 /// Helper function to safely acquire a mutex lock with error handling
