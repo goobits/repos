@@ -383,6 +383,9 @@ async fn process_repositories(
 
     // Wait for all repository operations to complete
     while futures.next().await.is_some() {}
+    
+    // Add spacing after repository list
+    println!();
 }
 
 /// Recursively searches for git repositories in the current directory
