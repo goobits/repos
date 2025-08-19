@@ -2,9 +2,9 @@
 //! This tool scans for git repositories and pushes any unpushed commits to their upstream remotes.
 
 use anyhow::Result;
-use colored::*;
 use futures::stream::{FuturesUnordered, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -63,6 +63,7 @@ struct SyncStatistics {
     total_commits_pushed: u32,
     skipped_repos: u32,
     error_repos: u32,
+    uncommitted_count: u32,
 }
 
 impl SyncStatistics {
@@ -72,7 +73,7 @@ impl SyncStatistics {
     }
 
     /// Updates statistics based on the synchronization result
-    fn update(&mut self, status: &Status, message: &str) {
+    fn update(&mut self, status: &Status, message: &str, has_uncommitted: bool) {
         match status {
             Status::Pushed => {
                 self.synced_repos += 1;
@@ -90,25 +91,23 @@ impl SyncStatistics {
             Status::Skip => self.skipped_repos += 1,
             Status::Error => self.error_repos += 1,
         }
+        
+        if has_uncommitted {
+            self.uncommitted_count += 1;
+        }
     }
 
-    /// Generates a summary string of the synchronization results
-    fn generate_summary(&self, total_repos: usize) -> String {
-        let mut summary = format!(
-            "Sync complete • {}/{} synced",
-            self.synced_repos, total_repos
-        );
-
-        if self.total_commits_pushed > 0 {
-            summary.push_str(&format!(" • {} commits pushed", self.total_commits_pushed));
-        }
-        if self.skipped_repos > 0 {
-            summary.push_str(&format!(" • {} skipped", self.skipped_repos));
-        }
-        if self.error_repos > 0 {
-            summary.push_str(&format!(" • {} errors", self.error_repos.to_string().red()));
-        }
-        summary
+    /// Generates a summary string of the synchronization results with enhanced formatting
+    fn generate_summary(&self, total_repos: usize, duration: Duration) -> String {
+        let duration_secs = duration.as_secs_f64();
+        
+        format!(
+            "✅ {} synced • 🚀 {} pushed • ⚠️  {} uncommitted • 🕒 Completed in {:.1}s",
+            total_repos,
+            self.total_commits_pushed,
+            self.uncommitted_count,
+            duration_secs
+        )
     }
 }
 
@@ -376,7 +375,7 @@ async fn process_repositories(
 
             // Update statistics based on operation result
             let mut stats_guard = acquire_stats_lock(&stats_clone);
-            stats_guard.update(&status, &message);
+            stats_guard.update(&status, &message, has_uncommitted_changes);
         };
 
         futures.push(future);
@@ -437,16 +436,21 @@ async fn main() -> Result<()> {
     // Set terminal title to indicate sync-repos is running
     set_terminal_title("sync-repos");
     
-    println!("{}", SCANNING_MESSAGE);
+    println!();
+    print!("{}", SCANNING_MESSAGE);
+    std::io::stdout().flush().unwrap();
 
+    let start_time = std::time::Instant::now();
     let repos = find_repos();
     if repos.is_empty() {
-        println!("{}", NO_REPOS_MESSAGE);
+        println!("\r{}", NO_REPOS_MESSAGE);
         return Ok(());
     }
 
     let total_repos = repos.len();
-    println!("Found {} repositories\n", total_repos);
+    let repo_word = if total_repos == 1 { "repository" } else { "repositories" };
+    print!("\r🚀 Syncing {} {}                    \n", total_repos, repo_word);
+    println!();
 
     // Setup for concurrent processing
     let max_name_length = repos.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
@@ -466,11 +470,13 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    // Display final summary statistics
+    // Display final summary statistics with proper footer spacing
     let final_stats = *acquire_stats_lock(&statistics);
+    let duration = start_time.elapsed();
 
     println!();
-    println!("{}", final_stats.generate_summary(total_repos));
+    println!("{}", final_stats.generate_summary(total_repos, duration));
+    println!();
 
     Ok(())
 }
