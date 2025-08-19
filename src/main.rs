@@ -344,13 +344,44 @@ async fn process_repositories(
     progress_style: ProgressStyle,
     statistics: Arc<Mutex<SyncStatistics>>,
     semaphore: Arc<tokio::sync::Semaphore>,
+    total_repos: usize,
+    start_time: std::time::Instant,
 ) {
     let mut futures = FuturesUnordered::new();
 
-    for (repo_name, repo_path) in repositories {
-        let progress_bar = create_progress_bar(&multi_progress, &progress_style, &repo_name);
+    // First, create all repository progress bars
+    let mut repo_progress_bars = Vec::new();
+    for (repo_name, _) in &repositories {
+        let progress_bar = create_progress_bar(&multi_progress, &progress_style, repo_name);
+        repo_progress_bars.push(progress_bar);
+    }
+
+    // Add a blank line before the footer (using a space to make it visible)
+    let separator_pb = multi_progress.add(ProgressBar::new(0));
+    separator_pb.set_style(ProgressStyle::default_bar().template(" ").unwrap());
+    separator_pb.finish();
+
+    // Finally, create the footer progress bar at the bottom
+    let footer_pb = multi_progress.add(ProgressBar::new(0));
+    let footer_style = ProgressStyle::default_bar()
+        .template("{wide_msg}")
+        .expect("Failed to create footer progress style");
+    footer_pb.set_style(footer_style);
+    
+    // Initial footer display
+    let initial_stats = SyncStatistics::new();
+    let initial_summary = initial_stats.generate_summary(total_repos, start_time.elapsed());
+    footer_pb.set_message(initial_summary);
+
+    // Add another blank line after the footer (using a space to make it visible)
+    let separator_pb2 = multi_progress.add(ProgressBar::new(0));
+    separator_pb2.set_style(ProgressStyle::default_bar().template(" ").unwrap());
+    separator_pb2.finish();
+
+    for ((repo_name, repo_path), progress_bar) in repositories.into_iter().zip(repo_progress_bars) {
         let stats_clone = Arc::clone(&statistics);
         let semaphore_clone = Arc::clone(&semaphore);
+        let footer_clone = footer_pb.clone();
 
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
@@ -376,6 +407,14 @@ async fn process_repositories(
             // Update statistics based on operation result
             let mut stats_guard = acquire_stats_lock(&stats_clone);
             stats_guard.update(&status, &message, has_uncommitted_changes);
+            
+            // Update the footer summary after each repository completes
+            let current_stats = *stats_guard;
+            drop(stats_guard);
+            
+            let duration = start_time.elapsed();
+            let summary = current_stats.generate_summary(total_repos, duration);
+            footer_clone.set_message(summary);
         };
 
         futures.push(future);
@@ -384,7 +423,10 @@ async fn process_repositories(
     // Wait for all repository operations to complete
     while futures.next().await.is_some() {}
     
-    // Add spacing after repository list
+    // Finish the footer progress bar
+    footer_pb.finish();
+    
+    // Add final spacing
     println!();
 }
 
@@ -470,16 +512,10 @@ async fn main() -> Result<()> {
         progress_style,
         statistics.clone(),
         semaphore,
+        total_repos,
+        start_time,
     )
     .await;
-
-    // Display final summary statistics with proper footer spacing
-    let final_stats = *acquire_stats_lock(&statistics);
-    let duration = start_time.elapsed();
-
-    println!();
-    println!("{}", final_stats.generate_summary(total_repos, duration));
-    println!();
 
     Ok(())
 }
