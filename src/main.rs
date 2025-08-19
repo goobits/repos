@@ -1,3 +1,6 @@
+//! sync-repos: A tool for synchronizing multiple git repositories
+//! This tool scans for git repositories and pushes any unpushed commits to their upstream remotes.
+
 use anyhow::Result;
 use colored::*;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -8,13 +11,119 @@ use std::time::Duration;
 use tokio::process::Command;
 use walkdir::WalkDir;
 
+// Constants for magic numbers and strings
+const DEFAULT_CONCURRENT_LIMIT: usize = 3;
+const PROGRESS_TICK_INTERVAL_MS: u64 = 100;
+const DEFAULT_PROGRESS_BAR_LENGTH: u64 = 100;
+const DEFAULT_REPO_NAME: &str = "current";
+const UNKNOWN_REPO_NAME: &str = "unknown";
+const DETACHED_HEAD_BRANCH: &str = "HEAD";
 
+// UI Constants
+const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
+const NO_REPOS_MESSAGE: &str = "No git repositories found in current directory.";
+const SYNCING_MESSAGE: &str = "syncing...";
+const PROGRESS_CHARS: &str = "##-";
+const PROGRESS_TEMPLATE: &str = "{prefix:.bold} {wide_msg}";
+
+// Status messages
+const STATUS_SYNCED: &str = "up to date";
+const STATUS_NO_REMOTE: &str = "no remote";
+const STATUS_DETACHED_HEAD: &str = "detached HEAD";
+const STATUS_NO_UPSTREAM: &str = "no upstream";
+const UNCOMMITTED_CHANGES_SUFFIX: &str = " (uncommitted changes)";
+
+// Git command arguments
+const GIT_DIFF_INDEX_ARGS: &[&str] = &["diff-index", "--quiet", "HEAD", "--"];
+const GIT_REMOTE_ARGS: &[&str] = &["remote"];
+const GIT_REV_PARSE_HEAD_ARGS: &[&str] = &["rev-parse", "--abbrev-ref", "HEAD"];
+const GIT_FETCH_ARGS: &[&str] = &["fetch", "--quiet"];
+const GIT_PUSH_ARGS: &[&str] = &["push"];
+
+// Directories to skip during repository search
+const SKIP_DIRECTORIES: &[&str] = &[
+    "node_modules",
+    "vendor",
+    "target",
+    "build",
+    ".next",
+    "dist",
+    "__pycache__",
+    ".venv",
+    "venv",
+];
+
+/// Statistics for tracking repository synchronization results
+#[derive(Clone, Copy, Default)]
+struct SyncStatistics {
+    synced_repos: u32,
+    total_commits_pushed: u32,
+    skipped_repos: u32,
+    error_repos: u32,
+}
+
+impl SyncStatistics {
+    /// Creates a new statistics tracker with all counters initialized to zero
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Updates statistics based on the synchronization result
+    fn update(&mut self, status: &Status, message: &str) {
+        match status {
+            Status::Pushed => {
+                self.synced_repos += 1;
+                // Extract number of commits from message (e.g., "3 commits pushed")
+                if let Ok(commits) = message
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("0")
+                    .parse::<u32>()
+                {
+                    self.total_commits_pushed += commits;
+                }
+            }
+            Status::Synced => self.synced_repos += 1,
+            Status::Skip => self.skipped_repos += 1,
+            Status::Error => self.error_repos += 1,
+        }
+    }
+
+    /// Generates a summary string of the synchronization results
+    fn generate_summary(&self, total_repos: usize) -> String {
+        let mut summary = format!(
+            "Sync complete • {}/{} synced",
+            self.synced_repos, total_repos
+        );
+
+        if self.total_commits_pushed > 0 {
+            summary.push_str(&format!(" • {} commits pushed", self.total_commits_pushed));
+        }
+        if self.skipped_repos > 0 {
+            summary.push_str(&format!(" • {} skipped", self.skipped_repos));
+        }
+        if self.error_repos > 0 {
+            summary.push_str(&format!(" • {} errors", self.error_repos.to_string().red()));
+        }
+        summary
+    }
+}
+
+/// Represents the synchronization status of a git repository
 #[derive(Clone)]
 enum Status {
-    Synced, Pushed, Skip, Error
+    /// Repository is already up to date with remote
+    Synced,
+    /// Repository had commits that were successfully pushed
+    Pushed,
+    /// Repository was skipped (no remote, detached HEAD, etc.)
+    Skip,
+    /// An error occurred during synchronization
+    Error,
 }
 
 impl Status {
+    /// Returns the emoji symbol for this status
     fn symbol(&self) -> &str {
         match self {
             Status::Synced | Status::Pushed => "🟢",
@@ -22,7 +131,8 @@ impl Status {
             Status::Error => "🔴",
         }
     }
-    
+
+    /// Returns the text representation of this status
     fn text(&self) -> &str {
         match self {
             Status::Synced => "synced",
@@ -33,13 +143,15 @@ impl Status {
     }
 }
 
+/// Runs a git command in the specified directory
+/// Returns (success, stdout, stderr)
 async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String)> {
     let output = Command::new("git")
         .args(args)
         .current_dir(path)
         .output()
         .await?;
-    
+
     Ok((
         output.status.success(),
         String::from_utf8_lossy(&output.stdout).trim().to_string(),
@@ -47,176 +159,304 @@ async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String)> {
     ))
 }
 
+/// Helper function to safely acquire a mutex lock with error handling
+/// Returns the lock guard or panics with a descriptive message
+fn acquire_stats_lock(stats: &Mutex<SyncStatistics>) -> std::sync::MutexGuard<'_, SyncStatistics> {
+    stats
+        .lock()
+        .expect("Failed to acquire lock on statistics mutex - mutex may be poisoned")
+}
+
+/// Helper function to safely acquire a semaphore permit
+/// Returns the permit or panics with a descriptive message  
+async fn acquire_semaphore_permit(
+    semaphore: &tokio::sync::Semaphore,
+) -> tokio::sync::SemaphorePermit<'_> {
+    semaphore
+        .acquire()
+        .await
+        .expect("Failed to acquire semaphore permit for concurrent git operations")
+}
+
+/// Sets the terminal title to the specified text
+fn set_terminal_title(title: &str) {
+    // ANSI escape sequence to set terminal title
+    print!("\x1b]0;{}\x07", title);
+}
+
+/// Checks a git repository and attempts to push any unpushed commits
+/// Returns (status, message, has_uncommitted_changes)
 async fn check_repo(path: &Path) -> (Status, String, bool) {
     // Check uncommitted changes
-    let has_uncommitted = !run_git(path, &["diff-index", "--quiet", "HEAD", "--"])
+    let has_uncommitted_changes = !run_git(path, GIT_DIFF_INDEX_ARGS)
         .await
         .map(|(success, _, _)| success)
         .unwrap_or(false);
-    
-    // Check for remote
-    if let Ok((true, remotes, _)) = run_git(path, &["remote"]).await {
+
+    // Check if repository has any remotes configured
+    if let Ok((true, remotes, _)) = run_git(path, GIT_REMOTE_ARGS).await {
         if remotes.is_empty() {
-            return (Status::Skip, "no remote".to_string(), has_uncommitted);
+            return (
+                Status::Skip,
+                STATUS_NO_REMOTE.to_string(),
+                has_uncommitted_changes,
+            );
         }
     } else {
-        return (Status::Skip, "no remote".to_string(), has_uncommitted);
+        return (
+            Status::Skip,
+            STATUS_NO_REMOTE.to_string(),
+            has_uncommitted_changes,
+        );
     }
-    
+
     // Get current branch
-    let branch = match run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
-        Ok((true, branch, _)) if branch != "HEAD" => branch,
-        _ => return (Status::Skip, "detached HEAD".to_string(), has_uncommitted),
+    let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
+        Ok((true, branch_name, _)) if branch_name != DETACHED_HEAD_BRANCH => branch_name,
+        _ => {
+            return (
+                Status::Skip,
+                STATUS_DETACHED_HEAD.to_string(),
+                has_uncommitted_changes,
+            )
+        }
     };
-    
-    // Check upstream
-    if run_git(path, &["rev-parse", "--abbrev-ref", &format!("{}@{{upstream}}", branch)]).await.map(|(s, _, _)| s).unwrap_or(false) == false {
-        return (Status::Skip, "no upstream".to_string(), has_uncommitted);
+
+    // Check if current branch has an upstream configured
+    if !run_git(
+        path,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            &format!("{}@{{upstream}}", current_branch),
+        ],
+    )
+    .await
+    .map(|(success, _, _)| success)
+    .unwrap_or(false)
+    {
+        return (
+            Status::Skip,
+            STATUS_NO_UPSTREAM.to_string(),
+            has_uncommitted_changes,
+        );
     }
-    
-    // Fetch
-    if let Ok((false, _, err)) = run_git(path, &["fetch", "--quiet"]).await {
-        return (Status::Error, format!("fetch failed: {}", err), has_uncommitted);
+
+    // Fetch latest changes from remote
+    if let Ok((false, _, err)) = run_git(path, GIT_FETCH_ARGS).await {
+        return (
+            Status::Error,
+            format!("fetch failed: {}", err),
+            has_uncommitted_changes,
+        );
     }
-    
-    // Check unpushed commits
-    let unpushed = run_git(path, &["rev-list", "--count", &format!("{}@{{upstream}}..HEAD", branch)]).await
-        .ok()
-        .and_then(|(success, count, _)| if success { count.parse::<u32>().ok() } else { None })
-        .unwrap_or(0);
-    
-    if unpushed > 0 {
-        match run_git(path, &["push"]).await {
-            Ok((true, _, _)) => (Status::Pushed, format!("{} commits pushed", unpushed), has_uncommitted),
-            Ok((false, _, err)) => (Status::Error, format!("push failed: {}", err), has_uncommitted),
-            Err(e) => (Status::Error, format!("push error: {}", e), has_uncommitted),
+
+    // Count commits that are ahead of upstream
+    let unpushed_commits = run_git(
+        path,
+        &[
+            "rev-list",
+            "--count",
+            &format!("{}@{{upstream}}..HEAD", current_branch),
+        ],
+    )
+    .await
+    .ok()
+    .and_then(|(success, count, _)| {
+        if success {
+            count.parse::<u32>().ok()
+        } else {
+            None
+        }
+    })
+    .unwrap_or(0);
+
+    if unpushed_commits > 0 {
+        // Attempt to push the unpushed commits
+        match run_git(path, GIT_PUSH_ARGS).await {
+            Ok((true, _, _)) => (
+                Status::Pushed,
+                format!("{} commits pushed", unpushed_commits),
+                has_uncommitted_changes,
+            ),
+            Ok((false, _, err)) => (
+                Status::Error,
+                format!("push failed: {}", err),
+                has_uncommitted_changes,
+            ),
+            Err(e) => (
+                Status::Error,
+                format!("push error: {}", e),
+                has_uncommitted_changes,
+            ),
         }
     } else {
-        (Status::Synced, "up to date".to_string(), has_uncommitted)
+        (
+            Status::Synced,
+            STATUS_SYNCED.to_string(),
+            has_uncommitted_changes,
+        )
     }
 }
 
+/// Creates and configures a progress bar for a repository
+/// Returns a configured ProgressBar with the specified repository name
+fn create_progress_bar(
+    multi: &MultiProgress,
+    style: &ProgressStyle,
+    repo_name: &str,
+) -> ProgressBar {
+    let pb = multi.add(ProgressBar::new(DEFAULT_PROGRESS_BAR_LENGTH));
+    pb.set_style(style.clone());
+    pb.set_prefix(format!("🟡 {}", repo_name));
+    pb.set_message(SYNCING_MESSAGE);
+    pb.enable_steady_tick(Duration::from_millis(PROGRESS_TICK_INTERVAL_MS));
+    pb
+}
+
+/// Creates a progress bar style configuration
+/// Returns a ProgressStyle configured with the application's visual styling
+fn create_progress_style() -> Result<ProgressStyle> {
+    Ok(ProgressStyle::default_bar()
+        .template(PROGRESS_TEMPLATE)?
+        .progress_chars(PROGRESS_CHARS))
+}
+
+/// Processes all repositories concurrently and updates statistics
+/// Returns when all repository operations are complete
+async fn process_repositories(
+    repositories: Vec<(String, PathBuf)>,
+    max_name_length: usize,
+    multi_progress: MultiProgress,
+    progress_style: ProgressStyle,
+    statistics: Arc<Mutex<SyncStatistics>>,
+    semaphore: Arc<tokio::sync::Semaphore>,
+) {
+    let mut futures = FuturesUnordered::new();
+
+    for (repo_name, repo_path) in repositories {
+        let progress_bar = create_progress_bar(&multi_progress, &progress_style, &repo_name);
+        let stats_clone = Arc::clone(&statistics);
+        let semaphore_clone = Arc::clone(&semaphore);
+
+        let future = async move {
+            let _permit = acquire_semaphore_permit(&semaphore_clone).await;
+
+            let (status, message, has_uncommitted_changes) = check_repo(&repo_path).await;
+
+            let display_message =
+                if has_uncommitted_changes && matches!(status, Status::Synced | Status::Pushed) {
+                    format!("{}{}", message, UNCOMMITTED_CHANGES_SUFFIX)
+                } else {
+                    message.clone()
+                };
+
+            progress_bar.set_prefix(format!(
+                "{} {:width$}",
+                status.symbol(),
+                repo_name,
+                width = max_name_length
+            ));
+            progress_bar.set_message(format!("{:<10}   {}", status.text(), display_message));
+            progress_bar.finish();
+
+            // Update statistics based on operation result
+            let mut stats_guard = acquire_stats_lock(&stats_clone);
+            stats_guard.update(&status, &message);
+        };
+
+        futures.push(future);
+    }
+
+    // Wait for all repository operations to complete
+    while futures.next().await.is_some() {}
+}
+
+/// Recursively searches for git repositories in the current directory
+/// Returns a vector of (repository_name, path) tuples
 fn find_repos() -> Vec<(String, PathBuf)> {
-    let mut repos = Vec::new();
-    let skip_dirs = ["node_modules", "vendor", "target", "build", ".next", "dist", "__pycache__", ".venv", "venv"];
-    
-    for entry in WalkDir::new(".").follow_links(true).into_iter().filter_entry(|e| {
-        if let Some(file_name) = e.file_name().to_str() {
-            !skip_dirs.contains(&file_name)
-        } else {
-            true
-        }
-    }) {
-        if let Ok(entry) = entry {
-            if entry.file_name() == ".git" && entry.file_type().is_dir() {
-                if let Some(parent) = entry.path().parent() {
-                    let name = if parent == Path::new(".") {
-                        // If we're in the current directory, use the directory name
-                        if let Ok(current_dir) = std::env::current_dir() {
-                            current_dir.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("current")
-                                .to_string()
-                        } else {
-                            "current".to_string()
-                        }
-                    } else {
-                        parent.file_name()
+    let mut repositories = Vec::new();
+
+    // Walk through directory tree, skipping common build/dependency directories
+    for entry in WalkDir::new(".")
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|e| {
+            if let Some(file_name) = e.file_name().to_str() {
+                !SKIP_DIRECTORIES.contains(&file_name)
+            } else {
+                true
+            }
+        })
+        .flatten()
+    {
+        // Look for .git directories to identify repositories
+        if entry.file_name() == ".git" && entry.file_type().is_dir() {
+            if let Some(parent) = entry.path().parent() {
+                let repo_name = if parent == Path::new(".") {
+                    // If we're in the current directory, use the directory name
+                    if let Ok(current_dir) = std::env::current_dir() {
+                        current_dir
+                            .file_name()
                             .and_then(|n| n.to_str())
-                            .unwrap_or("unknown")
+                            .unwrap_or(DEFAULT_REPO_NAME)
                             .to_string()
-                    };
-                    repos.push((name, parent.to_path_buf()));
-                }
+                    } else {
+                        DEFAULT_REPO_NAME.to_string()
+                    }
+                } else {
+                    parent
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(UNKNOWN_REPO_NAME)
+                        .to_string()
+                };
+                repositories.push((repo_name, parent.to_path_buf()));
             }
         }
     }
-    repos
+    repositories
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🔍 Scanning for git repositories...");
+    // Set terminal title to indicate sync-repos is running
+    set_terminal_title("sync-repos");
     
+    println!("{}", SCANNING_MESSAGE);
+
     let repos = find_repos();
     if repos.is_empty() {
-        println!("No git repositories found in current directory.");
+        println!("{}", NO_REPOS_MESSAGE);
         return Ok(());
     }
-    
+
     let total_repos = repos.len();
     println!("Found {} repositories\n", total_repos);
-    
-    // Find the maximum repo name length for alignment
-    let max_name_len = repos.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
-    
-    let multi = MultiProgress::new();
-    let style = ProgressStyle::default_bar()
-        .template("{prefix:.bold} {wide_msg}")?
-        .progress_chars("##-");
-    
-    let stats = Arc::new(Mutex::new((0, 0, 0, 0))); // (synced, commits, skipped, errors)
-    
-    // Create semaphore to limit to 3 concurrent operations
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(3));
-    
-    // Create futures for all repo operations
-    let mut futures = FuturesUnordered::new();
-    
-    for (name, path) in repos {
-        let pb = multi.add(ProgressBar::new(100));
-        pb.set_style(style.clone());
-        pb.set_prefix(format!("🟡 {}", name));
-        pb.set_message("syncing...");
-        pb.enable_steady_tick(Duration::from_millis(100));
-        
-        let stats_clone = Arc::clone(&stats);
-        let semaphore_clone = Arc::clone(&semaphore);
-        
-        let future = async move {
-            let _permit = semaphore_clone.acquire().await.unwrap();
-            
-            let (status, message, has_uncommitted) = check_repo(&path).await;
-            
-            let display_msg = if has_uncommitted && matches!(status, Status::Synced | Status::Pushed) {
-                format!("{} (uncommitted changes)", message)
-            } else {
-                message.clone()
-            };
-            
-            pb.set_prefix(format!("{} {:width$}", status.symbol(), name, width = max_name_len));
-            pb.set_message(format!("{:<10}   {}", status.text(), display_msg));
-            pb.finish();
-            
-            // Update stats
-            let mut stats_guard = stats_clone.lock().unwrap();
-            match status {
-                Status::Pushed => {
-                    stats_guard.0 += 1;
-                    if let Ok(commits) = message.split_whitespace().next().unwrap_or("0").parse::<u32>() {
-                        stats_guard.1 += commits;
-                    }
-                }
-                Status::Synced => stats_guard.0 += 1,
-                Status::Skip => stats_guard.2 += 1,
-                Status::Error => stats_guard.3 += 1,
-            }
-        };
-        
-        futures.push(future);
-    }
-    
-    // Wait for all futures to complete
-    while futures.next().await.is_some() {}
-    
-    let final_stats = *stats.lock().unwrap();
-    
+
+    // Setup for concurrent processing
+    let max_name_length = repos.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let multi_progress = MultiProgress::new();
+    let progress_style = create_progress_style()?;
+    let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(DEFAULT_CONCURRENT_LIMIT));
+
+    // Process all repositories concurrently
+    process_repositories(
+        repos,
+        max_name_length,
+        multi_progress,
+        progress_style,
+        statistics.clone(),
+        semaphore,
+    )
+    .await;
+
+    // Display final summary statistics
+    let final_stats = *acquire_stats_lock(&statistics);
+
     println!();
-    let mut summary = format!("Sync complete • {}/{} synced", final_stats.0, total_repos);
-    if final_stats.1 > 0 { summary.push_str(&format!(" • {} commits pushed", final_stats.1)); }
-    if final_stats.2 > 0 { summary.push_str(&format!(" • {} skipped", final_stats.2)); }
-    if final_stats.3 > 0 { summary.push_str(&format!(" • {} errors", final_stats.3.to_string().red())); }
-    println!("{}", summary);
-    
+    println!("{}", final_stats.generate_summary(total_repos));
+
     Ok(())
 }

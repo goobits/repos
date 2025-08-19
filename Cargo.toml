@@ -1,16 +1,32 @@
 [package]
 name = "sync-repos"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Fast Git repository synchronization tool"
+readme = "README.md"
+license = "MIT"
+keywords = ["git", "sync", "repositories", "cli", "automation"]
+categories = ["command-line-utilities", "development-tools"]
+repository = "https://github.com/yourusername/sync-repos"
+homepage = "https://github.com/yourusername/sync-repos"
 
 [dependencies]
+# Error handling
 anyhow = "1.0"
+
+# Terminal output and formatting
 colored = "2.1"
-walkdir = "2.4"
 indicatif = "0.17"
+
+# File system traversal
+walkdir = "2.4"
+
+# Async runtime and utilities
 tokio = { version = "1.0", features = ["full"] }
 futures = "0.3"
 
 [[bin]]
 name = "sync-repos"
 path = "src/main.rs"
+doc = false  # Don't include binary in documentation

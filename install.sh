@@ -1,15 +1,18 @@
 #!/bin/bash
-
+#
 # sync-repos installer script
+# Installs the sync-repos tool for managing multiple git repositories
+#
 
-set -e
+set -e  # Exit on any error
 
 echo "📦 Building sync-repos..."
 
-# Function to add cargo to PATH
+# Function to add cargo to PATH in shell configuration files
 add_cargo_to_path() {
     local shell_config=""
-    
+
+    # Detect which shell configuration file to use
     if [ -n "$ZSH_VERSION" ]; then
         shell_config="$HOME/.zshrc"
     elif [ -n "$BASH_VERSION" ]; then
@@ -19,7 +22,8 @@ add_cargo_to_path() {
             shell_config="$HOME/.bash_profile"
         fi
     fi
-    
+
+    # Add cargo environment to shell config if not already present
     if [ -n "$shell_config" ] && [ -f "$shell_config" ]; then
         if ! grep -q '.cargo/env' "$shell_config"; then
             echo "" >> "$shell_config"
@@ -32,28 +36,28 @@ add_cargo_to_path() {
 
 # Check if cargo is installed or source it if available
 if ! command -v cargo &> /dev/null; then
-    # Try sourcing cargo env first
+    # Try sourcing cargo environment first (in case Rust is installed but not in PATH)
     if [ -f "$HOME/.cargo/env" ]; then
         source "$HOME/.cargo/env"
     fi
-    
-    # Check again after sourcing
+
+    # Check again after attempting to source cargo environment
     if ! command -v cargo &> /dev/null; then
         echo "❌ Cargo not found."
         echo ""
         read -p "Would you like to install Rust now? (y/n) " -n 1 -r
         echo ""
-        
+
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             echo "📥 Installing Rust..."
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            
+
             # Source cargo environment for current session
             source "$HOME/.cargo/env"
-            
+
             # Add to shell config for future sessions
             add_cargo_to_path
-            
+
             echo "✅ Rust installed successfully!"
         else
             echo "Please install Rust manually:"
@@ -66,7 +70,8 @@ fi
 # Build the release binary
 cargo build --release
 
-# Determine installation directory
+# Determine the best installation directory
+# Priority: /usr/local/bin (system-wide), ~/.local/bin, ~/bin (user-specific)
 if [ -w "/usr/local/bin" ]; then
     INSTALL_DIR="/usr/local/bin"
 elif [ -d "$HOME/.local/bin" ]; then
@@ -74,6 +79,7 @@ elif [ -d "$HOME/.local/bin" ]; then
 elif [ -d "$HOME/bin" ]; then
     INSTALL_DIR="$HOME/bin"
 else
+    # Create ~/.local/bin if it doesn't exist
     INSTALL_DIR="$HOME/.local/bin"
     mkdir -p "$INSTALL_DIR"
 fi
@@ -83,7 +89,7 @@ echo "📁 Installing to $INSTALL_DIR..."
 cp target/release/sync-repos "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/sync-repos"
 
-# Check if directory is in PATH
+# Check if installation directory is in PATH and provide guidance if not
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo ""
     echo "⚠️  $INSTALL_DIR is not in your PATH"
@@ -92,4 +98,4 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
 fi
 
 echo "✅ Installation complete!"
-echo "   Run 'sync-repos' in any directory to sync all git repos"
+echo "   Run 'sync-repos' in any directory to sync all git repositories"
