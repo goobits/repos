@@ -33,7 +33,8 @@ const PROGRESS_TEMPLATE: &str = "{prefix:.bold} {wide_msg}";
 const STATUS_SYNCED: &str = "up to date";
 const STATUS_NO_REMOTE: &str = "no remote";
 const STATUS_DETACHED_HEAD: &str = "detached HEAD";
-const STATUS_NO_UPSTREAM: &str = "no upstream";
+const STATUS_NO_UPSTREAM: &str = "no tracking";
+const STATUS_MERGE_CONFLICT: &str = "merge conflict";
 const UNCOMMITTED_CHANGES_SUFFIX: &str = " (uncommitted changes)";
 
 // Git command arguments
@@ -57,13 +58,17 @@ const SKIP_DIRECTORIES: &[&str] = &[
 ];
 
 /// Statistics for tracking repository synchronization results
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct SyncStatistics {
     synced_repos: u32,
     total_commits_pushed: u32,
     skipped_repos: u32,
     error_repos: u32,
     uncommitted_count: u32,
+    failed_repos: Vec<(String, String)>,  // (repo_name, error_message)
+    no_upstream_repos: Vec<String>,
+    no_remote_repos: Vec<String>,
+    uncommitted_repos: Vec<String>,
 }
 
 impl SyncStatistics {
@@ -73,7 +78,7 @@ impl SyncStatistics {
     }
 
     /// Updates statistics based on the synchronization result
-    fn update(&mut self, status: &Status, message: &str, has_uncommitted: bool) {
+    fn update(&mut self, repo_name: &str, status: &Status, message: &str, has_uncommitted: bool) {
         match status {
             Status::Pushed => {
                 self.synced_repos += 1;
@@ -89,25 +94,95 @@ impl SyncStatistics {
             }
             Status::Synced => self.synced_repos += 1,
             Status::Skip => self.skipped_repos += 1,
-            Status::Error => self.error_repos += 1,
+            Status::NoUpstream => {
+                self.skipped_repos += 1;
+                self.no_upstream_repos.push(repo_name.to_string());
+            }
+            Status::NoRemote => {
+                self.skipped_repos += 1;
+                self.no_remote_repos.push(repo_name.to_string());
+            }
+            Status::Error => {
+                self.error_repos += 1;
+                self.failed_repos.push((repo_name.to_string(), message.to_string()));
+            }
         }
         
-        if has_uncommitted {
+        if has_uncommitted && !self.uncommitted_repos.contains(&repo_name.to_string()) {
             self.uncommitted_count += 1;
+            self.uncommitted_repos.push(repo_name.to_string());
         }
     }
 
     /// Generates a summary string of the synchronization results with enhanced formatting
-    fn generate_summary(&self, total_repos: usize, duration: Duration) -> String {
+    fn generate_summary(&self, _total_repos: usize, duration: Duration) -> String {
         let duration_secs = duration.as_secs_f64();
         
-        format!(
-            "✅ {} synced • 🚀 {} pushed • ⚠️  {} uncommitted • 🕒 Completed in {:.1}s",
-            total_repos,
-            self.total_commits_pushed,
-            self.uncommitted_count,
-            duration_secs
-        )
+        let mut summary = String::new();
+        
+        // Main summary line
+        if self.error_repos > 0 {
+            summary.push_str(&format!("✅ Completed in {:.1}s • {} synced • {} pushed • {} failed", 
+                duration_secs, self.synced_repos, self.total_commits_pushed, self.error_repos));
+        } else {
+            summary.push_str(&format!("✅ Completed in {:.1}s • {} synced • {} pushed", 
+                duration_secs, self.synced_repos, self.total_commits_pushed));
+        }
+        
+        summary
+    }
+    
+    /// Generates detailed warning messages for repositories needing attention
+    fn generate_detailed_summary(&self) -> String {
+        let mut lines = Vec::new();
+        
+        // Failed repos get priority
+        if !self.failed_repos.is_empty() {
+            lines.push(format!("🔴 {} repo{} failed:", 
+                self.failed_repos.len(),
+                if self.failed_repos.len() == 1 { "" } else { "s" }));
+            for (repo, error) in &self.failed_repos {
+                lines.push(format!("   {} - {}", repo, error));
+            }
+        }
+        
+        // No upstream repos
+        if !self.no_upstream_repos.is_empty() {
+            lines.push(format!("🟡 {} repo{} needs upstream:", 
+                self.no_upstream_repos.len(),
+                if self.no_upstream_repos.len() == 1 { "" } else { "s" }));
+            let repo_list = self.no_upstream_repos.join(", ");
+            lines.push(format!("   {} - run: git push -u origin <branch>", repo_list));
+        }
+        
+        // Uncommitted changes
+        if !self.uncommitted_repos.is_empty() {
+            lines.push(format!("⚠️  {} repo{} with uncommitted changes:", 
+                self.uncommitted_repos.len(),
+                if self.uncommitted_repos.len() == 1 { "" } else { "s" }));
+            let mut repo_list = self.uncommitted_repos.join(", ");
+            // Truncate if too long
+            if repo_list.len() > 60 {
+                let repos_to_show = self.uncommitted_repos.iter()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                repo_list = format!("{}, and {} more", repos_to_show, self.uncommitted_repos.len() - 5);
+            }
+            lines.push(format!("   {}", repo_list));
+        }
+        
+        // No remote repos
+        if !self.no_remote_repos.is_empty() {
+            lines.push(format!("🔧 {} repo{} missing remotes:", 
+                self.no_remote_repos.len(),
+                if self.no_remote_repos.len() == 1 { "" } else { "s" }));
+            let repo_list = self.no_remote_repos.join(", ");
+            lines.push(format!("   {}", repo_list));
+        }
+        
+        lines.join("\n")
     }
 }
 
@@ -120,6 +195,10 @@ enum Status {
     Pushed,
     /// Repository was skipped (no remote, detached HEAD, etc.)
     Skip,
+    /// Repository has no upstream tracking branch
+    NoUpstream,
+    /// Repository has no remote configured
+    NoRemote,
     /// An error occurred during synchronization
     Error,
 }
@@ -129,7 +208,8 @@ impl Status {
     fn symbol(&self) -> &str {
         match self {
             Status::Synced | Status::Pushed => "🟢",
-            Status::Skip => "🟠",
+            Status::Skip | Status::NoRemote => "🟠",
+            Status::NoUpstream => "🟡",
             Status::Error => "🔴",
         }
     }
@@ -140,7 +220,9 @@ impl Status {
             Status::Synced => "synced",
             Status::Pushed => "pushed",
             Status::Skip => "skip",
-            Status::Error => "error",
+            Status::NoUpstream => "no-upstream",
+            Status::NoRemote => "skip",
+            Status::Error => "failed",
         }
     }
 }
@@ -210,14 +292,14 @@ async fn check_repo(path: &Path) -> (Status, String, bool) {
     if let Ok((true, remotes, _)) = run_git(path, GIT_REMOTE_ARGS).await {
         if remotes.is_empty() {
             return (
-                Status::Skip,
+                Status::NoRemote,
                 STATUS_NO_REMOTE.to_string(),
                 has_uncommitted_changes,
             );
         }
     } else {
         return (
-            Status::Skip,
+            Status::NoRemote,
             STATUS_NO_REMOTE.to_string(),
             has_uncommitted_changes,
         );
@@ -249,8 +331,8 @@ async fn check_repo(path: &Path) -> (Status, String, bool) {
     .unwrap_or(false)
     {
         return (
-            Status::Skip,
-            STATUS_NO_UPSTREAM.to_string(),
+            Status::NoUpstream,
+            format!("{} ({})", current_branch, STATUS_NO_UPSTREAM),
             has_uncommitted_changes,
         );
     }
@@ -292,11 +374,19 @@ async fn check_repo(path: &Path) -> (Status, String, bool) {
                 format!("{} commits pushed", unpushed_commits),
                 has_uncommitted_changes,
             ),
-            Ok((false, _, err)) => (
-                Status::Error,
-                format!("push failed: {}", err),
-                has_uncommitted_changes,
-            ),
+            Ok((false, _, err)) => {
+                // Check if it's a merge conflict
+                let error_msg = if err.contains("conflict") || err.contains("diverged") {
+                    STATUS_MERGE_CONFLICT.to_string()
+                } else {
+                    err.to_string()
+                };
+                (
+                    Status::Error,
+                    error_msg,
+                    has_uncommitted_changes,
+                )
+            }
             Err(e) => (
                 Status::Error,
                 format!("push error: {}", e),
@@ -406,10 +496,10 @@ async fn process_repositories(
 
             // Update statistics based on operation result
             let mut stats_guard = acquire_stats_lock(&stats_clone);
-            stats_guard.update(&status, &message, has_uncommitted_changes);
+            stats_guard.update(&repo_name, &status, &message, has_uncommitted_changes);
             
             // Update the footer summary after each repository completes
-            let current_stats = *stats_guard;
+            let current_stats = stats_guard.clone();
             drop(stats_guard);
             
             let duration = start_time.elapsed();
@@ -425,6 +515,15 @@ async fn process_repositories(
     
     // Finish the footer progress bar
     footer_pb.finish();
+    
+    // Print the final detailed summary if there are any issues to report
+    let final_stats = acquire_stats_lock(&statistics);
+    let detailed_summary = final_stats.generate_detailed_summary();
+    if !detailed_summary.is_empty() {
+        println!("\n{}", "━".repeat(70));
+        println!("{}", detailed_summary);
+        println!("{}", "━".repeat(70));
+    }
     
     // Add final spacing
     println!();
