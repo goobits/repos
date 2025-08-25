@@ -17,3 +17,5 @@ Thumbs.db
 # Cargo lock for libraries
 # Remove this if creating an executable
 # Cargo.lock
+# Symbolic links directory
+.links

@@ -572,6 +572,10 @@ fn find_repos() -> Vec<(String, PathBuf)> {
             }
         }
     }
+    
+    // Sort repositories alphabetically by name (case-insensitive)
+    repositories.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    
     repositories
 }
 
