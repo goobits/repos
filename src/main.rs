@@ -2,6 +2,7 @@
 //! This tool scans for git repositories and pushes any unpushed commits to their upstream remotes.
 
 use anyhow::Result;
+use clap::{Arg, Command as ClapCommand};
 use futures::stream::{FuturesUnordered, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::io::Write;
@@ -281,7 +282,7 @@ fn set_terminal_title(title: &str) {
 
 /// Checks a git repository and attempts to push any unpushed commits
 /// Returns (status, message, has_uncommitted_changes)
-async fn check_repo(path: &Path) -> (Status, String, bool) {
+async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
     // Check uncommitted changes
     let has_uncommitted_changes = !run_git(path, GIT_DIFF_INDEX_ARGS)
         .await
@@ -330,11 +331,38 @@ async fn check_repo(path: &Path) -> (Status, String, bool) {
     .map(|(success, _, _)| success)
     .unwrap_or(false)
     {
-        return (
-            Status::NoUpstream,
-            format!("{} ({})", current_branch, STATUS_NO_UPSTREAM),
-            has_uncommitted_changes,
-        );
+        if force_push {
+            // Force push: set up upstream and push
+            match run_git(path, &["push", "-u", "origin", &current_branch]).await {
+                Ok((true, _, _)) => {
+                    return (
+                        Status::Pushed,
+                        format!("{} (upstream set)", current_branch),
+                        has_uncommitted_changes,
+                    );
+                }
+                Ok((false, _, err)) => {
+                    return (
+                        Status::Error,
+                        format!("upstream setup failed: {}", err),
+                        has_uncommitted_changes,
+                    );
+                }
+                Err(e) => {
+                    return (
+                        Status::Error,
+                        format!("upstream setup error: {}", e),
+                        has_uncommitted_changes,
+                    );
+                }
+            }
+        } else {
+            return (
+                Status::NoUpstream,
+                format!("{} ({})", current_branch, STATUS_NO_UPSTREAM),
+                has_uncommitted_changes,
+            );
+        }
     }
 
     // Fetch latest changes from remote
@@ -436,6 +464,7 @@ async fn process_repositories(
     semaphore: Arc<tokio::sync::Semaphore>,
     total_repos: usize,
     start_time: std::time::Instant,
+    force_push: bool,
 ) {
     let mut futures = FuturesUnordered::new();
 
@@ -476,7 +505,7 @@ async fn process_repositories(
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let (status, message, has_uncommitted_changes) = check_repo(&repo_path).await;
+            let (status, message, has_uncommitted_changes) = check_repo(&repo_path, force_push).await;
 
             let display_message =
                 if has_uncommitted_changes && matches!(status, Status::Synced | Status::Pushed) {
@@ -581,6 +610,19 @@ fn find_repos() -> Vec<(String, PathBuf)> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let matches = ClapCommand::new("sync-repos")
+        .version("1.0")
+        .about("A tool for synchronizing multiple git repositories")
+        .arg(
+            Arg::new("force")
+                .long("force")
+                .help("Automatically push branches with no upstream tracking")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .get_matches();
+
+    let force_push = matches.get_flag("force");
+    
     // Set terminal title to indicate sync-repos is running
     set_terminal_title("sync-repos");
     
@@ -617,6 +659,7 @@ async fn main() -> Result<()> {
         semaphore,
         total_repos,
         start_time,
+        force_push,
     )
     .await;
 
