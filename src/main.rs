@@ -624,7 +624,7 @@ async fn main() -> Result<()> {
     let force_push = matches.get_flag("force");
     
     // Set terminal title to indicate sync-repos is running
-    set_terminal_title("sync-repos");
+    set_terminal_title("🚀 sync-repos");
     
     println!();
     print!("{}", SCANNING_MESSAGE);
