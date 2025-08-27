@@ -108,7 +108,8 @@ impl SyncStatistics {
             }
         }
         
-        if has_uncommitted && !self.uncommitted_repos.iter().any(|(name, _)| name == repo_name) {
+        // Only track uncommitted changes for non-failed repos
+        if has_uncommitted && !matches!(status, Status::Error) && !self.uncommitted_repos.iter().any(|(name, _)| name == repo_name) {
             self.uncommitted_count += 1;
             self.uncommitted_repos.push((repo_name.to_string(), repo_path.to_string()));
         }
@@ -284,12 +285,23 @@ fn shorten_path(path: &str, max_length: usize) -> String {
         return path.to_string();
     }
     
-    // Keep first component and last 2 components
+    // For deeply nested paths, keep first 2 and last 2 components
     let prefix = if path.starts_with("./") { "./" } else { "" };
-    format!("{}{}.../{}",
-        prefix,
-        components.first().unwrap_or(&""),
-        components[components.len().saturating_sub(2)..].join("/"))
+    if components.len() > 4 {
+        format!("{}{}/{}/.../{}/{}",
+            prefix,
+            components[0],
+            components[1],
+            components[components.len()-2],
+            components[components.len()-1])
+    } else {
+        // For 4 components, just use ellipsis in middle
+        format!("{}{}/.../{}/{}",
+            prefix,
+            components[0],
+            components[components.len()-2],
+            components[components.len()-1])
+    }
 }
 
 /// Runs a git command in the specified directory with a timeout
