@@ -6,6 +6,12 @@
 
 set -e  # Exit on any error
 
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Change to script directory to ensure we're in the right place
+cd "$SCRIPT_DIR"
+
 echo "📦 Building sync-repos..."
 
 # Function to add cargo to PATH in shell configuration files
@@ -86,7 +92,7 @@ fi
 
 # Install the binary
 echo "📁 Installing to $INSTALL_DIR..."
-cp target/release/sync-repos "$INSTALL_DIR/"
+cp "$SCRIPT_DIR/target/release/sync-repos" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/sync-repos"
 
 # Check if installation directory is in PATH and provide guidance if not
