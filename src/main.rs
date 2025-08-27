@@ -280,28 +280,17 @@ fn shorten_path(path: &str, max_length: usize) -> String {
     }
     
     let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if components.len() <= 3 {
+    if components.len() <= 2 {
         // Too few components to shorten meaningfully
         return path.to_string();
     }
     
-    // For deeply nested paths, keep first 2 and last 2 components
+    // Keep last 2 components with ellipsis prefix
     let prefix = if path.starts_with("./") { "./" } else { "" };
-    if components.len() > 4 {
-        format!("{}{}/{}/.../{}/{}",
-            prefix,
-            components[0],
-            components[1],
-            components[components.len()-2],
-            components[components.len()-1])
-    } else {
-        // For 4 components, just use ellipsis in middle
-        format!("{}{}/.../{}/{}",
-            prefix,
-            components[0],
-            components[components.len()-2],
-            components[components.len()-1])
-    }
+    format!("{}.../{}/{}",
+        prefix,
+        components[components.len()-2],
+        components[components.len()-1])
 }
 
 /// Runs a git command in the specified directory with a timeout
