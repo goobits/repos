@@ -35,7 +35,6 @@ const STATUS_SYNCED: &str = "up to date";
 const STATUS_NO_REMOTE: &str = "no remote";
 const STATUS_DETACHED_HEAD: &str = "detached HEAD";
 const STATUS_NO_UPSTREAM: &str = "no tracking";
-const STATUS_MERGE_CONFLICT: &str = "merge conflict";
 const UNCOMMITTED_CHANGES_SUFFIX: &str = " (uncommitted changes)";
 
 // Git command arguments
