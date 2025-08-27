@@ -14,7 +14,6 @@ use walkdir::WalkDir;
 
 // Constants for magic numbers and strings  
 const DEFAULT_CONCURRENT_LIMIT: usize = 5; // Optimal for I/O-bound git operations
-const PROGRESS_TICK_INTERVAL_MS: u64 = 100;
 const DEFAULT_PROGRESS_BAR_LENGTH: u64 = 100;
 const DEFAULT_REPO_NAME: &str = "current";
 const UNKNOWN_REPO_NAME: &str = "unknown";
@@ -439,7 +438,8 @@ fn create_progress_bar(
     pb.set_style(style.clone());
     pb.set_prefix(format!("🟡 {}", repo_name));
     pb.set_message(SYNCING_MESSAGE);
-    pb.enable_steady_tick(Duration::from_millis(PROGRESS_TICK_INTERVAL_MS));
+    // Remove steady tick to prevent interference with terminal input
+    // pb.enable_steady_tick(Duration::from_millis(PROGRESS_TICK_INTERVAL_MS));
     pb
 }
 
