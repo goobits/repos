@@ -66,10 +66,10 @@ struct SyncStatistics {
     skipped_repos: u32,
     error_repos: u32,
     uncommitted_count: u32,
-    failed_repos: Vec<(String, String)>,  // (repo_name, error_message)
-    no_upstream_repos: Vec<String>,
-    no_remote_repos: Vec<String>,
-    uncommitted_repos: Vec<String>,
+    failed_repos: Vec<(String, String, String)>,  // (repo_name, repo_path, error_message)
+    no_upstream_repos: Vec<(String, String)>,     // (repo_name, repo_path)
+    no_remote_repos: Vec<(String, String)>,       // (repo_name, repo_path)
+    uncommitted_repos: Vec<(String, String)>,     // (repo_name, repo_path)
 }
 
 impl SyncStatistics {
@@ -79,7 +79,7 @@ impl SyncStatistics {
     }
 
     /// Updates statistics based on the synchronization result
-    fn update(&mut self, repo_name: &str, status: &Status, message: &str, has_uncommitted: bool) {
+    fn update(&mut self, repo_name: &str, repo_path: &str, status: &Status, message: &str, has_uncommitted: bool) {
         match status {
             Status::Pushed => {
                 self.synced_repos += 1;
@@ -97,21 +97,21 @@ impl SyncStatistics {
             Status::Skip => self.skipped_repos += 1,
             Status::NoUpstream => {
                 self.skipped_repos += 1;
-                self.no_upstream_repos.push(repo_name.to_string());
+                self.no_upstream_repos.push((repo_name.to_string(), repo_path.to_string()));
             }
             Status::NoRemote => {
                 self.skipped_repos += 1;
-                self.no_remote_repos.push(repo_name.to_string());
+                self.no_remote_repos.push((repo_name.to_string(), repo_path.to_string()));
             }
             Status::Error => {
                 self.error_repos += 1;
-                self.failed_repos.push((repo_name.to_string(), message.to_string()));
+                self.failed_repos.push((repo_name.to_string(), repo_path.to_string(), message.to_string()));
             }
         }
         
-        if has_uncommitted && !self.uncommitted_repos.contains(&repo_name.to_string()) {
+        if has_uncommitted && !self.uncommitted_repos.iter().any(|(name, _)| name == repo_name) {
             self.uncommitted_count += 1;
-            self.uncommitted_repos.push(repo_name.to_string());
+            self.uncommitted_repos.push((repo_name.to_string(), repo_path.to_string()));
         }
     }
 
@@ -139,48 +139,46 @@ impl SyncStatistics {
         
         // Failed repos get priority
         if !self.failed_repos.is_empty() {
-            lines.push(format!("🔴 {} repo{} failed:", 
-                self.failed_repos.len(),
-                if self.failed_repos.len() == 1 { "" } else { "s" }));
-            for (repo, error) in &self.failed_repos {
-                lines.push(format!("   {} - {}", repo, error));
+            lines.push(format!("🔴 FAILED REPOS ({})", self.failed_repos.len()));
+            for (i, (repo_name, repo_path, error)) in self.failed_repos.iter().enumerate() {
+                let tree_char = if i == self.failed_repos.len() - 1 { "└─" } else { "├─" };
+                lines.push(format!("   {} {:20} {:30} # {}", tree_char, repo_name, repo_path, error));
             }
+            lines.push(String::new()); // Add blank line
         }
         
         // No upstream repos
         if !self.no_upstream_repos.is_empty() {
-            lines.push(format!("🟡 {} repo{} needs upstream:", 
-                self.no_upstream_repos.len(),
-                if self.no_upstream_repos.len() == 1 { "" } else { "s" }));
-            let repo_list = self.no_upstream_repos.join(", ");
-            lines.push(format!("   {} - run: git push -u origin <branch>", repo_list));
+            lines.push(format!("🟡 NEEDS UPSTREAM ({})", self.no_upstream_repos.len()));
+            for (i, (repo_name, repo_path)) in self.no_upstream_repos.iter().enumerate() {
+                let tree_char = if i == self.no_upstream_repos.len() - 1 { "└─" } else { "├─" };
+                lines.push(format!("   {} {:20} {:30} # git push -u origin <branch>", tree_char, repo_name, repo_path));
+            }
+            lines.push(String::new()); // Add blank line
         }
         
         // Uncommitted changes
         if !self.uncommitted_repos.is_empty() {
-            lines.push(format!("⚠️  {} repo{} with uncommitted changes:", 
-                self.uncommitted_repos.len(),
-                if self.uncommitted_repos.len() == 1 { "" } else { "s" }));
-            let mut repo_list = self.uncommitted_repos.join(", ");
-            // Truncate if too long
-            if repo_list.len() > 60 {
-                let repos_to_show = self.uncommitted_repos.iter()
-                    .take(5)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                repo_list = format!("{}, and {} more", repos_to_show, self.uncommitted_repos.len() - 5);
+            lines.push(format!("⚠️  UNCOMMITTED CHANGES ({})", self.uncommitted_repos.len()));
+            for (i, (repo_name, repo_path)) in self.uncommitted_repos.iter().enumerate() {
+                let tree_char = if i == self.uncommitted_repos.len() - 1 { "└─" } else { "├─" };
+                lines.push(format!("   {} {:20} {}", tree_char, repo_name, repo_path));
             }
-            lines.push(format!("   {}", repo_list));
+            lines.push(String::new()); // Add blank line
         }
         
         // No remote repos
         if !self.no_remote_repos.is_empty() {
-            lines.push(format!("🔧 {} repo{} missing remotes:", 
-                self.no_remote_repos.len(),
-                if self.no_remote_repos.len() == 1 { "" } else { "s" }));
-            let repo_list = self.no_remote_repos.join(", ");
-            lines.push(format!("   {}", repo_list));
+            lines.push(format!("🔧 MISSING REMOTES ({})", self.no_remote_repos.len()));
+            for (i, (repo_name, repo_path)) in self.no_remote_repos.iter().enumerate() {
+                let tree_char = if i == self.no_remote_repos.len() - 1 { "└─" } else { "├─" };
+                lines.push(format!("   {} {:20} {}", tree_char, repo_name, repo_path));
+            }
+        }
+        
+        // Remove trailing blank line if it exists
+        if lines.last() == Some(&String::new()) {
+            lines.pop();
         }
         
         lines.join("\n")
@@ -525,7 +523,8 @@ async fn process_repositories(
 
             // Update statistics based on operation result
             let mut stats_guard = acquire_stats_lock(&stats_clone);
-            stats_guard.update(&repo_name, &status, &message, has_uncommitted_changes);
+            let repo_path_str = repo_path.to_string_lossy();
+            stats_guard.update(&repo_name, &repo_path_str, &status, &message, has_uncommitted_changes);
             
             // Update the footer summary after each repository completes
             let current_stats = stats_guard.clone();
