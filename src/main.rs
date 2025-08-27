@@ -6,6 +6,7 @@ use clap::{Arg, Command as ClapCommand};
 use futures::stream::{FuturesUnordered, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::io::Write;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -141,7 +142,8 @@ impl SyncStatistics {
             lines.push(format!("🔴 FAILED REPOS ({})", self.failed_repos.len()));
             for (i, (repo_name, repo_path, error)) in self.failed_repos.iter().enumerate() {
                 let tree_char = if i == self.failed_repos.len() - 1 { "└─" } else { "├─" };
-                lines.push(format!("   {} {:20} {:30} # {}", tree_char, repo_name, repo_path, error));
+                let short_path = shorten_path(repo_path, 30);
+                lines.push(format!("   {} {:20} {:30} # {}", tree_char, repo_name, short_path, error));
             }
             lines.push(String::new()); // Add blank line
         }
@@ -151,7 +153,8 @@ impl SyncStatistics {
             lines.push(format!("🟡 NEEDS UPSTREAM ({})", self.no_upstream_repos.len()));
             for (i, (repo_name, repo_path)) in self.no_upstream_repos.iter().enumerate() {
                 let tree_char = if i == self.no_upstream_repos.len() - 1 { "└─" } else { "├─" };
-                lines.push(format!("   {} {:20} {:30} # git push -u origin <branch>", tree_char, repo_name, repo_path));
+                let short_path = shorten_path(repo_path, 30);
+                lines.push(format!("   {} {:20} {:30} # git push -u origin <branch>", tree_char, repo_name, short_path));
             }
             lines.push(String::new()); // Add blank line
         }
@@ -161,7 +164,8 @@ impl SyncStatistics {
             lines.push(format!("⚠️  UNCOMMITTED CHANGES ({})", self.uncommitted_repos.len()));
             for (i, (repo_name, repo_path)) in self.uncommitted_repos.iter().enumerate() {
                 let tree_char = if i == self.uncommitted_repos.len() - 1 { "└─" } else { "├─" };
-                lines.push(format!("   {} {:20} {}", tree_char, repo_name, repo_path));
+                let short_path = shorten_path(repo_path, 30);
+                lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
             }
             lines.push(String::new()); // Add blank line
         }
@@ -171,7 +175,8 @@ impl SyncStatistics {
             lines.push(format!("🔧 MISSING REMOTES ({})", self.no_remote_repos.len()));
             for (i, (repo_name, repo_path)) in self.no_remote_repos.iter().enumerate() {
                 let tree_char = if i == self.no_remote_repos.len() - 1 { "└─" } else { "├─" };
-                lines.push(format!("   {} {:20} {}", tree_char, repo_name, repo_path));
+                let short_path = shorten_path(repo_path, 30);
+                lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
             }
         }
         
@@ -223,6 +228,67 @@ impl Status {
             Status::Error => "failed",
         }
     }
+}
+
+/// Cleans and formats error messages for display
+fn clean_error_message(error: &str) -> String {
+    // Replace newlines/tabs with spaces and collapse whitespace
+    let cleaned = error
+        .replace('\n', " ")
+        .replace('\r', "")
+        .replace('\t', " ");
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    
+    // Extract key error patterns
+    if cleaned.contains("repository moved") {
+        if cleaned.contains("email privacy") {
+            "repo moved + email privacy"
+        } else {
+            "repo moved"
+        }
+    } else if cleaned.contains("email privacy") {
+        "email privacy restriction"
+    } else if cleaned.contains("timed out") {
+        // Extract timeout duration if present
+        if cleaned.contains("180") {
+            "timeout (180s)"
+        } else {
+            "timeout"
+        }
+    } else if cleaned.contains("authentication") || cleaned.contains("Permission denied") {
+        "authentication failed"
+    } else if cleaned.contains("conflict") || cleaned.contains("diverged") {
+        "merge conflict"
+    } else if cleaned.contains("Connection") || cleaned.contains("network") {
+        "network error"
+    } else {
+        // Truncate long messages
+        if cleaned.len() > 40 {
+            format!("{}...", &cleaned[..37])
+        } else {
+            cleaned
+        }
+    }.to_string()
+}
+
+/// Shortens long paths for display
+fn shorten_path(path: &str, max_length: usize) -> String {
+    if path.len() <= max_length {
+        return path.to_string();
+    }
+    
+    let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if components.len() <= 3 {
+        // Too few components to shorten meaningfully
+        return path.to_string();
+    }
+    
+    // Keep first component and last 2 components
+    let prefix = if path.starts_with("./") { "./" } else { "" };
+    format!("{}{}.../{}",
+        prefix,
+        components.first().unwrap_or(&""),
+        components[components.len().saturating_sub(2)..].join("/"))
 }
 
 /// Runs a git command in the specified directory with a timeout
@@ -341,14 +407,14 @@ async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
                 Ok((false, _, err)) => {
                     return (
                         Status::Error,
-                        format!("upstream setup failed: {}", err),
+                        clean_error_message(&format!("upstream setup failed: {}", err)),
                         has_uncommitted_changes,
                     );
                 }
                 Err(e) => {
                     return (
                         Status::Error,
-                        format!("upstream setup error: {}", e),
+                        clean_error_message(&format!("upstream setup error: {}", e)),
                         has_uncommitted_changes,
                     );
                 }
@@ -366,7 +432,7 @@ async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
     if let Ok((false, _, err)) = run_git(path, GIT_FETCH_ARGS).await {
         return (
             Status::Error,
-            format!("fetch failed: {}", err),
+            clean_error_message(&format!("fetch failed: {}", err)),
             has_uncommitted_changes,
         );
     }
@@ -400,21 +466,15 @@ async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
                 has_uncommitted_changes,
             ),
             Ok((false, _, err)) => {
-                // Check if it's a merge conflict
-                let error_msg = if err.contains("conflict") || err.contains("diverged") {
-                    STATUS_MERGE_CONFLICT.to_string()
-                } else {
-                    err.to_string()
-                };
                 (
                     Status::Error,
-                    error_msg,
+                    clean_error_message(&err),
                     has_uncommitted_changes,
                 )
             }
             Err(e) => (
                 Status::Error,
-                format!("push error: {}", e),
+                clean_error_message(&format!("push error: {}", e)),
                 has_uncommitted_changes,
             ),
         }
@@ -558,9 +618,11 @@ async fn process_repositories(
 }
 
 /// Recursively searches for git repositories in the current directory
-/// Returns a vector of (repository_name, path) tuples
+/// Returns a vector of (repository_name, path) tuples with deduplication
 fn find_repos() -> Vec<(String, PathBuf)> {
     let mut repositories = Vec::new();
+    let mut seen_paths = HashSet::new();
+    let mut name_counts = HashMap::new();
 
     // Walk through directory tree, skipping common build/dependency directories
     for entry in WalkDir::new(".")
@@ -578,7 +640,15 @@ fn find_repos() -> Vec<(String, PathBuf)> {
         // Look for .git directories to identify repositories
         if entry.file_name() == ".git" && entry.file_type().is_dir() {
             if let Some(parent) = entry.path().parent() {
-                let repo_name = if parent == Path::new(".") {
+                // Get canonical path to handle symlinks and duplicates
+                let canonical_path = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+                
+                // Skip if we've already seen this path
+                if !seen_paths.insert(canonical_path.clone()) {
+                    continue;
+                }
+                
+                let base_name = if parent == Path::new(".") {
                     // If we're in the current directory, use the directory name
                     if let Ok(current_dir) = std::env::current_dir() {
                         current_dir
@@ -596,6 +666,16 @@ fn find_repos() -> Vec<(String, PathBuf)> {
                         .unwrap_or(UNKNOWN_REPO_NAME)
                         .to_string()
                 };
+                
+                // Handle duplicate names by adding a suffix
+                let count = name_counts.entry(base_name.clone()).or_insert(0);
+                *count += 1;
+                let repo_name = if *count > 1 {
+                    format!("{}-{}", base_name, count)
+                } else {
+                    base_name
+                };
+                
                 repositories.push((repo_name, parent.to_path_buf()));
             }
         }
