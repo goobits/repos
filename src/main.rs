@@ -240,27 +240,27 @@ fn clean_error_message(error: &str) -> String {
     let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     
     // Extract key error patterns
-    if cleaned.contains("repository moved") {
+    let message = if cleaned.contains("repository moved") {
         if cleaned.contains("email privacy") {
-            "repo moved + email privacy"
+            "repo moved + email privacy".to_string()
         } else {
-            "repo moved"
+            "repo moved".to_string()
         }
     } else if cleaned.contains("email privacy") {
-        "email privacy restriction"
+        "email privacy restriction".to_string()
     } else if cleaned.contains("timed out") {
         // Extract timeout duration if present
         if cleaned.contains("180") {
-            "timeout (180s)"
+            "timeout (180s)".to_string()
         } else {
-            "timeout"
+            "timeout".to_string()
         }
     } else if cleaned.contains("authentication") || cleaned.contains("Permission denied") {
-        "authentication failed"
+        "authentication failed".to_string()
     } else if cleaned.contains("conflict") || cleaned.contains("diverged") {
-        "merge conflict"
+        "merge conflict".to_string()
     } else if cleaned.contains("Connection") || cleaned.contains("network") {
-        "network error"
+        "network error".to_string()
     } else {
         // Truncate long messages
         if cleaned.len() > 40 {
@@ -268,7 +268,9 @@ fn clean_error_message(error: &str) -> String {
         } else {
             cleaned
         }
-    }.to_string()
+    };
+    
+    message
 }
 
 /// Shortens long paths for display
