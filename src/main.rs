@@ -345,6 +345,12 @@ fn set_terminal_title(title: &str) {
     print!("\x1b]0;{}\x07", title);
 }
 
+/// Sets the terminal title and ensures it's flushed to the terminal
+fn set_terminal_title_and_flush(title: &str) {
+    set_terminal_title(title);
+    std::io::stdout().flush().unwrap();
+}
+
 /// Checks a git repository and attempts to push any unpushed commits
 /// Returns (status, message, has_uncommitted_changes)
 async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
@@ -715,6 +721,8 @@ async fn main() -> Result<()> {
     let repos = find_repos();
     if repos.is_empty() {
         println!("\r{}", NO_REPOS_MESSAGE);
+        // Set terminal title to green checkbox to indicate completion
+        set_terminal_title_and_flush("✅ sync-repos");
         return Ok(());
     }
 
@@ -726,7 +734,14 @@ async fn main() -> Result<()> {
     // Setup for concurrent processing
     let max_name_length = repos.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
     let multi_progress = MultiProgress::new();
-    let progress_style = create_progress_style()?;
+    let progress_style = match create_progress_style() {
+        Ok(style) => style,
+        Err(e) => {
+            // If progress style creation fails, set completion title and return error
+            set_terminal_title_and_flush("✅ sync-repos");
+            return Err(e);
+        }
+    };
     let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
     let semaphore = Arc::new(tokio::sync::Semaphore::new(DEFAULT_CONCURRENT_LIMIT));
 
@@ -743,6 +758,9 @@ async fn main() -> Result<()> {
         force_push,
     )
     .await;
+
+    // Set terminal title to green checkbox to indicate completion
+    set_terminal_title_and_flush("✅ sync-repos");
 
     Ok(())
 }
