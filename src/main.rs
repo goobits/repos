@@ -648,11 +648,9 @@ fn find_repos() -> Vec<(String, PathBuf)> {
         // Look for .git directories to identify repositories
         if entry.file_name() == ".git" && entry.file_type().is_dir() {
             if let Some(parent) = entry.path().parent() {
-                // Get canonical path to handle symlinks and duplicates
-                let canonical_path = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
-                
-                // Skip if we've already seen this path
-                if !seen_paths.insert(canonical_path.clone()) {
+                // Skip if we've already seen this exact path
+                // This treats symlinks as separate repositories per user request
+                if !seen_paths.insert(parent.to_path_buf()) {
                     continue;
                 }
                 
