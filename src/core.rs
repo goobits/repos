@@ -19,7 +19,7 @@ use walkdir::WalkDir;
 use crate::git::Status;
 
 // Constants
-const DEFAULT_CONCURRENT_LIMIT: usize = 5; // Optimal for I/O-bound git operations
+pub const DEFAULT_CONCURRENT_LIMIT: usize = 5; // Optimal for I/O-bound git operations
 const DEFAULT_PROGRESS_BAR_LENGTH: u64 = 100;
 const DEFAULT_REPO_NAME: &str = "current";
 const UNKNOWN_REPO_NAME: &str = "unknown";

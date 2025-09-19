@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::core::{
-    find_repos, create_progress_bar, create_progress_style, acquire_stats_lock,
+    find_repos, create_progress_bar, create_progress_style,
     shorten_path, NO_REPOS_MESSAGE, DEFAULT_CONCURRENT_LIMIT
 };
 
@@ -458,7 +458,7 @@ async fn process_truffle_repositories(
             progress_bar.finish();
 
             // Update statistics
-            let mut stats_guard = acquire_stats_lock(&stats_clone);
+            let mut stats_guard = stats_clone.lock().expect("Failed to acquire stats lock");
             let repo_path_str = repo_path.to_string_lossy();
             stats_guard.update(&repo_name, &repo_path_str, &status, &message, secrets, verified);
 
@@ -481,7 +481,7 @@ async fn process_truffle_repositories(
     footer_pb.finish();
 
     // Print the final detailed summary if there are any issues to report
-    let final_stats = acquire_stats_lock(&statistics);
+    let final_stats = statistics.lock().expect("Failed to acquire stats lock");
     let detailed_summary = final_stats.generate_detailed_summary();
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
