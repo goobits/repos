@@ -1,48 +1,39 @@
-version: "1.0"
+version: 1.2.1
 provider: docker
+os: auto
 project:
-  workspace_path: /workspace
-  backup_pattern: '*backup*.sql.gz'
-  name: sync-repos
   hostname: dev.sync-repos.local
+  name: sync-repos
+  workspace_path: /workspace
 vm:
-  box: ubuntu/jammy64
-  memory: 4096
-  cpus: 4
-  user: developer
-  port_binding: 127.0.0.1
+  cpus: 6
+  gui: false
+  memory: 8192
+  port_binding: 0.0.0.0
   timezone: America/Los_Angeles
+  user: developer
 versions:
-  node: "22"
-  nvm: v0.40.3
-  pnpm: 10.12.3
-terminal:
-  emoji: "\U0001F680"
-  username: sync-repos-dev
-  theme: dracula
-  show_git_branch: true
+  node: '22'
+  python: '3.11'
+port_range: 3090-3099
 apt_packages:
-  - htop
   - tree
-  - ncdu
   - ripgrep
-  - nano
-  - sox
-  - pipx
+  - unzip
+  - htop
 npm_packages:
   - '@anthropic-ai/claude-code'
   - '@google/gemini-cli'
-  - npm-check-updates
-  - prettier
-  - eslint
+pip_packages:
+  - claudeflow
+terminal:
+  emoji: 🚀
+  show_git_branch: true
+  show_timestamp: false
+  theme: dracula
+  username: sync-repos-dev
 aliases:
   claudeyolo: claude --dangerously-skip-permissions
   geminiyolo: GEMINI_API_KEY=${GEMINI_API_KEY:-} gemini
 claude_sync: true
 gemini_sync: true
-pip_packages:
-  - claudeflow
-package_linking:
-  npm: true
-  pip: true
-  cargo: true

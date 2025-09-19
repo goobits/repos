@@ -1,50 +1,58 @@
-# sync-repos
+# 🔄 Goobits Sync Repos
+Automatically discovers and synchronizes all Git repositories in the current directory tree.
 
-A fast Git repository synchronization tool. Automatically discovers all Git repositories in the current directory tree and pushes any unpushed commits to their upstream remotes.
+## ✨ Key Features
+- **🔍 Auto-Discovery** - Recursively finds all Git repositories
+- **⚡ Parallel Sync** - Processes up to 5 repositories concurrently
+- **⏱️ Timeout Protection** - 3-minute limit per repository prevents hanging
+- **📊 Live Progress** - Multi-line progress bars with real-time status
 
-## Features
-
-- 🔍 **Automatic Discovery**: Recursively finds all Git repositories
-- 🚀 **Smart Sync**: Pushes unpushed commits automatically
-- 📊 **Live Updates**: Real-time status with colored output
-- ⚡ **Parallel Processing**: Handles up to 5 repositories concurrently
-- ⏱️ **Timeout Protection**: 3-minute timeout per repository prevents hanging
-- 🔒 **Secure**: Uses your existing Git authentication
-- 📦 **Portable**: Single binary with no dependencies
-
-## Installation
-
-### Quick Install (Recommended)
+## 🚀 Quick Start
 ```bash
+# Installation
 chmod +x install.sh && ./install.sh
-```
 
-This will automatically install Rust if needed and build the tool.
-
-### Manual Build
-```bash
+# Alternative: Manual build with Cargo
 cargo build --release
-cp target/release/sync-repos ~/.local/bin/
-```
+# Copy to a directory in your PATH (installer chooses best location)
 
-## Usage
-
-Run in any directory containing Git repositories:
-```bash
+# Basic usage - run in any directory
 sync-repos
+
+# Force push branches without upstream tracking
+sync-repos --force
+
+# The tool will:
+# 1. Scan for all Git repositories recursively
+# 2. Check each for unpushed commits
+# 3. Push pending changes to upstream remotes
+# 4. Display summary with color-coded status
 ```
 
-The tool will:
-1. **Scan**: Recursively discover all Git repositories
-2. **Analyze**: Check each repository for unpushed commits
-3. **Sync**: Push pending changes to their upstream remotes
-4. **Report**: Display a summary with color-coded status indicators
+## 📊 Status Indicators
+- **🟢** Synced/Pushed - Repository is up to date
+- **🟡** No Upstream - Branch needs upstream tracking
+- **🟠** Skipped - No remote or detached HEAD
+- **🔴** Failed - Push error occurred
 
-## Requirements
+## ⚙️ Configuration
+```bash
+# Skipped directories (hardcoded):
+# node_modules, vendor, target, build, .next, dist
+# __pycache__, .venv, venv
 
-- **Runtime**: Git (must be installed and configured)
-- **Build**: Rust 1.75+ (only needed for manual compilation)
+# Command-line options
+sync-repos --force  # Auto-push branches without upstream
+```
 
-## License
+## 🛠️ Requirements
+```bash
+# Runtime dependency
+git --version  # Git must be installed and configured
 
-MIT License - see [LICENSE](LICENSE) for details.
+# Build dependency (manual compilation only)
+rustc --version  # Rust 1.56+ (2021 edition)
+```
+
+## 📝 License
+MIT
