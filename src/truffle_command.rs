@@ -18,8 +18,11 @@ use tokio::process::Command;
 
 use crate::core::{
     find_repos, create_progress_bar, create_progress_style,
-    shorten_path, NO_REPOS_MESSAGE, DEFAULT_CONCURRENT_LIMIT
+    shorten_path, NO_REPOS_MESSAGE
 };
+
+// TruffleHog-specific concurrency limit (more conservative than git operations)
+const TRUFFLE_CONCURRENT_LIMIT: usize = 3;
 
 // TruffleHog constants
 const TRUFFLEHOG_VERSION: &str = "v3.90.8";
@@ -542,7 +545,7 @@ pub async fn handle_truffle_command(auto_install: bool, verify: bool, json: bool
         }
     };
     let statistics = Arc::new(Mutex::new(TruffleStatistics::new()));
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(DEFAULT_CONCURRENT_LIMIT));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(TRUFFLE_CONCURRENT_LIMIT));
 
     // Process all repositories concurrently
     process_truffle_repositories(
