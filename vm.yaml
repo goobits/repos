@@ -7,8 +7,8 @@ project:
   hostname: dev.sync-repos.local
 vm:
   box: ubuntu/jammy64
-  memory: 2048
-  cpus: 2
+  memory: 4096
+  cpus: 4
   user: developer
   port_binding: 127.0.0.1
   timezone: America/Los_Angeles
