@@ -7,18 +7,16 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod commands;
 mod core;
 mod git;
-mod sync_command;
-mod audit_command;
-mod user_command;
-mod hygiene;
-mod fix;
+mod audit;
+mod utils;
 
 use git::UserArgs;
-use sync_command::handle_sync_command;
-use audit_command::handle_audit_command;
-use user_command::{handle_user_command, parse_user_command};
+use commands::sync::handle_sync_command;
+use commands::audit::handle_audit_command;
+use commands::user::{handle_user_command, parse_user_command};
 
 #[derive(Subcommand, Clone)]
 enum Commands {

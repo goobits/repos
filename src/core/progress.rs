@@ -1,0 +1,139 @@
+//! Progress bar management and processing context structures
+
+use anyhow::Result;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use super::config::{DEFAULT_PROGRESS_BAR_LENGTH, PROGRESS_TEMPLATE, PROGRESS_CHARS, GIT_CONCURRENT_LIMIT};
+use super::stats::SyncStatistics;
+
+/// Processing context that encapsulates all parameters needed for repository processing
+///
+/// This struct groups related parameters to reduce function argument counts and improve
+/// code organization. It contains all the shared state and configuration needed for
+/// concurrent repository operations.
+pub struct ProcessingContext {
+    /// List of discovered repositories to process
+    pub repositories: Vec<(String, PathBuf)>,
+    /// Maximum length of repository names for formatting alignment
+    pub max_name_length: usize,
+    /// Multi-progress instance for managing multiple concurrent progress bars
+    pub multi_progress: MultiProgress,
+    /// Styled progress bar configuration
+    pub progress_style: ProgressStyle,
+    /// Thread-safe statistics tracking for operation results
+    pub statistics: Arc<Mutex<SyncStatistics>>,
+    /// Semaphore for controlling concurrent operations
+    pub semaphore: Arc<tokio::sync::Semaphore>,
+    /// Total number of repositories being processed
+    pub total_repos: usize,
+    /// Start time for duration calculations
+    pub start_time: std::time::Instant,
+}
+
+/// Generic processing context for custom statistics types
+///
+/// This struct allows using custom statistics types while maintaining
+/// the same parameter grouping benefits as ProcessingContext.
+pub struct GenericProcessingContext<T> {
+    /// List of discovered repositories to process
+    pub repositories: Vec<(String, PathBuf)>,
+    /// Maximum length of repository names for formatting alignment
+    pub max_name_length: usize,
+    /// Multi-progress instance for managing multiple concurrent progress bars
+    pub multi_progress: MultiProgress,
+    /// Styled progress bar configuration
+    pub progress_style: ProgressStyle,
+    /// Thread-safe statistics tracking for operation results
+    pub statistics: Arc<Mutex<T>>,
+    /// Semaphore for controlling concurrent operations
+    pub semaphore: Arc<tokio::sync::Semaphore>,
+    /// Total number of repositories being processed
+    pub total_repos: usize,
+    /// Start time for duration calculations
+    pub start_time: std::time::Instant,
+}
+
+/// Creates a ProcessingContext from repositories and start time
+pub fn create_processing_context(
+    repositories: Vec<(String, PathBuf)>,
+    start_time: std::time::Instant,
+) -> Result<ProcessingContext> {
+    let total_repos = repositories.len();
+    let max_name_length = repositories.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let multi_progress = MultiProgress::new();
+    let progress_style = create_progress_style()?;
+    let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(GIT_CONCURRENT_LIMIT));
+
+    Ok(ProcessingContext {
+        repositories,
+        max_name_length,
+        multi_progress,
+        progress_style,
+        statistics,
+        semaphore,
+        total_repos,
+        start_time,
+    })
+}
+
+/// Creates a GenericProcessingContext with custom statistics type
+pub fn create_generic_processing_context<T>(
+    repositories: Vec<(String, PathBuf)>,
+    start_time: std::time::Instant,
+    statistics: T,
+    concurrent_limit: usize,
+) -> Result<GenericProcessingContext<T>> {
+    let total_repos = repositories.len();
+    let max_name_length = repositories.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let multi_progress = MultiProgress::new();
+    let progress_style = create_progress_style()?;
+    let statistics = Arc::new(Mutex::new(statistics));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrent_limit));
+
+    Ok(GenericProcessingContext {
+        repositories,
+        max_name_length,
+        multi_progress,
+        progress_style,
+        statistics,
+        semaphore,
+        total_repos,
+        start_time,
+    })
+}
+
+/// Creates and configures a progress bar for a repository
+/// Returns a configured ProgressBar with the specified repository name
+pub fn create_progress_bar(
+    multi: &MultiProgress,
+    style: &ProgressStyle,
+    repo_name: &str,
+) -> ProgressBar {
+    let pb = multi.add(ProgressBar::new(DEFAULT_PROGRESS_BAR_LENGTH));
+    pb.set_style(style.clone());
+    pb.set_prefix(format!("🟡 {}", repo_name));
+    pb.set_message("syncing...");
+    pb
+}
+
+/// Creates a progress bar style configuration
+/// Returns a ProgressStyle configured with the application's visual styling
+pub fn create_progress_style() -> Result<ProgressStyle> {
+    Ok(ProgressStyle::default_bar()
+        .template(PROGRESS_TEMPLATE)?
+        .progress_chars(PROGRESS_CHARS))
+}
+
+/// Helper functions for semaphore and mutex access
+pub async fn acquire_semaphore_permit(
+    semaphore: &Arc<tokio::sync::Semaphore>,
+) -> tokio::sync::SemaphorePermit {
+    semaphore.acquire().await.expect("Failed to acquire semaphore permit")
+}
+
+pub fn acquire_stats_lock<T>(stats: &Arc<Mutex<T>>) -> std::sync::MutexGuard<T> {
+    stats.lock().expect("Failed to acquire statistics lock")
+}
