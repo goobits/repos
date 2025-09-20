@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
             from_global,
             from_current,
             force,
-            dry_run
+            dry_run,
         }) => {
             let user_args = UserArgs {
                 command: parse_user_command(
@@ -100,14 +100,16 @@ async fn main() -> Result<()> {
                     *from_global,
                     *from_current,
                     *force,
-                    *dry_run
+                    *dry_run,
                 )?,
             };
             handle_user_command(user_args).await
         }
-        Some(Commands::Truffle { auto_install, verify, json }) => {
-            handle_truffle_command(*auto_install, *verify, *json).await
-        }
+        Some(Commands::Truffle {
+            auto_install,
+            verify,
+            json,
+        }) => handle_truffle_command(*auto_install, *verify, *json).await,
         None => {
             // Default behavior - run sync command
             handle_sync_command(cli.force).await

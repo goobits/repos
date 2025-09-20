@@ -133,11 +133,9 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
 
     let result = tokio::time::timeout(
         timeout_duration,
-        Command::new("git")
-            .args(args)
-            .current_dir(path)
-            .output()
-    ).await;
+        Command::new("git").args(args).current_dir(path).output(),
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => Ok((
@@ -294,7 +292,10 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
                 Ok((false, _, err)) => {
                     return (
                         Status::Error,
-                        crate::core::clean_error_message(&format!("upstream setup failed: {}", err)),
+                        crate::core::clean_error_message(&format!(
+                            "upstream setup failed: {}",
+                            err
+                        )),
                         has_uncommitted_changes,
                     );
                 }
@@ -352,13 +353,11 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
                 format!("{} commits pushed", unpushed_commits),
                 has_uncommitted_changes,
             ),
-            Ok((false, _, err)) => {
-                (
-                    Status::Error,
-                    crate::core::clean_error_message(&err),
-                    has_uncommitted_changes,
-                )
-            }
+            Ok((false, _, err)) => (
+                Status::Error,
+                crate::core::clean_error_message(&err),
+                has_uncommitted_changes,
+            ),
             Err(e) => (
                 Status::Error,
                 crate::core::clean_error_message(&format!("push error: {}", e)),
@@ -416,7 +415,10 @@ pub async fn check_repo_config(
                 changes.push(format!("email → {}", target_email));
             }
         }
-        return (Status::ConfigSkipped, format!("would update: {}", changes.join(", ")));
+        return (
+            Status::ConfigSkipped,
+            format!("would update: {}", changes.join(", ")),
+        );
     }
 
     // Handle interactive mode - check for conflicts
@@ -424,9 +426,16 @@ pub async fn check_repo_config(
         UserCommand::Force(_) => true,
         UserCommand::Interactive(_) => {
             // If there are existing values that would be changed, prompt for confirmation
-            if (current_config.name.is_some() && name_needs_update) ||
-               (current_config.email.is_some() && email_needs_update) {
-                match crate::user_command::prompt_for_config_resolution(repo_name, &current_config, target_config).await {
+            if (current_config.name.is_some() && name_needs_update)
+                || (current_config.email.is_some() && email_needs_update)
+            {
+                match crate::user_command::prompt_for_config_resolution(
+                    repo_name,
+                    &current_config,
+                    target_config,
+                )
+                .await
+                {
                     Ok(update) => update,
                     Err(_) => false,
                 }
@@ -465,9 +474,15 @@ pub async fn check_repo_config(
     }
 
     if !errors.is_empty() {
-        (Status::ConfigError, format!("failed to update: {}", errors.join(", ")))
+        (
+            Status::ConfigError,
+            format!("failed to update: {}", errors.join(", ")),
+        )
     } else if !updates.is_empty() {
-        (Status::ConfigUpdated, format!("updated: {}", updates.join(", ")))
+        (
+            Status::ConfigUpdated,
+            format!("updated: {}", updates.join(", ")),
+        )
     } else {
         (Status::ConfigSynced, "config synced".to_string())
     }

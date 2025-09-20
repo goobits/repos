@@ -18,22 +18,23 @@ use walkdir::WalkDir;
 
 use crate::git::Status;
 
-// Constants
-pub const DEFAULT_CONCURRENT_LIMIT: usize = 5; // Optimal for I/O-bound git operations
+// Concurrency Configuration
+//
+// Different operations have different optimal concurrency limits based on their resource usage:
+// - Git operations are I/O-bound and can handle higher concurrency
+// - TruffleHog scanning is CPU-intensive and benefits from lower concurrency to prevent system overload
+pub const GIT_CONCURRENT_LIMIT: usize = 5;      // For I/O-bound git operations (push, pull, fetch)
+pub const TRUFFLE_CONCURRENT_LIMIT: usize = 3;  // For CPU-intensive TruffleHog secret scans
 const DEFAULT_PROGRESS_BAR_LENGTH: u64 = 100;
 const DEFAULT_REPO_NAME: &str = "current";
 const UNKNOWN_REPO_NAME: &str = "unknown";
 
 // UI Constants
-const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 pub const NO_REPOS_MESSAGE: &str = "No git repositories found in current directory.";
 const SYNCING_MESSAGE: &str = "syncing...";
 pub const CONFIG_SYNCING_MESSAGE: &str = "checking config...";
 const PROGRESS_CHARS: &str = "##-";
 const PROGRESS_TEMPLATE: &str = "{prefix:.bold} {wide_msg}";
-
-// Status messages
-const UNCOMMITTED_CHANGES_SUFFIX: &str = " (uncommitted changes)";
 
 // Directories to skip during repository search
 const SKIP_DIRECTORIES: &[&str] = &[
@@ -49,17 +50,17 @@ const SKIP_DIRECTORIES: &[&str] = &[
 ];
 
 /// Statistics for tracking repository synchronization results
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct SyncStatistics {
     pub synced_repos: u32,
     pub total_commits_pushed: u32,
     pub skipped_repos: u32,
     pub error_repos: u32,
     pub uncommitted_count: u32,
-    pub failed_repos: Vec<(String, String, String)>,  // (repo_name, repo_path, error_message)
-    pub no_upstream_repos: Vec<(String, String)>,     // (repo_name, repo_path)
-    pub no_remote_repos: Vec<(String, String)>,       // (repo_name, repo_path)
-    pub uncommitted_repos: Vec<(String, String)>,     // (repo_name, repo_path)
+    pub failed_repos: Vec<(String, String, String)>, // (repo_name, repo_path, error_message)
+    pub no_upstream_repos: Vec<(String, String)>,    // (repo_name, repo_path)
+    pub no_remote_repos: Vec<(String, String)>,      // (repo_name, repo_path)
+    pub uncommitted_repos: Vec<(String, String)>,    // (repo_name, repo_path)
 }
 
 impl SyncStatistics {
@@ -69,7 +70,14 @@ impl SyncStatistics {
     }
 
     /// Updates statistics based on the synchronization result
-    pub fn update(&mut self, repo_name: &str, repo_path: &str, status: &Status, message: &str, has_uncommitted: bool) {
+    pub fn update(
+        &mut self,
+        repo_name: &str,
+        repo_path: &str,
+        status: &Status,
+        message: &str,
+        has_uncommitted: bool,
+    ) {
         match status {
             Status::Pushed => {
                 self.synced_repos += 1;
@@ -87,22 +95,35 @@ impl SyncStatistics {
             Status::Skip | Status::ConfigSkipped => self.skipped_repos += 1,
             Status::NoUpstream => {
                 self.skipped_repos += 1;
-                self.no_upstream_repos.push((repo_name.to_string(), repo_path.to_string()));
+                self.no_upstream_repos
+                    .push((repo_name.to_string(), repo_path.to_string()));
             }
             Status::NoRemote => {
                 self.skipped_repos += 1;
-                self.no_remote_repos.push((repo_name.to_string(), repo_path.to_string()));
+                self.no_remote_repos
+                    .push((repo_name.to_string(), repo_path.to_string()));
             }
             Status::Error | Status::ConfigError => {
                 self.error_repos += 1;
-                self.failed_repos.push((repo_name.to_string(), repo_path.to_string(), message.to_string()));
+                self.failed_repos.push((
+                    repo_name.to_string(),
+                    repo_path.to_string(),
+                    message.to_string(),
+                ));
             }
         }
 
         // Only track uncommitted changes for non-failed repos
-        if has_uncommitted && !matches!(status, Status::Error | Status::ConfigError) && !self.uncommitted_repos.iter().any(|(name, _)| name == repo_name) {
+        if has_uncommitted
+            && !matches!(status, Status::Error | Status::ConfigError)
+            && !self
+                .uncommitted_repos
+                .iter()
+                .any(|(name, _)| name == repo_name)
+        {
             self.uncommitted_count += 1;
-            self.uncommitted_repos.push((repo_name.to_string(), repo_path.to_string()));
+            self.uncommitted_repos
+                .push((repo_name.to_string(), repo_path.to_string()));
         }
     }
 
@@ -114,11 +135,15 @@ impl SyncStatistics {
 
         // Main summary line
         if self.error_repos > 0 {
-            summary.push_str(&format!("✅ Completed in {:.1}s • {} synced • {} pushed • {} failed",
-                duration_secs, self.synced_repos, self.total_commits_pushed, self.error_repos));
+            summary.push_str(&format!(
+                "✅ Completed in {:.1}s • {} synced • {} pushed • {} failed",
+                duration_secs, self.synced_repos, self.total_commits_pushed, self.error_repos
+            ));
         } else {
-            summary.push_str(&format!("✅ Completed in {:.1}s • {} synced • {} pushed",
-                duration_secs, self.synced_repos, self.total_commits_pushed));
+            summary.push_str(&format!(
+                "✅ Completed in {:.1}s • {} synced • {} pushed",
+                duration_secs, self.synced_repos, self.total_commits_pushed
+            ));
         }
 
         summary
@@ -132,29 +157,53 @@ impl SyncStatistics {
         if !self.failed_repos.is_empty() {
             lines.push(format!("🔴 FAILED REPOS ({})", self.failed_repos.len()));
             for (i, (repo_name, repo_path, error)) in self.failed_repos.iter().enumerate() {
-                let tree_char = if i == self.failed_repos.len() - 1 { "└─" } else { "├─" };
+                let tree_char = if i == self.failed_repos.len() - 1 {
+                    "└─"
+                } else {
+                    "├─"
+                };
                 let short_path = shorten_path(repo_path, 30);
-                lines.push(format!("   {} {:20} {:30} # {}", tree_char, repo_name, short_path, error));
+                lines.push(format!(
+                    "   {} {:20} {:30} # {}",
+                    tree_char, repo_name, short_path, error
+                ));
             }
             lines.push(String::new()); // Add blank line
         }
 
         // No upstream repos
         if !self.no_upstream_repos.is_empty() {
-            lines.push(format!("🟡 NEEDS UPSTREAM ({})", self.no_upstream_repos.len()));
+            lines.push(format!(
+                "🟡 NEEDS UPSTREAM ({})",
+                self.no_upstream_repos.len()
+            ));
             for (i, (repo_name, repo_path)) in self.no_upstream_repos.iter().enumerate() {
-                let tree_char = if i == self.no_upstream_repos.len() - 1 { "└─" } else { "├─" };
+                let tree_char = if i == self.no_upstream_repos.len() - 1 {
+                    "└─"
+                } else {
+                    "├─"
+                };
                 let short_path = shorten_path(repo_path, 30);
-                lines.push(format!("   {} {:20} {:30} # git push -u origin <branch>", tree_char, repo_name, short_path));
+                lines.push(format!(
+                    "   {} {:20} {:30} # git push -u origin <branch>",
+                    tree_char, repo_name, short_path
+                ));
             }
             lines.push(String::new()); // Add blank line
         }
 
         // Uncommitted changes
         if !self.uncommitted_repos.is_empty() {
-            lines.push(format!("⚠️  UNCOMMITTED CHANGES ({})", self.uncommitted_repos.len()));
+            lines.push(format!(
+                "⚠️  UNCOMMITTED CHANGES ({})",
+                self.uncommitted_repos.len()
+            ));
             for (i, (repo_name, repo_path)) in self.uncommitted_repos.iter().enumerate() {
-                let tree_char = if i == self.uncommitted_repos.len() - 1 { "└─" } else { "├─" };
+                let tree_char = if i == self.uncommitted_repos.len() - 1 {
+                    "└─"
+                } else {
+                    "├─"
+                };
                 let short_path = shorten_path(repo_path, 30);
                 lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
             }
@@ -163,9 +212,16 @@ impl SyncStatistics {
 
         // No remote repos
         if !self.no_remote_repos.is_empty() {
-            lines.push(format!("🔧 MISSING REMOTES ({})", self.no_remote_repos.len()));
+            lines.push(format!(
+                "🔧 MISSING REMOTES ({})",
+                self.no_remote_repos.len()
+            ));
             for (i, (repo_name, repo_path)) in self.no_remote_repos.iter().enumerate() {
-                let tree_char = if i == self.no_remote_repos.len() - 1 { "└─" } else { "├─" };
+                let tree_char = if i == self.no_remote_repos.len() - 1 {
+                    "└─"
+                } else {
+                    "├─"
+                };
                 let short_path = shorten_path(repo_path, 30);
                 lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
             }
@@ -237,15 +293,19 @@ pub fn shorten_path(path: &str, max_length: usize) -> String {
 
     // Keep last 2 components with ellipsis prefix
     let prefix = if path.starts_with("./") { "./" } else { "" };
-    format!("{}.../{}/{}",
+    format!(
+        "{}.../{}/{}",
         prefix,
-        components[components.len()-2],
-        components[components.len()-1])
+        components[components.len() - 2],
+        components[components.len() - 1]
+    )
 }
 
 /// Helper function to safely acquire a mutex lock with error handling
 /// Returns the lock guard or panics with a descriptive message
-pub fn acquire_stats_lock(stats: &Mutex<SyncStatistics>) -> std::sync::MutexGuard<'_, SyncStatistics> {
+pub fn acquire_stats_lock(
+    stats: &Mutex<SyncStatistics>,
+) -> std::sync::MutexGuard<'_, SyncStatistics> {
     stats
         .lock()
         .expect("Failed to acquire lock on statistics mutex - mutex may be poisoned")
@@ -378,16 +438,158 @@ pub fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, Pat
     (start_time, repos)
 }
 
+/// Components required for repository processing operations
+///
+/// This struct encapsulates all the shared resources needed for concurrent
+/// repository operations including progress tracking, statistics, and concurrency control.
+pub struct ProcessingComponents {
+    /// Maximum length of repository names for formatting alignment
+    pub max_name_length: usize,
+    /// Multi-progress instance for managing multiple concurrent progress bars
+    pub multi_progress: MultiProgress,
+    /// Styled progress bar configuration
+    pub progress_style: ProgressStyle,
+    /// Thread-safe statistics tracking for operation results
+    pub statistics: Arc<Mutex<SyncStatistics>>,
+    /// Semaphore for controlling concurrent operations
+    pub semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+/// Processing context that encapsulates all parameters needed for repository processing
+///
+/// This struct groups related parameters to reduce function argument counts and improve
+/// code organization. It contains all the shared state and configuration needed for
+/// concurrent repository operations.
+pub struct ProcessingContext {
+    /// List of discovered repositories to process
+    pub repositories: Vec<(String, PathBuf)>,
+    /// Maximum length of repository names for formatting alignment
+    pub max_name_length: usize,
+    /// Multi-progress instance for managing multiple concurrent progress bars
+    pub multi_progress: MultiProgress,
+    /// Styled progress bar configuration
+    pub progress_style: ProgressStyle,
+    /// Thread-safe statistics tracking for operation results
+    pub statistics: Arc<Mutex<SyncStatistics>>,
+    /// Semaphore for controlling concurrent operations
+    pub semaphore: Arc<tokio::sync::Semaphore>,
+    /// Total number of repositories being processed
+    pub total_repos: usize,
+    /// Start time for duration calculations
+    pub start_time: std::time::Instant,
+}
+
+/// Generic processing context for custom statistics types
+///
+/// This struct allows using custom statistics types while maintaining
+/// the same parameter grouping benefits as ProcessingContext.
+pub struct GenericProcessingContext<T> {
+    /// List of discovered repositories to process
+    pub repositories: Vec<(String, PathBuf)>,
+    /// Maximum length of repository names for formatting alignment
+    pub max_name_length: usize,
+    /// Multi-progress instance for managing multiple concurrent progress bars
+    pub multi_progress: MultiProgress,
+    /// Styled progress bar configuration
+    pub progress_style: ProgressStyle,
+    /// Thread-safe statistics tracking for operation results
+    pub statistics: Arc<Mutex<T>>,
+    /// Semaphore for controlling concurrent operations
+    pub semaphore: Arc<tokio::sync::Semaphore>,
+    /// Total number of repositories being processed
+    pub total_repos: usize,
+    /// Start time for duration calculations
+    pub start_time: std::time::Instant,
+}
+
 /// Common setup for repository processing
-pub fn setup_processing(
-    repos: &[(String, PathBuf)],
-) -> Result<(usize, MultiProgress, ProgressStyle, Arc<Mutex<SyncStatistics>>, Arc<tokio::sync::Semaphore>)> {
+pub fn setup_processing(repos: &[(String, PathBuf)]) -> Result<ProcessingComponents> {
     let max_name_length = repos.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
     let multi_progress = MultiProgress::new();
     let progress_style = create_progress_style()?;
     let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(DEFAULT_CONCURRENT_LIMIT));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(GIT_CONCURRENT_LIMIT));
 
-    Ok((max_name_length, multi_progress, progress_style, statistics, semaphore))
+    Ok(ProcessingComponents {
+        max_name_length,
+        multi_progress,
+        progress_style,
+        statistics,
+        semaphore,
+    })
 }
 
+/// Creates a ProcessingContext from repositories and start time
+pub fn create_processing_context(
+    repositories: Vec<(String, PathBuf)>,
+    start_time: std::time::Instant,
+) -> Result<ProcessingContext> {
+    let total_repos = repositories.len();
+    let max_name_length = repositories.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let multi_progress = MultiProgress::new();
+    let progress_style = create_progress_style()?;
+    let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(GIT_CONCURRENT_LIMIT));
+
+    Ok(ProcessingContext {
+        repositories,
+        max_name_length,
+        multi_progress,
+        progress_style,
+        statistics,
+        semaphore,
+        total_repos,
+        start_time,
+    })
+}
+
+/// Creates a ProcessingContext with custom semaphore limit
+pub fn create_processing_context_with_limit(
+    repositories: Vec<(String, PathBuf)>,
+    start_time: std::time::Instant,
+    concurrent_limit: usize,
+) -> Result<ProcessingContext> {
+    let total_repos = repositories.len();
+    let max_name_length = repositories.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let multi_progress = MultiProgress::new();
+    let progress_style = create_progress_style()?;
+    let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrent_limit));
+
+    Ok(ProcessingContext {
+        repositories,
+        max_name_length,
+        multi_progress,
+        progress_style,
+        statistics,
+        semaphore,
+        total_repos,
+        start_time,
+    })
+}
+
+/// Creates a GenericProcessingContext with custom statistics type
+pub fn create_generic_processing_context<T>(
+    repositories: Vec<(String, PathBuf)>,
+    start_time: std::time::Instant,
+    statistics: T,
+    concurrent_limit: usize,
+) -> Result<GenericProcessingContext<T>> {
+    let total_repos = repositories.len();
+    let max_name_length = repositories.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let multi_progress = MultiProgress::new();
+    let progress_style = create_progress_style()?;
+    let statistics = Arc::new(Mutex::new(statistics));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrent_limit));
+
+    Ok(GenericProcessingContext {
+        repositories,
+        max_name_length,
+        multi_progress,
+        progress_style,
+        statistics,
+        semaphore,
+        total_repos,
+        start_time,
+    })
+}

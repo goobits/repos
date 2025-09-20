@@ -8,12 +8,12 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use crate::core::{
-    init_command, setup_processing, set_terminal_title, set_terminal_title_and_flush,
-    NO_REPOS_MESSAGE, CONFIG_SYNCING_MESSAGE,
+    create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
+    ProcessingContext, CONFIG_SYNCING_MESSAGE, NO_REPOS_MESSAGE,
 };
 use crate::git::{
-    UserConfig, UserArgs, UserCommand, ConfigSource, validate_user_config,
-    get_global_user_config, get_current_user_config, check_repo_config,
+    check_repo_config, get_current_user_config, get_global_user_config, validate_user_config,
+    ConfigSource, UserArgs, UserCommand, UserConfig,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -52,7 +52,10 @@ pub fn parse_user_command(
 }
 
 /// Resolves config source to actual UserConfig values
-pub async fn resolve_config_source(source: &ConfigSource, _repos: &[(String, PathBuf)]) -> Result<UserConfig> {
+pub async fn resolve_config_source(
+    source: &ConfigSource,
+    _repos: &[(String, PathBuf)],
+) -> Result<UserConfig> {
     match source {
         ConfigSource::Explicit(config) => Ok(config.clone()),
         ConfigSource::Global => {
@@ -109,9 +112,9 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
 
     // Determine target config based on source
     let target_config = match &args.command {
-        UserCommand::Interactive(source) | UserCommand::Force(source) | UserCommand::DryRun(source) => {
-            resolve_config_source(source, &repos).await?
-        }
+        UserCommand::Interactive(source)
+        | UserCommand::Force(source)
+        | UserCommand::DryRun(source) => resolve_config_source(source, &repos).await?,
     };
 
     if target_config.is_empty() {
@@ -121,13 +124,20 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
     }
 
     let total_repos = repos.len();
-    let repo_word = if total_repos == 1 { "repository" } else { "repositories" };
+    let repo_word = if total_repos == 1 {
+        "repository"
+    } else {
+        "repositories"
+    };
     let mode_text = match args.command {
         UserCommand::DryRun(_) => "(dry run)",
         UserCommand::Force(_) => "(force)",
         _ => "",
     };
-    print!("\r🚀 Syncing user config for {} {} {}                    \n", total_repos, repo_word, mode_text);
+    print!(
+        "\r🚀 Syncing user config for {} {} {}                    \n",
+        total_repos, repo_word, mode_text
+    );
     println!();
 
     // Display target config
@@ -139,30 +149,17 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
     }
     println!();
 
-    // Setup for concurrent processing
-    let (max_name_length, multi_progress, progress_style, statistics, semaphore) =
-        match setup_processing(&repos) {
-            Ok(setup) => setup,
-            Err(e) => {
-                set_terminal_title_and_flush("✅ sync-repos");
-                return Err(e);
-            }
-        };
+    // Create processing context
+    let context = match create_processing_context(repos, start_time) {
+        Ok(context) => context,
+        Err(e) => {
+            set_terminal_title_and_flush("✅ sync-repos");
+            return Err(e);
+        }
+    };
 
     // Process all repositories concurrently for config sync
-    process_config_repositories(
-        repos,
-        max_name_length,
-        multi_progress,
-        progress_style,
-        statistics.clone(),
-        semaphore,
-        total_repos,
-        start_time,
-        args.command,
-        target_config,
-    )
-    .await;
+    process_config_repositories(context, args.command, target_config).await;
 
     set_terminal_title_and_flush("✅ sync-repos");
     Ok(())
@@ -170,38 +167,31 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
 
 /// Processes all repositories concurrently for config synchronization
 async fn process_config_repositories(
-    repositories: Vec<(String, PathBuf)>,
-    max_name_length: usize,
-    multi_progress: indicatif::MultiProgress,
-    progress_style: indicatif::ProgressStyle,
-    statistics: std::sync::Arc<std::sync::Mutex<crate::core::SyncStatistics>>,
-    semaphore: std::sync::Arc<tokio::sync::Semaphore>,
-    total_repos: usize,
-    start_time: std::time::Instant,
+    context: ProcessingContext,
     command: UserCommand,
     target_config: UserConfig,
 ) {
+    use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
     use indicatif::{ProgressBar, ProgressStyle};
-    use crate::core::{create_progress_bar, acquire_stats_lock, acquire_semaphore_permit};
 
     let mut futures = FuturesUnordered::new();
 
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
-    for (repo_name, _) in &repositories {
-        let progress_bar = create_progress_bar(&multi_progress, &progress_style, repo_name);
+    for (repo_name, _) in &context.repositories {
+        let progress_bar = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(CONFIG_SYNCING_MESSAGE);
         repo_progress_bars.push(progress_bar);
     }
 
     // Add a blank line before the footer
-    let separator_pb = multi_progress.add(ProgressBar::new(0));
+    let separator_pb = context.multi_progress.add(ProgressBar::new(0));
     separator_pb.set_style(ProgressStyle::default_bar().template(" ").unwrap());
     separator_pb.finish();
 
     // Create the footer progress bar
-    let footer_pb = multi_progress.add(ProgressBar::new(0));
+    let footer_pb = context.multi_progress.add(ProgressBar::new(0));
     let footer_style = ProgressStyle::default_bar()
         .template("{wide_msg}")
         .expect("Failed to create footer progress style");
@@ -209,17 +199,22 @@ async fn process_config_repositories(
 
     // Initial footer display
     let initial_stats = crate::core::SyncStatistics::new();
-    let initial_summary = initial_stats.generate_summary(total_repos, start_time.elapsed());
+    let initial_summary = initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
     footer_pb.set_message(initial_summary);
 
     // Add another blank line after the footer
-    let separator_pb2 = multi_progress.add(ProgressBar::new(0));
+    let separator_pb2 = context.multi_progress.add(ProgressBar::new(0));
     separator_pb2.set_style(ProgressStyle::default_bar().template(" ").unwrap());
     separator_pb2.finish();
 
-    for ((repo_name, repo_path), progress_bar) in repositories.into_iter().zip(repo_progress_bars) {
-        let stats_clone = std::sync::Arc::clone(&statistics);
-        let semaphore_clone = std::sync::Arc::clone(&semaphore);
+    // Extract values we need in the async closures before moving context.repositories
+    let max_name_length = context.max_name_length;
+    let start_time = context.start_time;
+    let total_repos = context.total_repos;
+
+    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+        let stats_clone = std::sync::Arc::clone(&context.statistics);
+        let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let footer_clone = footer_pb.clone();
         let command_clone = command.clone();
         let target_config_clone = target_config.clone();
@@ -227,7 +222,9 @@ async fn process_config_repositories(
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let (status, message) = check_repo_config(&repo_path, &repo_name, &target_config_clone, &command_clone).await;
+            let (status, message) =
+                check_repo_config(&repo_path, &repo_name, &target_config_clone, &command_clone)
+                    .await;
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
@@ -244,11 +241,8 @@ async fn process_config_repositories(
             stats_guard.update(&repo_name, &repo_path_str, &status, &message, false);
 
             // Update the footer summary after each repository completes
-            let current_stats = stats_guard.clone();
-            drop(stats_guard);
-
             let duration = start_time.elapsed();
-            let summary = current_stats.generate_summary(total_repos, duration);
+            let summary = stats_guard.generate_summary(total_repos, duration);
             footer_clone.set_message(summary);
         };
 
@@ -262,7 +256,7 @@ async fn process_config_repositories(
     footer_pb.finish();
 
     // Print the final detailed summary if there are any issues to report
-    let final_stats = acquire_stats_lock(&statistics);
+    let final_stats = acquire_stats_lock(&context.statistics);
     let detailed_summary = final_stats.generate_detailed_summary();
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));

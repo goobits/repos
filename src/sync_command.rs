@@ -4,11 +4,10 @@
 //! and pushing any unpushed commits to their upstream remotes.
 
 use anyhow::Result;
-use std::path::PathBuf;
 
 use crate::core::{
-    init_command, setup_processing, set_terminal_title,
-    set_terminal_title_and_flush, NO_REPOS_MESSAGE
+    create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
+    NO_REPOS_MESSAGE,
 };
 use crate::git::check_repo;
 
@@ -30,34 +29,29 @@ pub async fn handle_sync_command(force_push: bool) -> Result<()> {
     }
 
     let total_repos = repos.len();
-    let repo_word = if total_repos == 1 { "repository" } else { "repositories" };
-    print!("\r🚀 Syncing {} {}                    \n", total_repos, repo_word);
+    let repo_word = if total_repos == 1 {
+        "repository"
+    } else {
+        "repositories"
+    };
+    print!(
+        "\r🚀 Syncing {} {}                    \n",
+        total_repos, repo_word
+    );
     println!();
 
-    // Setup for concurrent processing
-    let (max_name_length, multi_progress, progress_style, statistics, semaphore) =
-        match setup_processing(&repos) {
-            Ok(setup) => setup,
-            Err(e) => {
-                // If progress style creation fails, set completion title and return error
-                set_terminal_title_and_flush("✅ sync-repos");
-                return Err(e);
-            }
-        };
+    // Create processing context
+    let context = match create_processing_context(repos, start_time) {
+        Ok(context) => context,
+        Err(e) => {
+            // If context creation fails, set completion title and return error
+            set_terminal_title_and_flush("✅ sync-repos");
+            return Err(e);
+        }
+    };
 
     // Process all repositories concurrently
-    process_sync_repositories(
-        repos,
-        max_name_length,
-        multi_progress,
-        progress_style,
-        statistics.clone(),
-        semaphore,
-        total_repos,
-        start_time,
-        force_push,
-    )
-    .await;
+    process_sync_repositories(context, force_push).await;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ sync-repos");
@@ -67,37 +61,30 @@ pub async fn handle_sync_command(force_push: bool) -> Result<()> {
 
 /// Processes all repositories concurrently for synchronization
 async fn process_sync_repositories(
-    repositories: Vec<(String, PathBuf)>,
-    max_name_length: usize,
-    multi_progress: indicatif::MultiProgress,
-    progress_style: indicatif::ProgressStyle,
-    statistics: std::sync::Arc<std::sync::Mutex<crate::core::SyncStatistics>>,
-    semaphore: std::sync::Arc<tokio::sync::Semaphore>,
-    total_repos: usize,
-    start_time: std::time::Instant,
+    context: crate::core::ProcessingContext,
     force_push: bool,
 ) {
+    use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
     use indicatif::{ProgressBar, ProgressStyle};
-    use crate::core::{create_progress_bar, acquire_stats_lock, acquire_semaphore_permit};
 
     let mut futures = FuturesUnordered::new();
 
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
-    for (repo_name, _) in &repositories {
-        let progress_bar = create_progress_bar(&multi_progress, &progress_style, repo_name);
+    for (repo_name, _) in &context.repositories {
+        let progress_bar = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(SYNCING_MESSAGE);
         repo_progress_bars.push(progress_bar);
     }
 
     // Add a blank line before the footer
-    let separator_pb = multi_progress.add(ProgressBar::new(0));
+    let separator_pb = context.multi_progress.add(ProgressBar::new(0));
     separator_pb.set_style(ProgressStyle::default_bar().template(" ").unwrap());
     separator_pb.finish();
 
     // Create the footer progress bar
-    let footer_pb = multi_progress.add(ProgressBar::new(0));
+    let footer_pb = context.multi_progress.add(ProgressBar::new(0));
     let footer_style = ProgressStyle::default_bar()
         .template("{wide_msg}")
         .expect("Failed to create footer progress style");
@@ -105,30 +92,39 @@ async fn process_sync_repositories(
 
     // Initial footer display
     let initial_stats = crate::core::SyncStatistics::new();
-    let initial_summary = initial_stats.generate_summary(total_repos, start_time.elapsed());
+    let initial_summary = initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
     footer_pb.set_message(initial_summary);
 
     // Add another blank line after the footer
-    let separator_pb2 = multi_progress.add(ProgressBar::new(0));
+    let separator_pb2 = context.multi_progress.add(ProgressBar::new(0));
     separator_pb2.set_style(ProgressStyle::default_bar().template(" ").unwrap());
     separator_pb2.finish();
 
-    for ((repo_name, repo_path), progress_bar) in repositories.into_iter().zip(repo_progress_bars) {
-        let stats_clone = std::sync::Arc::clone(&statistics);
-        let semaphore_clone = std::sync::Arc::clone(&semaphore);
+    // Extract values we need in the async closures before moving context.repositories
+    let max_name_length = context.max_name_length;
+    let start_time = context.start_time;
+    let total_repos = context.total_repos;
+
+    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+        let stats_clone = std::sync::Arc::clone(&context.statistics);
+        let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let footer_clone = footer_pb.clone();
 
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let (status, message, has_uncommitted_changes) = check_repo(&repo_path, force_push).await;
+            let (status, message, has_uncommitted_changes) =
+                check_repo(&repo_path, force_push).await;
 
-            let display_message =
-                if has_uncommitted_changes && matches!(status, crate::git::Status::Synced | crate::git::Status::Pushed) {
-                    format!("{} (uncommitted changes)", message)
-                } else {
-                    message.clone()
-                };
+            let display_message = if has_uncommitted_changes
+                && matches!(
+                    status,
+                    crate::git::Status::Synced | crate::git::Status::Pushed
+                ) {
+                format!("{} (uncommitted changes)", message)
+            } else {
+                message.clone()
+            };
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
@@ -142,14 +138,17 @@ async fn process_sync_repositories(
             // Update statistics based on operation result
             let mut stats_guard = acquire_stats_lock(&stats_clone);
             let repo_path_str = repo_path.to_string_lossy();
-            stats_guard.update(&repo_name, &repo_path_str, &status, &message, has_uncommitted_changes);
+            stats_guard.update(
+                &repo_name,
+                &repo_path_str,
+                &status,
+                &message,
+                has_uncommitted_changes,
+            );
 
             // Update the footer summary after each repository completes
-            let current_stats = stats_guard.clone();
-            drop(stats_guard);
-
             let duration = start_time.elapsed();
-            let summary = current_stats.generate_summary(total_repos, duration);
+            let summary = stats_guard.generate_summary(total_repos, duration);
             footer_clone.set_message(summary);
         };
 
@@ -163,7 +162,7 @@ async fn process_sync_repositories(
     footer_pb.finish();
 
     // Print the final detailed summary if there are any issues to report
-    let final_stats = acquire_stats_lock(&statistics);
+    let final_stats = acquire_stats_lock(&context.statistics);
     let detailed_summary = final_stats.generate_detailed_summary();
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
