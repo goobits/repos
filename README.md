@@ -12,7 +12,7 @@ Git repository management tool for batch synchronization, configuration, and sec
 ## 🚀 Quick Start
 ```bash
 # Installation
-chmod +x scripts/install.sh && ./scripts/install.sh
+chmod +x install.sh && ./install.sh
 
 # Alternative: Build from source
 cargo build --release
@@ -98,9 +98,6 @@ sync-repos audit --auto-install --verify --json
 # - Partial failures don't block other repositories
 ```
 
-## 📖 Documentation
-- **[Architecture](docs/)** - Modular codebase structure
-- **[Scripts](scripts/)** - Installation and utility scripts
 
 ## 🧪 Development
 ```bash
