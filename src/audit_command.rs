@@ -1,4 +1,4 @@
-//! TruffleHog integration for secret scanning across repositories
+//! Security auditing for repositories including secret scanning
 //!
 //! This module provides:
 //! - TruffleHog binary installation and management
@@ -568,7 +568,7 @@ async fn process_truffle_repositories(
 }
 
 /// Main handler for the TruffleHog command
-pub async fn handle_truffle_command(auto_install: bool, verify: bool, json: bool) -> Result<()> {
+pub async fn handle_audit_command(auto_install: bool, verify: bool, json: bool) -> Result<()> {
     set_terminal_title("🚀 sync-repos truffle");
 
     // Check if TruffleHog is installed

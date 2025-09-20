@@ -10,12 +10,12 @@ use clap::{Parser, Subcommand};
 mod core;
 mod git;
 mod sync_command;
-mod truffle_command;
+mod audit_command;
 mod user_command;
 
 use git::UserArgs;
 use sync_command::handle_sync_command;
-use truffle_command::handle_truffle_command;
+use audit_command::handle_audit_command;
 use user_command::{handle_user_command, parse_user_command};
 
 #[derive(Subcommand, Clone)]
@@ -48,8 +48,8 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Scan repositories for secrets using TruffleHog
-    Truffle {
+    /// Audit repositories for security vulnerabilities and secrets
+    Audit {
         /// Automatically install TruffleHog without prompting
         #[arg(long)]
         auto_install: bool,
@@ -105,11 +105,11 @@ async fn main() -> Result<()> {
             };
             handle_user_command(user_args).await
         }
-        Some(Commands::Truffle {
+        Some(Commands::Audit {
             auto_install,
             verify,
             json,
-        }) => handle_truffle_command(*auto_install, *verify, *json).await,
+        }) => handle_audit_command(*auto_install, *verify, *json).await,
         None => {
             // Default behavior - run sync command
             handle_sync_command(cli.force).await
