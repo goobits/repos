@@ -24,7 +24,7 @@ use crate::git::Status;
 // - Git operations are I/O-bound and can handle higher concurrency
 // - TruffleHog scanning is CPU-intensive and benefits from lower concurrency to prevent system overload
 pub const GIT_CONCURRENT_LIMIT: usize = 5;      // For I/O-bound git operations (push, pull, fetch)
-pub const TRUFFLE_CONCURRENT_LIMIT: usize = 3;  // For CPU-intensive TruffleHog secret scans
+pub const TRUFFLE_CONCURRENT_LIMIT: usize = 1;  // For CPU-intensive TruffleHog secret scans
 const DEFAULT_PROGRESS_BAR_LENGTH: u64 = 100;
 const DEFAULT_REPO_NAME: &str = "current";
 const UNKNOWN_REPO_NAME: &str = "unknown";
