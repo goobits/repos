@@ -95,12 +95,62 @@ echo "📁 Installing to $INSTALL_DIR..."
 cp "$SCRIPT_DIR/target/release/sync-repos" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/sync-repos"
 
-# Check if installation directory is in PATH and provide guidance if not
+# Function to create environment file for PATH management
+create_sync_repos_env() {
+    local env_file="$HOME/.sync-repos-env"
+
+    cat > "$env_file" << 'EOF'
+#!/bin/sh
+# sync-repos shell setup
+# Check if sync-repos bin directory is already in PATH to avoid duplicates
+case ":${PATH}:" in
+    *:"INSTALL_DIR_PLACEHOLDER":*)
+        ;;
+    *)
+        export PATH="INSTALL_DIR_PLACEHOLDER:$PATH"
+        ;;
+esac
+EOF
+
+    # Replace placeholder with actual install directory
+    sed -i.bak "s|INSTALL_DIR_PLACEHOLDER|$INSTALL_DIR|g" "$env_file"
+    rm -f "$env_file.bak"
+
+    echo "📝 Created environment file: $env_file"
+}
+
+# Function to safely add sourcing line to shell config
+add_to_shell_config() {
+    local config_file="$1"
+    local source_line=". \"\$HOME/.sync-repos-env\""
+
+    if [ -f "$config_file" ]; then
+        # Check if already present
+        if ! grep -q "sync-repos-env" "$config_file"; then
+            echo "" >> "$config_file"
+            echo "# Added by sync-repos installer" >> "$config_file"
+            echo "$source_line" >> "$config_file"
+            echo "📝 Added to $config_file"
+        fi
+    fi
+}
+
+# Check if installation directory is in PATH and set up environment if not
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo ""
-    echo "⚠️  $INSTALL_DIR is not in your PATH"
-    echo "   Add this to your shell config file:"
-    echo "   export PATH=\"\$PATH:$INSTALL_DIR\""
+    echo "🔧 Setting up PATH configuration..."
+
+    # Create the environment file
+    create_sync_repos_env
+
+    # Add to shell configuration files
+    add_to_shell_config "$HOME/.bashrc"
+    add_to_shell_config "$HOME/.zshrc"
+
+    echo "✅ PATH configuration complete!"
+    echo "   Restart your shell or run: source ~/.sync-repos-env"
+else
+    echo "✅ $INSTALL_DIR is already in PATH"
 fi
 
 echo "✅ Installation complete!"

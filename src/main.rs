@@ -12,6 +12,8 @@ mod git;
 mod sync_command;
 mod audit_command;
 mod user_command;
+mod hygiene;
+mod fix;
 
 use git::UserArgs;
 use sync_command::handle_sync_command;
@@ -53,12 +55,33 @@ enum Commands {
         /// Automatically install TruffleHog without prompting
         #[arg(long)]
         auto_install: bool,
-        /// Verify discovered secrets are active
+        /// Verify discovered secrets are active and fail on findings
         #[arg(long)]
         verify: bool,
         /// Output results in JSON format
         #[arg(long)]
         json: bool,
+        /// Interactive fix mode - prompts for each type of fix
+        #[arg(long)]
+        fix: bool,
+        /// Fix .gitignore violations by adding entries
+        #[arg(long)]
+        fix_gitignore: bool,
+        /// Remove large files from Git history (requires git filter-repo)
+        #[arg(long)]
+        fix_large: bool,
+        /// Remove secrets from Git history
+        #[arg(long)]
+        fix_secrets: bool,
+        /// Apply safe fixes automatically (only .gitignore additions)
+        #[arg(long)]
+        auto_fix: bool,
+        /// Preview changes without applying them
+        #[arg(long)]
+        dry_run: bool,
+        /// Only fix specific repositories (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        repos: Option<Vec<String>>,
     },
 }
 
@@ -109,7 +132,25 @@ async fn main() -> Result<()> {
             auto_install,
             verify,
             json,
-        }) => handle_audit_command(*auto_install, *verify, *json).await,
+            fix,
+            fix_gitignore,
+            fix_large,
+            fix_secrets,
+            auto_fix,
+            dry_run,
+            repos,
+        }) => handle_audit_command(
+            *auto_install,
+            *verify,
+            *json,
+            *fix,
+            *fix_gitignore,
+            *fix_large,
+            *fix_secrets,
+            *auto_fix,
+            *dry_run,
+            repos.clone(),
+        ).await,
         None => {
             // Default behavior - run sync command
             handle_sync_command(cli.force).await

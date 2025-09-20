@@ -54,6 +54,8 @@ pub enum ConfigSource {
     Global,
     /// Use current repository's config as source
     Current(std::path::PathBuf),
+    /// Interactive selection (prompts user to choose)
+    Interactive,
 }
 
 /// Mode of operation for the user config command

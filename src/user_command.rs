@@ -18,6 +18,111 @@ use crate::git::{
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 
+/// Shows interactive prompt for config selection when no arguments provided
+async fn show_config_selection_prompt() -> Result<UserArgs> {
+    println!("\n📋 Git User Configuration Options\n");
+
+    // Get global config
+    let (global_name, global_email) = get_global_user_config().await;
+
+    // Get current directory config
+    let current_dir = std::env::current_dir()?;
+    let (current_name, current_email) = get_current_user_config(&current_dir).await;
+
+    println!("1) Global config (~/.gitconfig)");
+    if let Some(name) = &global_name {
+        println!("   Name:  {}", name);
+    } else {
+        println!("   Name:  <not set>");
+    }
+    if let Some(email) = &global_email {
+        println!("   Email: {}", email);
+    } else {
+        println!("   Email: <not set>");
+    }
+
+    println!("\n2) Current directory config");
+    if let Some(name) = &current_name {
+        println!("   Name:  {}", name);
+    } else {
+        println!("   Name:  <not set>");
+    }
+    if let Some(email) = &current_email {
+        println!("   Email: {}", email);
+    } else {
+        println!("   Email: <not set>");
+    }
+
+    println!("\n3) Enter custom values");
+    println!("4) Cancel\n");
+
+    print!("Select option [1-4]: ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    let choice = input.trim();
+
+    let config_source = match choice {
+        "1" => {
+            if global_name.is_none() && global_email.is_none() {
+                println!("\n❌ No global config found. Use 'git config --global' to set values first.");
+                std::process::exit(1);
+            }
+            println!("\n✅ Using global config to sync all repositories");
+            ConfigSource::Global
+        }
+        "2" => {
+            if current_name.is_none() && current_email.is_none() {
+                println!("\n❌ No config found in current directory.");
+                std::process::exit(1);
+            }
+            println!("\n✅ Using current directory config to sync all repositories");
+            ConfigSource::Current(current_dir)
+        }
+        "3" => {
+            print!("\nEnter name (or press Enter to skip): ");
+            io::stdout().flush()?;
+            let mut name_input = String::new();
+            io::stdin().read_line(&mut name_input)?;
+            let name = if name_input.trim().is_empty() {
+                None
+            } else {
+                Some(name_input.trim().to_string())
+            };
+
+            print!("Enter email (or press Enter to skip): ");
+            io::stdout().flush()?;
+            let mut email_input = String::new();
+            io::stdin().read_line(&mut email_input)?;
+            let email = if email_input.trim().is_empty() {
+                None
+            } else {
+                Some(email_input.trim().to_string())
+            };
+
+            if name.is_none() && email.is_none() {
+                println!("\n❌ No values provided");
+                std::process::exit(1);
+            }
+
+            let config = UserConfig::new(name, email);
+            validate_user_config(&config)?;
+            println!("\n✅ Using custom config to sync all repositories");
+            ConfigSource::Explicit(config)
+        }
+        "4" | _ => {
+            println!("\nCancelled");
+            std::process::exit(0);
+        }
+    };
+
+    Ok(UserArgs {
+        command: UserCommand::Interactive(config_source),
+    })
+}
+
 /// Parses user command arguments into a UserCommand
 pub fn parse_user_command(
     name: Option<String>,
@@ -36,8 +141,8 @@ pub fn parse_user_command(
         validate_user_config(&config)?;
         ConfigSource::Explicit(config)
     } else {
-        // Default to interactive mode with global config detection
-        ConfigSource::Global
+        // No arguments provided - show interactive selection
+        ConfigSource::Interactive
     };
 
     let command = if dry_run {
@@ -65,6 +170,10 @@ pub async fn resolve_config_source(
         ConfigSource::Current(path) => {
             let (name, email) = get_current_user_config(path).await;
             Ok(UserConfig::new(name, email))
+        }
+        ConfigSource::Interactive => {
+            // This should never be reached as Interactive is resolved earlier
+            Err(anyhow::anyhow!("Interactive config source should be resolved before this point"))
         }
     }
 }
@@ -102,6 +211,13 @@ pub async fn prompt_for_config_resolution(
 pub async fn handle_user_command(args: UserArgs) -> Result<()> {
     set_terminal_title("🚀 sync-repos user");
 
+    // Handle interactive config selection first if needed
+    let resolved_args = if let UserCommand::Interactive(ConfigSource::Interactive) = &args.command {
+        show_config_selection_prompt().await?
+    } else {
+        args
+    };
+
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
@@ -111,7 +227,7 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
     }
 
     // Determine target config based on source
-    let target_config = match &args.command {
+    let target_config = match &resolved_args.command {
         UserCommand::Interactive(source)
         | UserCommand::Force(source)
         | UserCommand::DryRun(source) => resolve_config_source(source, &repos).await?,
@@ -129,7 +245,7 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
     } else {
         "repositories"
     };
-    let mode_text = match args.command {
+    let mode_text = match resolved_args.command {
         UserCommand::DryRun(_) => "(dry run)",
         UserCommand::Force(_) => "(force)",
         _ => "",
@@ -159,7 +275,7 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
     };
 
     // Process all repositories concurrently for config sync
-    process_config_repositories(context, args.command, target_config).await;
+    process_config_repositories(context, resolved_args.command, target_config).await;
 
     set_terminal_title_and_flush("✅ sync-repos");
     Ok(())

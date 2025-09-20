@@ -2,14 +2,14 @@
 name = "sync-repos"
 version = "1.0.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["goobits contributors"]
 description = "Fast Git repository synchronization tool"
 readme = "README.md"
 license = "MIT"
 keywords = ["git", "sync", "repositories", "cli", "automation"]
 categories = ["command-line-utilities", "development-tools"]
-repository = "https://github.com/yourusername/sync-repos"
-homepage = "https://github.com/yourusername/sync-repos"
+repository = "https://github.com/goobits/sync-repos"
+homepage = "https://github.com/goobits/sync-repos"
 
 [dependencies]
 # Error handling
@@ -36,6 +36,7 @@ dirs = "5.0"
 tar = "0.4"
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 zip = { version = "1.0", default-features = false, features = ["deflate"] }
+chrono = "0.4"
 
 [[bin]]
 name = "sync-repos"

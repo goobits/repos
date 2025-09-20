@@ -23,8 +23,10 @@ use crate::git::Status;
 // Different operations have different optimal concurrency limits based on their resource usage:
 // - Git operations are I/O-bound and can handle higher concurrency
 // - TruffleHog scanning is CPU-intensive and benefits from lower concurrency to prevent system overload
+// - Hygiene checking is I/O-bound (git commands) but moderate concurrency prevents overwhelming git
 pub const GIT_CONCURRENT_LIMIT: usize = 5;      // For I/O-bound git operations (push, pull, fetch)
 pub const TRUFFLE_CONCURRENT_LIMIT: usize = 1;  // For CPU-intensive TruffleHog secret scans
+pub const HYGIENE_CONCURRENT_LIMIT: usize = 3;  // For I/O-bound hygiene git operations
 const DEFAULT_PROGRESS_BAR_LENGTH: u64 = 100;
 const DEFAULT_REPO_NAME: &str = "current";
 const UNKNOWN_REPO_NAME: &str = "unknown";
@@ -438,23 +440,6 @@ pub fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, Pat
     (start_time, repos)
 }
 
-/// Components required for repository processing operations
-///
-/// This struct encapsulates all the shared resources needed for concurrent
-/// repository operations including progress tracking, statistics, and concurrency control.
-pub struct ProcessingComponents {
-    /// Maximum length of repository names for formatting alignment
-    pub max_name_length: usize,
-    /// Multi-progress instance for managing multiple concurrent progress bars
-    pub multi_progress: MultiProgress,
-    /// Styled progress bar configuration
-    pub progress_style: ProgressStyle,
-    /// Thread-safe statistics tracking for operation results
-    pub statistics: Arc<Mutex<SyncStatistics>>,
-    /// Semaphore for controlling concurrent operations
-    pub semaphore: Arc<tokio::sync::Semaphore>,
-}
-
 /// Processing context that encapsulates all parameters needed for repository processing
 ///
 /// This struct groups related parameters to reduce function argument counts and improve
@@ -502,23 +487,6 @@ pub struct GenericProcessingContext<T> {
     pub start_time: std::time::Instant,
 }
 
-/// Common setup for repository processing
-pub fn setup_processing(repos: &[(String, PathBuf)]) -> Result<ProcessingComponents> {
-    let max_name_length = repos.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
-    let multi_progress = MultiProgress::new();
-    let progress_style = create_progress_style()?;
-    let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(GIT_CONCURRENT_LIMIT));
-
-    Ok(ProcessingComponents {
-        max_name_length,
-        multi_progress,
-        progress_style,
-        statistics,
-        semaphore,
-    })
-}
-
 /// Creates a ProcessingContext from repositories and start time
 pub fn create_processing_context(
     repositories: Vec<(String, PathBuf)>,
@@ -530,31 +498,6 @@ pub fn create_processing_context(
     let progress_style = create_progress_style()?;
     let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
     let semaphore = Arc::new(tokio::sync::Semaphore::new(GIT_CONCURRENT_LIMIT));
-
-    Ok(ProcessingContext {
-        repositories,
-        max_name_length,
-        multi_progress,
-        progress_style,
-        statistics,
-        semaphore,
-        total_repos,
-        start_time,
-    })
-}
-
-/// Creates a ProcessingContext with custom semaphore limit
-pub fn create_processing_context_with_limit(
-    repositories: Vec<(String, PathBuf)>,
-    start_time: std::time::Instant,
-    concurrent_limit: usize,
-) -> Result<ProcessingContext> {
-    let total_repos = repositories.len();
-    let max_name_length = repositories.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
-    let multi_progress = MultiProgress::new();
-    let progress_style = create_progress_style()?;
-    let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrent_limit));
 
     Ok(ProcessingContext {
         repositories,
