@@ -96,7 +96,7 @@ cp "$SCRIPT_DIR/target/release/repos" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/repos"
 
 # Function to create environment file for PATH management
-create_sync_repos_env() {
+create_repos_env() {
     local env_file="$HOME/.repos-env"
 
     cat > "$env_file" << 'EOF'
@@ -141,7 +141,7 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo "🔧 Setting up PATH configuration..."
 
     # Create the environment file
-    create_sync_repos_env
+    create_repos_env
 
     # Add to shell configuration files
     add_to_shell_config "$HOME/.bashrc"
