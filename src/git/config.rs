@@ -36,9 +36,9 @@ pub enum ConfigSource {
     Interactive,
 }
 
-/// Mode of operation for the user config command
+/// Mode of operation for the config command
 #[derive(Clone)]
-pub enum UserCommand {
+pub enum ConfigCommand {
     /// Interactive mode - detect conflicts and prompt for resolution
     Interactive(ConfigSource),
     /// Force mode - overwrite all configs without prompting
@@ -47,10 +47,10 @@ pub enum UserCommand {
     DryRun(ConfigSource),
 }
 
-/// CLI arguments for the user subcommand
+/// CLI arguments for the config subcommand
 #[derive(Clone)]
-pub struct UserArgs {
-    pub command: UserCommand,
+pub struct ConfigArgs {
+    pub command: ConfigCommand,
 }
 
 /// Gets the current user config (name and email) from a repository
@@ -106,9 +106,9 @@ pub async fn check_repo_config(
     path: &Path,
     repo_name: &str,
     target_config: &UserConfig,
-    command: &UserCommand,
+    command: &ConfigCommand,
 ) -> (Status, String) {
-    use crate::commands::user::prompt_for_config_resolution;
+    use crate::commands::config::prompt_for_config_resolution;
 
     // Get current config
     let (current_name, current_email) = get_current_user_config(path).await;
@@ -132,7 +132,7 @@ pub async fn check_repo_config(
     }
 
     // Handle dry run mode
-    if matches!(command, UserCommand::DryRun(_)) {
+    if matches!(command, ConfigCommand::DryRun(_)) {
         let mut changes = Vec::new();
         if name_needs_update {
             if let Some(target_name) = &target_config.name {
@@ -152,14 +152,14 @@ pub async fn check_repo_config(
 
     // Determine if we should update based on command mode
     let should_update = match command {
-        UserCommand::Force(_) => true,
-        UserCommand::Interactive(_) => {
+        ConfigCommand::Force(_) => true,
+        ConfigCommand::Interactive(_) => {
             // For interactive mode, prompt user for conflicts
             prompt_for_config_resolution(repo_name, &current_config, target_config)
                 .await
                 .unwrap_or_default()
         }
-        UserCommand::DryRun(_) => false, // Already handled above
+        ConfigCommand::DryRun(_) => false, // Already handled above
     };
 
     if !should_update {

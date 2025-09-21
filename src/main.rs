@@ -15,8 +15,8 @@ mod utils;
 
 use commands::audit::handle_audit_command;
 use commands::sync::handle_push_command;
-use commands::user::{handle_user_command, parse_user_command};
-use git::UserArgs;
+use commands::config::{handle_config_command, parse_config_command};
+use git::ConfigArgs;
 
 #[derive(Subcommand, Clone)]
 enum Commands {
@@ -26,8 +26,8 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Manage user configuration across repositories
-    User {
+    /// Manage git configuration across repositories
+    Config {
         /// User name to set across all repositories
         #[arg(long)]
         name: Option<String>,
@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
             let force_push = *force || cli.force;
             handle_push_command(force_push).await
         }
-        Some(Commands::User {
+        Some(Commands::Config {
             name,
             email,
             from_global,
@@ -113,8 +113,8 @@ async fn main() -> Result<()> {
             force,
             dry_run,
         }) => {
-            let user_args = UserArgs {
-                command: parse_user_command(
+            let config_args = ConfigArgs {
+                command: parse_config_command(
                     name.clone(),
                     email.clone(),
                     *from_global,
@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
                     *dry_run,
                 )?,
             };
-            handle_user_command(user_args).await
+            handle_config_command(config_args).await
         }
         Some(Commands::Audit {
             install_tools,

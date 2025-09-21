@@ -24,7 +24,7 @@ repos
 repos push
 
 # Configure git identity across all repos
-repos user --name "Your Name" --email "user@example.com"
+repos config --name "Your Name" --email "user@example.com"
 
 # Security scan for exposed secrets
 repos audit
@@ -45,22 +45,22 @@ repos push --force
 ## ⚙️ Configuration Management
 ```bash
 # Interactive mode - choose from available configs
-repos user
+repos config
 
 # Set specific values
-repos user --name "Jane Dev" --email "jane@company.com"
+repos config --name "Jane Dev" --email "jane@company.com"
 
 # Copy from global config
-repos user --from-global
+repos config --from-global
 
 # Copy from current repository
-repos user --from-current
+repos config --from-current
 
 # Preview changes without applying
-repos user --from-global --dry-run
+repos config --from-global --dry-run
 
 # Force overwrite without prompting
-repos user --from-global --force
+repos config --from-global --force
 ```
 
 ## 🔒 Security Auditing

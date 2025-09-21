@@ -1,4 +1,4 @@
-//! User configuration synchronization command implementation
+//! Git configuration synchronization command implementation
 //!
 //! This module handles syncing git user.name and user.email across repositories
 //! with interactive conflict resolution and validation.
@@ -13,14 +13,14 @@ use crate::core::{
 };
 use crate::git::{
     check_repo_config, get_current_user_config, get_global_user_config, validate_user_config,
-    ConfigSource, UserArgs, UserCommand, UserConfig,
+    ConfigSource, ConfigArgs, ConfigCommand, UserConfig,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 
 /// Shows interactive prompt for config selection when no arguments provided
-async fn show_config_selection_prompt() -> Result<UserArgs> {
-    println!("\n📋 Git User Configuration Options\n");
+async fn show_config_selection_prompt() -> Result<ConfigArgs> {
+    println!("\n📋 Git Configuration Options\n");
 
     // Get global config
     let (global_name, global_email) = get_global_user_config().await;
@@ -124,20 +124,20 @@ async fn show_config_selection_prompt() -> Result<UserArgs> {
         }
     };
 
-    Ok(UserArgs {
-        command: UserCommand::Interactive(config_source),
+    Ok(ConfigArgs {
+        command: ConfigCommand::Interactive(config_source),
     })
 }
 
-/// Parses user command arguments into a UserCommand
-pub fn parse_user_command(
+/// Parses config command arguments into a ConfigCommand
+pub fn parse_config_command(
     name: Option<String>,
     email: Option<String>,
     from_global: bool,
     from_current: bool,
     force: bool,
     dry_run: bool,
-) -> Result<UserCommand> {
+) -> Result<ConfigCommand> {
     let config_source = if from_global {
         ConfigSource::Global
     } else if from_current {
@@ -152,11 +152,11 @@ pub fn parse_user_command(
     };
 
     let command = if dry_run {
-        UserCommand::DryRun(config_source)
+        ConfigCommand::DryRun(config_source)
     } else if force {
-        UserCommand::Force(config_source)
+        ConfigCommand::Force(config_source)
     } else {
-        UserCommand::Interactive(config_source)
+        ConfigCommand::Interactive(config_source)
     };
 
     Ok(command)
@@ -215,12 +215,12 @@ pub async fn prompt_for_config_resolution(
     Ok(input.trim().to_lowercase().starts_with('y'))
 }
 
-/// Handles the user config command
-pub async fn handle_user_command(args: UserArgs) -> Result<()> {
-    set_terminal_title("🚀 repos user");
+/// Handles the config command
+pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
+    set_terminal_title("🚀 repos config");
 
     // Handle interactive config selection first if needed
-    let resolved_args = if let UserCommand::Interactive(ConfigSource::Interactive) = &args.command {
+    let resolved_args = if let ConfigCommand::Interactive(ConfigSource::Interactive) = &args.command {
         show_config_selection_prompt().await?
     } else {
         args
@@ -236,13 +236,13 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
 
     // Determine target config based on source
     let target_config = match &resolved_args.command {
-        UserCommand::Interactive(source)
-        | UserCommand::Force(source)
-        | UserCommand::DryRun(source) => resolve_config_source(source, &repos).await?,
+        ConfigCommand::Interactive(source)
+        | ConfigCommand::Force(source)
+        | ConfigCommand::DryRun(source) => resolve_config_source(source, &repos).await?,
     };
 
     if target_config.is_empty() {
-        println!("\r❌ No user configuration found to sync");
+        println!("\r❌ No git configuration found to sync");
         set_terminal_title_and_flush("✅ repos");
         return Ok(());
     }
@@ -254,12 +254,12 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
         "repositories"
     };
     let mode_text = match resolved_args.command {
-        UserCommand::DryRun(_) => "(dry run)",
-        UserCommand::Force(_) => "(force)",
+        ConfigCommand::DryRun(_) => "(dry run)",
+        ConfigCommand::Force(_) => "(force)",
         _ => "",
     };
     print!(
-        "\r🚀 Syncing user config for {} {} {}                    \n",
+        "\r🚀 Syncing git config for {} {} {}                    \n",
         total_repos, repo_word, mode_text
     );
     println!();
@@ -292,7 +292,7 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
 /// Processes all repositories concurrently for config synchronization
 async fn process_config_repositories(
     context: ProcessingContext,
-    command: UserCommand,
+    command: ConfigCommand,
     target_config: UserConfig,
 ) {
     use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
