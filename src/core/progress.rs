@@ -86,7 +86,6 @@ pub fn create_processing_context(
 }
 
 /// Creates a GenericProcessingContext with custom statistics type
-#[allow(dead_code)]
 pub fn create_generic_processing_context<T>(
     repositories: Vec<(String, PathBuf)>,
     start_time: std::time::Instant,

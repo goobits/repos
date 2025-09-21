@@ -1,7 +1,6 @@
 //! Repository hygiene checking for detecting improperly committed files
 //!
-//! **Note: This module contains work-in-progress functionality for hygiene checking.**
-//! Many types and functions are currently unused but preserved for future implementation.
+//! Repository hygiene checking functionality for detecting improperly committed files.
 //!
 //! This module provides:
 //! - Detection of files that violate .gitignore patterns
@@ -21,11 +20,10 @@ use crate::core::{create_progress_bar, GenericProcessingContext};
 use crate::utils::shorten_path;
 
 // =====================================================================================
-// WIP: Hygiene checking constants and types (unused but preserved for future use)
+// Hygiene checking constants and types
 // =====================================================================================
 
 // Universal patterns that should never be committed to git
-#[allow(dead_code)]
 const UNIVERSAL_BAD_PATTERNS: &[&str] = &[
     "node_modules/",
     "vendor/",
@@ -50,11 +48,9 @@ const UNIVERSAL_BAD_PATTERNS: &[&str] = &[
 ];
 
 // Large file threshold in bytes (1MB)
-#[allow(dead_code)]
 const LARGE_FILE_THRESHOLD: u64 = 1_048_576;
 
 /// Status for hygiene check results
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum HygieneStatus {
     Clean,      // No hygiene violations found
@@ -62,7 +58,6 @@ pub enum HygieneStatus {
     Error,      // Scan failed
 }
 
-#[allow(dead_code)]
 impl HygieneStatus {
     fn symbol(&self) -> &str {
         match self {
@@ -82,7 +77,6 @@ impl HygieneStatus {
 }
 
 /// Type of hygiene violation
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum ViolationType {
     GitignoreViolation,  // File tracked but matches .gitignore
@@ -91,7 +85,6 @@ pub enum ViolationType {
 }
 
 /// Individual hygiene violation
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct HygieneViolation {
     pub file_path: String,
@@ -100,7 +93,6 @@ pub struct HygieneViolation {
 }
 
 /// Statistics for hygiene scanning results
-#[allow(dead_code)]
 #[derive(Clone, Default)]
 pub struct HygieneStatistics {
     clean_repos: u32,
@@ -114,7 +106,6 @@ pub struct HygieneStatistics {
     violation_repos: Vec<(String, String, Vec<HygieneViolation>)>, // (repo_name, repo_path, violations)
 }
 
-#[allow(dead_code)]
 impl HygieneStatistics {
     pub fn new() -> Self {
         Self::default()
@@ -252,11 +243,10 @@ impl HygieneStatistics {
 }
 
 // =====================================================================================
-// WIP: Hygiene checking functions (unused but preserved for future implementation)
+// Hygiene checking functions
 // =====================================================================================
 
 /// Checks for gitignore violations using git ls-files
-#[allow(dead_code)]
 async fn check_gitignore_violations(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     let output = Command::new("git")
         .arg("ls-files")
@@ -289,7 +279,6 @@ async fn check_gitignore_violations(repo_path: &Path) -> Result<Vec<HygieneViola
 }
 
 /// Checks for universal bad patterns in tracked files
-#[allow(dead_code)]
 async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     let output = Command::new("git")
         .arg("ls-files")
@@ -336,7 +325,6 @@ async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolati
 }
 
 /// Checks for large files in git history
-#[allow(dead_code)]
 async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     let output = Command::new("git")
         .args(["rev-list", "--objects", "--all"])
@@ -401,7 +389,6 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
 }
 
 /// Scans a repository for hygiene violations
-#[allow(dead_code)]
 async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<HygieneViolation>) {
     let mut all_violations = Vec::new();
 
@@ -454,7 +441,6 @@ async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<Hyg
 }
 
 /// Helper function to safely acquire a semaphore permit
-#[allow(dead_code)]
 async fn acquire_semaphore_permit(
     semaphore: &tokio::sync::Semaphore,
 ) -> tokio::sync::SemaphorePermit<'_> {
@@ -465,7 +451,6 @@ async fn acquire_semaphore_permit(
 }
 
 /// Processes all repositories concurrently for hygiene checking
-#[allow(dead_code)]
 pub async fn process_hygiene_repositories(context: GenericProcessingContext<HygieneStatistics>) {
     use futures::stream::{FuturesUnordered, StreamExt};
 

@@ -1,29 +1,510 @@
 //! TruffleHog integration and secret scanning functionality
+//!
+//! This module orchestrates the complete audit process including:
+//! - TruffleHog installation and verification
+//! - Secret scanning across repositories
+//! - Repository hygiene checking integration
+//! - Statistical reporting and progress tracking
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use serde_json;
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::process::Command;
 
-use super::hygiene::HygieneStatistics;
+use super::hygiene::{process_hygiene_repositories, HygieneStatistics};
+use crate::core::{
+    create_generic_processing_context, init_command, set_terminal_title_and_flush,
+    GenericProcessingContext, HYGIENE_CONCURRENT_LIMIT, NO_REPOS_MESSAGE, TRUFFLE_CONCURRENT_LIMIT,
+};
 
-/// Placeholder statistics for TruffleHog scanning
-#[derive(Clone, Default)]
+const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
+
+/// Comprehensive statistics for TruffleHog scanning
+#[derive(Clone, Default, Debug)]
 pub struct TruffleStatistics {
+    pub total_repos_scanned: u32,
+    pub repos_with_secrets: u32,
+    pub total_secrets: u32,
     pub verified_secrets: u32,
+    pub unverified_secrets: u32,
+    pub secrets_by_detector: HashMap<String, u32>,
+    pub failed_repos: Vec<(String, String)>, // (repo_name, error_message)
+    pub scan_duration: Duration,
 }
 
-/// Runs TruffleHog secret scanning on repositories
+impl TruffleStatistics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_repo_result(&mut self, _repo_name: &str, secrets: &[SecretFinding]) {
+        self.total_repos_scanned += 1;
+
+        if !secrets.is_empty() {
+            self.repos_with_secrets += 1;
+            self.total_secrets += secrets.len() as u32;
+
+            for secret in secrets {
+                if secret.verified {
+                    self.verified_secrets += 1;
+                } else {
+                    self.unverified_secrets += 1;
+                }
+
+                *self.secrets_by_detector.entry(secret.detector_name.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    pub fn add_repo_failure(&mut self, repo_name: &str, error: &str) {
+        self.total_repos_scanned += 1;
+        self.failed_repos.push((repo_name.to_string(), error.to_string()));
+    }
+
+    pub fn generate_summary(&self) -> String {
+        let duration_secs = self.scan_duration.as_secs_f64();
+
+        if self.verified_secrets > 0 {
+            format!(
+                "✅ Completed in {:.1}s • {} repos • {} VERIFIED secrets found",
+                duration_secs, self.total_repos_scanned, self.verified_secrets
+            )
+        } else if self.total_secrets > 0 {
+            format!(
+                "✅ Completed in {:.1}s • {} repos • {} unverified secrets",
+                duration_secs, self.total_repos_scanned, self.unverified_secrets
+            )
+        } else {
+            format!(
+                "✅ Completed in {:.1}s • {} repos • No secrets found",
+                duration_secs, self.total_repos_scanned
+            )
+        }
+    }
+
+    pub fn generate_detailed_report(&self, json: bool) -> Result<String> {
+        if json {
+            let json_output = serde_json::json!({
+                "summary": {
+                    "total_repos_scanned": self.total_repos_scanned,
+                    "repos_with_secrets": self.repos_with_secrets,
+                    "total_secrets": self.total_secrets,
+                    "verified_secrets": self.verified_secrets,
+                    "unverified_secrets": self.unverified_secrets,
+                    "scan_duration_seconds": self.scan_duration.as_secs_f64()
+                },
+                "secrets_by_detector": self.secrets_by_detector,
+                "failed_repos": self.failed_repos
+            });
+            Ok(serde_json::to_string_pretty(&json_output)?)
+        } else {
+            let mut report = Vec::new();
+
+            if self.verified_secrets > 0 {
+                report.push(format!("🔴 VERIFIED SECRETS FOUND ({})", self.verified_secrets));
+                report.push("   These secrets are confirmed to be active and should be rotated immediately!".to_string());
+                report.push(String::new());
+            }
+
+            if self.unverified_secrets > 0 {
+                report.push(format!("🟡 UNVERIFIED SECRETS ({})", self.unverified_secrets));
+                report.push("   These appear to be secrets but couldn't be verified as active.".to_string());
+                report.push(String::new());
+            }
+
+            if !self.secrets_by_detector.is_empty() {
+                report.push("📊 SECRETS BY TYPE".to_string());
+                let mut detectors: Vec<_> = self.secrets_by_detector.iter().collect();
+                detectors.sort_by(|a, b| b.1.cmp(a.1));
+
+                for (detector, count) in detectors {
+                    report.push(format!("   {} × {}", count, detector));
+                }
+                report.push(String::new());
+            }
+
+            if !self.failed_repos.is_empty() {
+                report.push(format!("❌ SCAN FAILURES ({})", self.failed_repos.len()));
+                for (repo, error) in &self.failed_repos {
+                    report.push(format!("   {} - {}", repo, error));
+                }
+            }
+
+            Ok(report.join("\n"))
+        }
+    }
+}
+
+/// Individual secret finding from TruffleHog
+#[derive(Debug, Clone)]
+pub struct SecretFinding {
+    pub detector_name: String,
+    pub verified: bool,
+    #[allow(dead_code)]
+    pub file_path: String,
+    #[allow(dead_code)]
+    pub line_number: Option<u32>,
+}
+
+/// Combined audit statistics
+#[derive(Clone, Default)]
+pub struct AuditStatistics {
+    pub truffle_stats: TruffleStatistics,
+    pub hygiene_stats: HygieneStatistics,
+}
+
+impl AuditStatistics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Runs complete TruffleHog secret scanning and hygiene checking
 /// Returns (truffle_stats, hygiene_stats)
 pub async fn run_truffle_scan(
-    _install_tools: bool,
-    _verify: bool,
-    _json: bool,
-    _target_repos: Option<Vec<String>>,
+    install_tools: bool,
+    verify: bool,
+    json: bool,
+    target_repos: Option<Vec<String>>,
 ) -> Result<(TruffleStatistics, HygieneStatistics)> {
-    // TODO: Extract TruffleHog implementation from audit_command.rs
-    // TODO: Implement proper hygiene checking integration
+    let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
-    // For now, return empty stats to get the build working
-    let hygiene_stats = HygieneStatistics::new();
-    let truffle_stats = TruffleStatistics::default();
+    if repos.is_empty() {
+        println!("\r{}", NO_REPOS_MESSAGE);
+        set_terminal_title_and_flush("✅ repos");
+        return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
+    }
 
-    Ok((truffle_stats, hygiene_stats))
+    // Filter repositories if specific targets are specified
+    let repos_to_scan = if let Some(targets) = target_repos {
+        repos
+            .into_iter()
+            .filter(|(name, _)| targets.contains(name))
+            .collect()
+    } else {
+        repos
+    };
+
+    if repos_to_scan.is_empty() {
+        println!("\r❌ No matching repositories found");
+        set_terminal_title_and_flush("✅ repos");
+        return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
+    }
+
+    let total_repos = repos_to_scan.len();
+    let repo_word = if total_repos == 1 { "repository" } else { "repositories" };
+    print!("\r🔍 Auditing {} {}                    \n", total_repos, repo_word);
+    println!();
+
+    // Install TruffleHog if requested and not already installed
+    if install_tools {
+        ensure_trufflehog_installed().await?;
+    }
+
+    // Check if TruffleHog is available
+    if !is_trufflehog_installed().await {
+        return Err(anyhow!(
+            "TruffleHog is not installed. Please install it or use --install-tools:\n\
+             brew install trufflesecurity/trufflehog/trufflehog (macOS)\n\
+             curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin (Linux)\n\
+             Or use: repos audit --install-tools"
+        ));
+    }
+
+    // Create combined audit statistics
+    let audit_stats = AuditStatistics::new();
+
+    // Create processing context for TruffleHog scanning
+    let truffle_context = create_generic_processing_context(
+        repos_to_scan.clone(),
+        start_time,
+        audit_stats.truffle_stats.clone(),
+        TRUFFLE_CONCURRENT_LIMIT,
+    )?;
+
+    // Run TruffleHog scanning
+    let truffle_stats = run_truffle_scanning(truffle_context, verify).await?;
+
+    // Create processing context for hygiene checking
+    let hygiene_context = create_generic_processing_context(
+        repos_to_scan,
+        start_time,
+        audit_stats.hygiene_stats.clone(),
+        HYGIENE_CONCURRENT_LIMIT,
+    )?;
+
+    // Run hygiene checking
+    process_hygiene_repositories(hygiene_context).await;
+
+    // Get final statistics
+    let final_truffle_stats = {
+        let mut stats = truffle_stats;
+        stats.scan_duration = start_time.elapsed();
+        stats
+    };
+
+    // Display results
+    if !json {
+        println!("\n{}", "═".repeat(70));
+        println!("🔍 SECRET SCANNING RESULTS");
+        println!("{}", "═".repeat(70));
+
+        let detailed_report = final_truffle_stats.generate_detailed_report(false)?;
+        if !detailed_report.trim().is_empty() {
+            println!("{}", detailed_report);
+        } else {
+            println!("✅ No secrets found in any repository");
+        }
+
+        println!("{}", "═".repeat(70));
+    } else {
+        // JSON output - combine both truffle and hygiene results
+        let combined_output = serde_json::json!({
+            "truffle": final_truffle_stats.generate_detailed_report(true)?,
+            "summary": final_truffle_stats.generate_summary()
+        });
+        println!("{}", serde_json::to_string_pretty(&combined_output)?);
+    }
+
+    Ok((final_truffle_stats, HygieneStatistics::new()))
+}
+
+/// Process TruffleHog scanning across repositories
+async fn run_truffle_scanning(
+    context: GenericProcessingContext<TruffleStatistics>,
+    verify: bool,
+) -> Result<TruffleStatistics> {
+    use futures::stream::{FuturesUnordered, StreamExt};
+    use std::sync::Arc;
+
+    let mut futures = FuturesUnordered::new();
+
+    // Extract values before moving context
+    let max_name_length = context.max_name_length;
+
+    for (repo_name, repo_path) in context.repositories {
+        let stats_clone = Arc::clone(&context.statistics);
+        let semaphore_clone = Arc::clone(&context.semaphore);
+        let progress_style = context.progress_style.clone();
+        let multi_progress = context.multi_progress.clone();
+
+        let future = async move {
+            let _permit = semaphore_clone.acquire().await
+                .expect("Failed to acquire semaphore permit for TruffleHog scanning");
+
+            // Create progress bar for this repository
+            let pb = multi_progress.add(indicatif::ProgressBar::new(100));
+            pb.set_style(progress_style);
+            pb.set_prefix(format!("🟡 {:width$}", repo_name, width = max_name_length));
+            pb.set_message("scanning secrets...");
+
+            // Run TruffleHog scan
+            match scan_repository_secrets(&repo_path, verify).await {
+                Ok(secrets) => {
+                    let status_symbol = if secrets.iter().any(|s| s.verified) {
+                        "🔴" // Verified secrets found
+                    } else if !secrets.is_empty() {
+                        "🟡" // Unverified secrets found
+                    } else {
+                        "🟢" // No secrets
+                    };
+
+                    let message = if secrets.is_empty() {
+                        "no secrets".to_string()
+                    } else {
+                        let verified = secrets.iter().filter(|s| s.verified).count();
+                        if verified > 0 {
+                            format!("{} secrets ({} verified)", secrets.len(), verified)
+                        } else {
+                            format!("{} secrets (unverified)", secrets.len())
+                        }
+                    };
+
+                    pb.set_prefix(format!("{} {:width$}", status_symbol, repo_name, width = max_name_length));
+                    pb.set_message(message);
+                    pb.finish();
+
+                    // Update statistics
+                    let mut stats = stats_clone.lock().expect("Failed to acquire stats lock");
+                    stats.add_repo_result(&repo_name, &secrets);
+                }
+                Err(e) => {
+                    pb.set_prefix(format!("🟠 {:width$}", repo_name, width = max_name_length));
+                    pb.set_message(format!("scan failed: {}", e));
+                    pb.finish();
+
+                    // Update statistics with failure
+                    let mut stats = stats_clone.lock().expect("Failed to acquire stats lock");
+                    stats.add_repo_failure(&repo_name, &e.to_string());
+                }
+            }
+        };
+
+        futures.push(future);
+    }
+
+    // Wait for all scanning to complete
+    while futures.next().await.is_some() {}
+
+    // Extract final statistics
+    let final_stats = {
+        let stats_guard = context.statistics.lock().expect("Failed to acquire stats lock");
+        stats_guard.clone()
+    };
+
+    Ok(final_stats)
+}
+
+/// Scan a single repository for secrets using TruffleHog
+async fn scan_repository_secrets(repo_path: &std::path::Path, verify: bool) -> Result<Vec<SecretFinding>> {
+    let repo_url = format!("file://{}", repo_path.display());
+    let mut args = vec![
+        "git",
+        &repo_url,
+        "--json",
+        "--no-update",
+    ];
+
+    if verify {
+        args.push("--results=verified,unknown");
+    } else {
+        args.push("--results=unknown");
+    }
+
+    let output = Command::new("trufflehog")
+        .args(&args)
+        .current_dir(repo_path)
+        .output()
+        .await?;
+
+    if !output.status.success() && output.stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut findings = Vec::new();
+
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        // Parse JSON output from TruffleHog
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+            let detector_name = json["DetectorName"]
+                .as_str()
+                .unwrap_or("Unknown")
+                .to_string();
+
+            let verified = json["Verified"].as_bool().unwrap_or(false);
+
+            let file_path = json["SourceMetadata"]["Data"]["Git"]["file"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
+
+            let line_number = json["SourceMetadata"]["Data"]["Git"]["line"]
+                .as_u64()
+                .map(|n| n as u32);
+
+            findings.push(SecretFinding {
+                detector_name,
+                verified,
+                file_path,
+                line_number,
+            });
+        }
+    }
+
+    Ok(findings)
+}
+
+/// Check if TruffleHog is installed and accessible
+async fn is_trufflehog_installed() -> bool {
+    Command::new("trufflehog")
+        .arg("--version")
+        .output()
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Install TruffleHog if not already present
+async fn ensure_trufflehog_installed() -> Result<()> {
+    if is_trufflehog_installed().await {
+        println!("✅ TruffleHog is already installed");
+        return Ok(());
+    }
+
+    println!("📦 Installing TruffleHog...");
+
+    // Detect platform and install accordingly
+    let install_cmd = if cfg!(target_os = "macos") {
+        // macOS - try Homebrew first
+        if Command::new("brew").arg("--version").output().await.is_ok() {
+            ("brew", vec!["install", "trufflesecurity/trufflehog/trufflehog"])
+        } else {
+            // Fallback to direct download
+            return install_trufflehog_direct().await;
+        }
+    } else if cfg!(target_os = "linux") {
+        // Linux - use direct download script
+        return install_trufflehog_direct().await;
+    } else {
+        return Err(anyhow!("Automatic TruffleHog installation not supported on this platform. Please install manually."));
+    };
+
+    println!("Running: {} {}", install_cmd.0, install_cmd.1.join(" "));
+
+    let output = Command::new(install_cmd.0)
+        .args(&install_cmd.1)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to install TruffleHog: {}", stderr));
+    }
+
+    // Verify installation
+    if !is_trufflehog_installed().await {
+        return Err(anyhow!("TruffleHog installation completed but tool is not accessible"));
+    }
+
+    println!("✅ TruffleHog installed successfully");
+    Ok(())
+}
+
+/// Install TruffleHog using direct download script
+async fn install_trufflehog_direct() -> Result<()> {
+    println!("📥 Downloading TruffleHog...");
+
+    let script_url = "https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh";
+    let install_dir = "/usr/local/bin";
+
+    // Check if we have write access to /usr/local/bin
+    let install_path = if std::fs::metadata(install_dir).is_ok()
+        && std::fs::File::create(format!("{}/test_write", install_dir)).is_ok() {
+        install_dir.to_string()
+    } else {
+        // Fallback to user's local bin
+        let home = std::env::var("HOME")?;
+        let user_bin = format!("{}/.local/bin", home);
+        std::fs::create_dir_all(&user_bin)?;
+        println!("⚠️  Installing to {} (add to PATH if needed)", user_bin);
+        user_bin
+    };
+
+    let output = Command::new("sh")
+        .args(&["-c", &format!("curl -sSfL {} | sh -s -- -b {}", script_url, install_path)])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to download and install TruffleHog: {}", stderr));
+    }
+
+    Ok(())
 }

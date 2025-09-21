@@ -200,3 +200,21 @@ pub async fn check_repo_config(
         )
     }
 }
+
+/// Validates if the provided email address is valid
+#[cfg(test)]
+pub fn is_valid_email(email: &str) -> bool {
+    if email.is_empty() {
+        return false;
+    }
+
+    // Basic email validation - contains @ and has content before and after
+    let parts: Vec<&str> = email.split('@').collect();
+    parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() && parts[1].contains('.')
+}
+
+/// Validates if the provided name is valid
+#[cfg(test)]
+pub fn is_valid_name(name: &str) -> bool {
+    !name.trim().is_empty()
+}
