@@ -10,7 +10,9 @@ pub const GIT_CONCURRENT_LIMIT: usize = 5; // For I/O-bound git operations (push
 
 // TODO: The following constants are reserved for future audit functionality implementation
 // Currently unused but preserved for when TruffleHog and hygiene concurrent processing is fully implemented
+#[allow(dead_code)]
 pub const TRUFFLE_CONCURRENT_LIMIT: usize = 1; // For CPU-intensive TruffleHog secret scans
+#[allow(dead_code)]
 pub const HYGIENE_CONCURRENT_LIMIT: usize = 3; // For I/O-bound hygiene git operations
 
 // Progress bar configuration

@@ -11,6 +11,7 @@ use crate::audit::{fixes::apply_fixes, scanner::run_truffle_scan};
 use crate::core::{set_terminal_title, set_terminal_title_and_flush};
 
 /// Main handler for the audit command with fix capabilities
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_audit_command(
     install_tools: bool,
     verify: bool,

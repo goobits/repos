@@ -155,10 +155,9 @@ pub async fn check_repo_config(
         UserCommand::Force(_) => true,
         UserCommand::Interactive(_) => {
             // For interactive mode, prompt user for conflicts
-            match prompt_for_config_resolution(repo_name, &current_config, target_config).await {
-                Ok(update) => update,
-                Err(_) => false, // Skip on error
-            }
+            prompt_for_config_resolution(repo_name, &current_config, target_config)
+                .await
+                .unwrap_or_default()
         }
         UserCommand::DryRun(_) => false, // Already handled above
     };

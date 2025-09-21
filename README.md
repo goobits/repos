@@ -98,6 +98,8 @@ repos audit --fix-all --repos "repo1,repo2"
 repos audit --install-tools --verify --json
 ```
 
+> **Note**: The global `--force` flag appears in audit help but only applies to sync operations.
+
 ## 🛠️ Advanced Features
 ```bash
 # Batch operations on discovered repositories

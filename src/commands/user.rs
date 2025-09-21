@@ -114,7 +114,11 @@ async fn show_config_selection_prompt() -> Result<UserArgs> {
             println!("\n✅ Using custom config to sync all repositories");
             ConfigSource::Explicit(config)
         }
-        "4" | _ => {
+        "4" => {
+            println!("\nCancelled");
+            std::process::exit(0);
+        }
+        _ => {
             println!("\nCancelled");
             std::process::exit(0);
         }
