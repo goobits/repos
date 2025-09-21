@@ -2,7 +2,7 @@
 Git repository management tool for batch synchronization, configuration, and security auditing.
 
 ## ✨ Key Features
-- **🔄 Batch Sync** - Push commits across all repositories in directory tree
+- **🔄 Batch Push** - Push commits across all repositories in directory tree
 - **⚙️ Config Management** - Synchronize git user.name/email across projects
 - **🔒 Security Audit** - Scan for exposed secrets and credentials
 - **⚡ Concurrent Processing** - Parallel operations with live progress tracking
@@ -20,8 +20,8 @@ cargo build --release
 # Show help and available commands
 repos
 
-# Sync all repos in current directory
-repos sync
+# Push all repos in current directory
+repos push
 
 # Configure git identity across all repos
 repos user --name "Your Name" --email "user@example.com"
@@ -30,13 +30,13 @@ repos user --name "Your Name" --email "user@example.com"
 repos audit
 ```
 
-## 🔄 Sync Command
+## 🔄 Push Command
 ```bash
 # Push all unpushed commits to remotes
-repos sync
+repos push
 
 # Force upstream tracking for new branches
-repos sync --force
+repos push --force
 
 # Status indicators:
 # 🟢 synced/pushed  🟡 no upstream  🟠 skipped  🔴 failed
@@ -98,7 +98,7 @@ repos audit --fix-all --repos "repo1,repo2"
 repos audit --install-tools --verify --json
 ```
 
-> **Note**: The global `--force` flag appears in audit help but only applies to sync operations.
+> **Note**: The global `--force` flag appears in audit help but only applies to push operations.
 
 ## 🛠️ Advanced Features
 ```bash

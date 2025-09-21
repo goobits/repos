@@ -1,6 +1,6 @@
-//! Repository synchronization command implementation
+//! Repository push command implementation
 //!
-//! This module handles the core sync functionality - discovering repositories
+//! This module handles the core push functionality - discovering repositories
 //! and pushing any unpushed commits to their upstream remotes.
 
 use anyhow::Result;
@@ -12,10 +12,10 @@ use crate::core::{
 use crate::git::check_repo;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
-const SYNCING_MESSAGE: &str = "syncing...";
+const PUSHING_MESSAGE: &str = "pushing...";
 
-/// Handles the repository sync command
-pub async fn handle_sync_command(force_push: bool) -> Result<()> {
+/// Handles the repository push command
+pub async fn handle_push_command(force_push: bool) -> Result<()> {
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos");
 
@@ -35,7 +35,7 @@ pub async fn handle_sync_command(force_push: bool) -> Result<()> {
         "repositories"
     };
     print!(
-        "\r🚀 Syncing {} {}                    \n",
+        "\r🚀 Pushing {} {}                    \n",
         total_repos, repo_word
     );
     println!();
@@ -51,7 +51,7 @@ pub async fn handle_sync_command(force_push: bool) -> Result<()> {
     };
 
     // Process all repositories concurrently
-    process_sync_repositories(context, force_push).await;
+    process_push_repositories(context, force_push).await;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos");
@@ -59,8 +59,8 @@ pub async fn handle_sync_command(force_push: bool) -> Result<()> {
     Ok(())
 }
 
-/// Processes all repositories concurrently for synchronization
-async fn process_sync_repositories(context: crate::core::ProcessingContext, force_push: bool) {
+/// Processes all repositories concurrently for pushing
+async fn process_push_repositories(context: crate::core::ProcessingContext, force_push: bool) {
     use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
     use indicatif::{ProgressBar, ProgressStyle};
@@ -72,7 +72,7 @@ async fn process_sync_repositories(context: crate::core::ProcessingContext, forc
     for (repo_name, _) in &context.repositories {
         let progress_bar =
             create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
-        progress_bar.set_message(SYNCING_MESSAGE);
+        progress_bar.set_message(PUSHING_MESSAGE);
         repo_progress_bars.push(progress_bar);
     }
 

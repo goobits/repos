@@ -14,14 +14,14 @@ mod git;
 mod utils;
 
 use commands::audit::handle_audit_command;
-use commands::sync::handle_sync_command;
+use commands::sync::handle_push_command;
 use commands::user::{handle_user_command, parse_user_command};
 use git::UserArgs;
 
 #[derive(Subcommand, Clone)]
 enum Commands {
-    /// Sync git repositories - push unpushed commits to remotes
-    Sync {
+    /// Push unpushed commits to remotes across all repositories
+    Push {
         /// Automatically push branches with no upstream tracking
         #[arg(long)]
         force: bool,
@@ -87,7 +87,7 @@ enum Commands {
 #[command(about = "A tool for managing and synchronizing multiple git repositories")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
-    /// Automatically push branches with no upstream tracking (for sync)
+    /// Automatically push branches with no upstream tracking (for push)
     #[arg(long, global = true)]
     force: bool,
 
@@ -101,9 +101,9 @@ async fn main() -> Result<()> {
 
     // Determine the operation mode and handle commands
     match &cli.command {
-        Some(Commands::Sync { force }) => {
+        Some(Commands::Push { force }) => {
             let force_push = *force || cli.force;
-            handle_sync_command(force_push).await
+            handle_push_command(force_push).await
         }
         Some(Commands::User {
             name,
