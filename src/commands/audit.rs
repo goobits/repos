@@ -12,14 +12,14 @@ use crate::core::{set_terminal_title, set_terminal_title_and_flush};
 
 /// Main handler for the audit command with fix capabilities
 pub async fn handle_audit_command(
-    auto_install: bool,
+    install_tools: bool,
     verify: bool,
     json: bool,
-    fix: bool,
+    interactive: bool,
     fix_gitignore: bool,
     fix_large: bool,
     fix_secrets: bool,
-    auto_fix: bool,
+    fix_all: bool,
     dry_run: bool,
     target_repos: Option<Vec<String>>,
 ) -> Result<()> {
@@ -27,19 +27,19 @@ pub async fn handle_audit_command(
 
     // Run TruffleHog secret scanning
     let (truffle_stats, hygiene_stats) = run_truffle_scan(
-        auto_install,
+        install_tools,
         verify,
         json,
         target_repos.clone(),
     ).await?;
 
     // If any fix options are specified, apply them
-    if fix || fix_gitignore || fix_large || fix_secrets || auto_fix {
-        let fix_options = if auto_fix {
-            crate::audit::fixes::FixOptions::auto_fix()
+    if interactive || fix_gitignore || fix_large || fix_secrets || fix_all {
+        let fix_options = if fix_all {
+            crate::audit::fixes::FixOptions::fix_all(dry_run, target_repos.clone())
         } else {
             crate::audit::fixes::FixOptions {
-                interactive: fix,
+                interactive,
                 fix_gitignore,
                 fix_large,
                 fix_secrets,

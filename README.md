@@ -63,11 +63,11 @@ sync-repos user --from-global --force
 
 ## 🔒 Security Auditing
 ```bash
-# Basic secret scan using TruffleHog
+# Basic secret scan (scan only, no fixes)
 sync-repos audit
 
-# Auto-install TruffleHog if missing
-sync-repos audit --auto-install
+# Install TruffleHog if missing
+sync-repos audit --install-tools
 
 # Verify if secrets are still active
 sync-repos audit --verify
@@ -75,8 +75,25 @@ sync-repos audit --verify
 # Machine-readable output
 sync-repos audit --json
 
+# Fix issues interactively (prompts for each fix)
+sync-repos audit --interactive
+
+# Apply all fixes automatically
+sync-repos audit --fix-all
+
+# Apply specific fixes only
+sync-repos audit --fix-gitignore    # Add to .gitignore
+sync-repos audit --fix-large        # Remove large files from history
+sync-repos audit --fix-secrets      # Remove secrets from history
+
+# Preview fixes without applying
+sync-repos audit --fix-all --dry-run
+
+# Fix specific repositories only
+sync-repos audit --fix-all --repos "repo1,repo2"
+
 # Combined options for CI/CD
-sync-repos audit --auto-install --verify --json
+sync-repos audit --install-tools --verify --json
 ```
 
 ## 🛠️ Advanced Features

@@ -50,18 +50,18 @@ enum Commands {
     },
     /// Audit repositories for security vulnerabilities and secrets
     Audit {
-        /// Automatically install TruffleHog without prompting
+        /// Install required tools (TruffleHog) without prompting
         #[arg(long)]
-        auto_install: bool,
+        install_tools: bool,
         /// Verify discovered secrets are active and fail on findings
         #[arg(long)]
         verify: bool,
         /// Output results in JSON format
         #[arg(long)]
         json: bool,
-        /// Interactive fix mode - prompts for each type of fix
+        /// Interactive mode - choose fixes interactively
         #[arg(long)]
-        fix: bool,
+        interactive: bool,
         /// Fix .gitignore violations by adding entries
         #[arg(long)]
         fix_gitignore: bool,
@@ -71,9 +71,9 @@ enum Commands {
         /// Remove secrets from Git history
         #[arg(long)]
         fix_secrets: bool,
-        /// Apply safe fixes automatically (only .gitignore additions)
+        /// Apply all available fixes automatically
         #[arg(long)]
-        auto_fix: bool,
+        fix_all: bool,
         /// Preview changes without applying them
         #[arg(long)]
         dry_run: bool,
@@ -127,25 +127,25 @@ async fn main() -> Result<()> {
             handle_user_command(user_args).await
         }
         Some(Commands::Audit {
-            auto_install,
+            install_tools,
             verify,
             json,
-            fix,
+            interactive,
             fix_gitignore,
             fix_large,
             fix_secrets,
-            auto_fix,
+            fix_all,
             dry_run,
             repos,
         }) => handle_audit_command(
-            *auto_install,
+            *install_tools,
             *verify,
             *json,
-            *fix,
+            *interactive,
             *fix_gitignore,
             *fix_large,
             *fix_secrets,
-            *auto_fix,
+            *fix_all,
             *dry_run,
             repos.clone(),
         ).await,

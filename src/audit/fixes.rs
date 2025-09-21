@@ -35,16 +35,16 @@ pub struct FixOptions {
 }
 
 impl FixOptions {
-    /// Create options for auto-fix mode (safe operations only)
-    pub fn auto_fix() -> Self {
+    /// Create options for fix-all mode (apply all available fixes)
+    pub fn fix_all(dry_run: bool, target_repos: Option<Vec<String>>) -> Self {
         Self {
             interactive: false,
             fix_gitignore: true,
-            fix_large: false,
-            fix_secrets: false,
-            untrack_files: false,
-            dry_run: false,
-            target_repos: None,
+            fix_large: true,
+            fix_secrets: true,
+            untrack_files: true,
+            dry_run,
+            target_repos,
         }
     }
 }

@@ -13,7 +13,7 @@ pub struct TruffleStatistics {
 /// Runs TruffleHog secret scanning on repositories
 /// Returns (truffle_stats, hygiene_stats)
 pub async fn run_truffle_scan(
-    _auto_install: bool,
+    _install_tools: bool,
     _verify: bool,
     _json: bool,
     _target_repos: Option<Vec<String>>,
