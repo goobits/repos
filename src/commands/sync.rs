@@ -60,10 +60,7 @@ pub async fn handle_sync_command(force_push: bool) -> Result<()> {
 }
 
 /// Processes all repositories concurrently for synchronization
-async fn process_sync_repositories(
-    context: crate::core::ProcessingContext,
-    force_push: bool,
-) {
+async fn process_sync_repositories(context: crate::core::ProcessingContext, force_push: bool) {
     use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
     use indicatif::{ProgressBar, ProgressStyle};
@@ -73,7 +70,8 @@ async fn process_sync_repositories(
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
     for (repo_name, _) in &context.repositories {
-        let progress_bar = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
+        let progress_bar =
+            create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(SYNCING_MESSAGE);
         repo_progress_bars.push(progress_bar);
     }
@@ -92,7 +90,8 @@ async fn process_sync_repositories(
 
     // Initial footer display
     let initial_stats = crate::core::SyncStatistics::new();
-    let initial_summary = initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
+    let initial_summary =
+        initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
     footer_pb.set_message(initial_summary);
 
     // Add another blank line after the footer
@@ -105,7 +104,9 @@ async fn process_sync_repositories(
     let start_time = context.start_time;
     let total_repos = context.total_repos;
 
-    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+    for ((repo_name, repo_path), progress_bar) in
+        context.repositories.into_iter().zip(repo_progress_bars)
+    {
         let stats_clone = std::sync::Arc::clone(&context.statistics);
         let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let footer_clone = footer_pb.clone();

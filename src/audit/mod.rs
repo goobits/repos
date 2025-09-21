@@ -1,8 +1,5 @@
-pub mod scanner;
-pub mod hygiene;
 pub mod fixes;
+pub mod hygiene;
+pub mod scanner;
 
 // Re-export commonly used items
-pub use scanner::*;
-pub use hygiene::*;
-pub use fixes::*;

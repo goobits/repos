@@ -1,5 +1,8 @@
 //! Repository hygiene checking for detecting improperly committed files
 //!
+//! **Note: This module contains work-in-progress functionality for hygiene checking.**
+//! Many types and functions are currently unused but preserved for future implementation.
+//!
 //! This module provides:
 //! - Detection of files that violate .gitignore patterns
 //! - Identification of universal bad patterns (node_modules, vendor, etc.)
@@ -14,12 +17,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 
-use crate::core::{
-    create_progress_bar, GenericProcessingContext,
-};
+use crate::core::{create_progress_bar, GenericProcessingContext};
 use crate::utils::shorten_path;
 
+// =====================================================================================
+// WIP: Hygiene checking constants and types (unused but preserved for future use)
+// =====================================================================================
+
 // Universal patterns that should never be committed to git
+#[allow(dead_code)]
 const UNIVERSAL_BAD_PATTERNS: &[&str] = &[
     "node_modules/",
     "vendor/",
@@ -44,9 +50,11 @@ const UNIVERSAL_BAD_PATTERNS: &[&str] = &[
 ];
 
 // Large file threshold in bytes (1MB)
+#[allow(dead_code)]
 const LARGE_FILE_THRESHOLD: u64 = 1_048_576;
 
 /// Status for hygiene check results
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum HygieneStatus {
     Clean,      // No hygiene violations found
@@ -54,6 +62,7 @@ pub enum HygieneStatus {
     Error,      // Scan failed
 }
 
+#[allow(dead_code)]
 impl HygieneStatus {
     fn symbol(&self) -> &str {
         match self {
@@ -73,15 +82,16 @@ impl HygieneStatus {
 }
 
 /// Type of hygiene violation
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum ViolationType {
     GitignoreViolation,  // File tracked but matches .gitignore
     UniversalBadPattern, // File matches universal bad patterns
-    LargeFile,          // File is unusually large
+    LargeFile,           // File is unusually large
 }
 
-
 /// Individual hygiene violation
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct HygieneViolation {
     pub file_path: String,
@@ -90,6 +100,7 @@ pub struct HygieneViolation {
 }
 
 /// Statistics for hygiene scanning results
+#[allow(dead_code)]
 #[derive(Clone, Default)]
 pub struct HygieneStatistics {
     clean_repos: u32,
@@ -103,6 +114,7 @@ pub struct HygieneStatistics {
     violation_repos: Vec<(String, String, Vec<HygieneViolation>)>, // (repo_name, repo_path, violations)
 }
 
+#[allow(dead_code)]
 impl HygieneStatistics {
     pub fn new() -> Self {
         Self::default()
@@ -189,9 +201,18 @@ impl HygieneStatistics {
                 let violation_summary = format!(
                     "{} violations ({} gitignore, {} patterns, {} large)",
                     violations.len(),
-                    violations.iter().filter(|v| matches!(v.violation_type, ViolationType::GitignoreViolation)).count(),
-                    violations.iter().filter(|v| matches!(v.violation_type, ViolationType::UniversalBadPattern)).count(),
-                    violations.iter().filter(|v| matches!(v.violation_type, ViolationType::LargeFile)).count()
+                    violations
+                        .iter()
+                        .filter(|v| matches!(v.violation_type, ViolationType::GitignoreViolation))
+                        .count(),
+                    violations
+                        .iter()
+                        .filter(|v| matches!(v.violation_type, ViolationType::UniversalBadPattern))
+                        .count(),
+                    violations
+                        .iter()
+                        .filter(|v| matches!(v.violation_type, ViolationType::LargeFile))
+                        .count()
                 );
                 lines.push(format!(
                     "   {} {:20} {:30} # {}",
@@ -203,7 +224,10 @@ impl HygieneStatistics {
 
         // Failed repos
         if !self.failed_repos.is_empty() {
-            lines.push(format!("🟠 FAILED HYGIENE SCANS ({})", self.failed_repos.len()));
+            lines.push(format!(
+                "🟠 FAILED HYGIENE SCANS ({})",
+                self.failed_repos.len()
+            ));
             for (i, (repo_name, repo_path, error)) in self.failed_repos.iter().enumerate() {
                 let tree_char = if i == self.failed_repos.len() - 1 {
                     "└─"
@@ -227,7 +251,12 @@ impl HygieneStatistics {
     }
 }
 
+// =====================================================================================
+// WIP: Hygiene checking functions (unused but preserved for future implementation)
+// =====================================================================================
+
 /// Checks for gitignore violations using git ls-files
+#[allow(dead_code)]
 async fn check_gitignore_violations(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     let output = Command::new("git")
         .arg("ls-files")
@@ -260,6 +289,7 @@ async fn check_gitignore_violations(repo_path: &Path) -> Result<Vec<HygieneViola
 }
 
 /// Checks for universal bad patterns in tracked files
+#[allow(dead_code)]
 async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     let output = Command::new("git")
         .arg("ls-files")
@@ -306,9 +336,10 @@ async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolati
 }
 
 /// Checks for large files in git history
+#[allow(dead_code)]
 async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     let output = Command::new("git")
-        .args(&["rev-list", "--objects", "--all"])
+        .args(["rev-list", "--objects", "--all"])
         .current_dir(repo_path)
         .output()
         .await?;
@@ -326,7 +357,7 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
         let batch_input = chunk.join("\n");
 
         let cat_file_output = Command::new("git")
-            .args(&["cat-file", "--batch-check=%(objectsize) %(rest)"])
+            .args(["cat-file", "--batch-check=%(objectsize) %(rest)"])
             .current_dir(repo_path)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -363,15 +394,14 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     }
 
     // Sort by size (largest first) and limit to top 10
-    violations.sort_by(|a, b| {
-        b.size_bytes.unwrap_or(0).cmp(&a.size_bytes.unwrap_or(0))
-    });
+    violations.sort_by(|a, b| b.size_bytes.unwrap_or(0).cmp(&a.size_bytes.unwrap_or(0)));
     violations.truncate(10);
 
     Ok(violations)
 }
 
 /// Scans a repository for hygiene violations
+#[allow(dead_code)]
 async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<HygieneViolation>) {
     let mut all_violations = Vec::new();
 
@@ -412,7 +442,11 @@ async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<Hyg
     }
 
     if all_violations.is_empty() {
-        (HygieneStatus::Clean, "no violations found".to_string(), Vec::new())
+        (
+            HygieneStatus::Clean,
+            "no violations found".to_string(),
+            Vec::new(),
+        )
     } else {
         let message = format!("{} violations found", all_violations.len());
         (HygieneStatus::Violations, message, all_violations)
@@ -420,6 +454,7 @@ async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<Hyg
 }
 
 /// Helper function to safely acquire a semaphore permit
+#[allow(dead_code)]
 async fn acquire_semaphore_permit(
     semaphore: &tokio::sync::Semaphore,
 ) -> tokio::sync::SemaphorePermit<'_> {
@@ -430,9 +465,8 @@ async fn acquire_semaphore_permit(
 }
 
 /// Processes all repositories concurrently for hygiene checking
-pub async fn process_hygiene_repositories(
-    context: GenericProcessingContext<HygieneStatistics>,
-) {
+#[allow(dead_code)]
+pub async fn process_hygiene_repositories(context: GenericProcessingContext<HygieneStatistics>) {
     use futures::stream::{FuturesUnordered, StreamExt};
 
     let mut futures = FuturesUnordered::new();
@@ -440,7 +474,8 @@ pub async fn process_hygiene_repositories(
     // Create all repository progress bars
     let mut repo_progress_bars = Vec::new();
     for (repo_name, _) in &context.repositories {
-        let progress_bar = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
+        let progress_bar =
+            create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message("checking hygiene...");
         repo_progress_bars.push(progress_bar);
     }
@@ -459,7 +494,8 @@ pub async fn process_hygiene_repositories(
 
     // Initial footer display
     let initial_stats = HygieneStatistics::new();
-    let initial_summary = initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
+    let initial_summary =
+        initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
     footer_pb.set_message(initial_summary);
 
     // Add another blank line after the footer
@@ -472,7 +508,9 @@ pub async fn process_hygiene_repositories(
     let start_time = context.start_time;
     let total_repos = context.total_repos;
 
-    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+    for ((repo_name, repo_path), progress_bar) in
+        context.repositories.into_iter().zip(repo_progress_bars)
+    {
         let stats_clone = Arc::clone(&context.statistics);
         let semaphore_clone = Arc::clone(&context.semaphore);
         let footer_clone = footer_pb.clone();
@@ -494,13 +532,7 @@ pub async fn process_hygiene_repositories(
             // Update statistics
             let mut stats_guard = stats_clone.lock().expect("Failed to acquire stats lock");
             let repo_path_str = repo_path.to_string_lossy();
-            stats_guard.update(
-                &repo_name,
-                &repo_path_str,
-                &status,
-                &message,
-                violations,
-            );
+            stats_guard.update(&repo_name, &repo_path_str, &status, &message, violations);
 
             // Update the footer summary after each repository completes
             let duration = start_time.elapsed();
@@ -518,7 +550,10 @@ pub async fn process_hygiene_repositories(
     footer_pb.finish();
 
     // Print the final detailed summary if there are any issues to report
-    let final_stats = context.statistics.lock().expect("Failed to acquire stats lock");
+    let final_stats = context
+        .statistics
+        .lock()
+        .expect("Failed to acquire stats lock");
     let detailed_summary = final_stats.generate_detailed_summary();
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
@@ -529,4 +564,3 @@ pub async fn process_hygiene_repositories(
     // Add final spacing
     println!();
 }
-

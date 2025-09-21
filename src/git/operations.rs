@@ -87,34 +87,50 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
 
     // Check if directory has uncommitted changes
     let has_uncommitted = match run_git(path, GIT_DIFF_INDEX_ARGS).await {
-        Ok((false, _, _)) => true,  // Command failed means there are changes
-        Ok((true, _, _)) => false,  // Command succeeded means no changes
-        Err(_) => false,            // Error checking, assume no changes
+        Ok((false, _, _)) => true, // Command failed means there are changes
+        Ok((true, _, _)) => false, // Command succeeded means no changes
+        Err(_) => false,           // Error checking, assume no changes
     };
 
     // Get list of remotes
     let remotes = match run_git(path, GIT_REMOTE_ARGS).await {
         Ok((true, output, _)) => output,
         Ok((false, _, _)) | Err(_) => {
-            return (Status::NoRemote, STATUS_NO_REMOTE.to_string(), has_uncommitted);
+            return (
+                Status::NoRemote,
+                STATUS_NO_REMOTE.to_string(),
+                has_uncommitted,
+            );
         }
     };
 
     if remotes.trim().is_empty() {
-        return (Status::NoRemote, STATUS_NO_REMOTE.to_string(), has_uncommitted);
+        return (
+            Status::NoRemote,
+            STATUS_NO_REMOTE.to_string(),
+            has_uncommitted,
+        );
     }
 
     // Get current branch
     let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
         Ok((true, branch, _)) => branch,
         Ok((false, _, _)) | Err(_) => {
-            return (Status::Skip, STATUS_DETACHED_HEAD.to_string(), has_uncommitted);
+            return (
+                Status::Skip,
+                STATUS_DETACHED_HEAD.to_string(),
+                has_uncommitted,
+            );
         }
     };
 
     // Skip if in detached HEAD state
     if current_branch == DETACHED_HEAD_BRANCH {
-        return (Status::Skip, STATUS_DETACHED_HEAD.to_string(), has_uncommitted);
+        return (
+            Status::Skip,
+            STATUS_DETACHED_HEAD.to_string(),
+            has_uncommitted,
+        );
     }
 
     // Fetch latest changes to ensure we have up-to-date refs
@@ -133,7 +149,11 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
             let push_args = vec!["push", "-u", "origin", &current_branch];
             match run_git(path, &push_args).await {
                 Ok((true, _, _)) => {
-                    return (Status::Pushed, "set upstream & pushed".to_string(), has_uncommitted);
+                    return (
+                        Status::Pushed,
+                        "set upstream & pushed".to_string(),
+                        has_uncommitted,
+                    );
                 }
                 Ok((false, _, stderr)) => {
                     let error_message = clean_error_message(&stderr);
@@ -145,7 +165,11 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
                 }
             }
         } else {
-            return (Status::NoUpstream, STATUS_NO_UPSTREAM.to_string(), has_uncommitted);
+            return (
+                Status::NoUpstream,
+                STATUS_NO_UPSTREAM.to_string(),
+                has_uncommitted,
+            );
         }
     }
 
@@ -163,7 +187,11 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
     // Push changes
     match run_git(path, GIT_PUSH_ARGS).await {
         Ok((true, _, _)) => {
-            let commits_word = if ahead_count == 1 { "commit" } else { "commits" };
+            let commits_word = if ahead_count == 1 {
+                "commit"
+            } else {
+                "commits"
+            };
             (
                 Status::Pushed,
                 format!("{} {} pushed", ahead_count, commits_word),

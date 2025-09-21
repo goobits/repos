@@ -5,7 +5,9 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::config::{DEFAULT_PROGRESS_BAR_LENGTH, PROGRESS_TEMPLATE, PROGRESS_CHARS, GIT_CONCURRENT_LIMIT};
+use super::config::{
+    DEFAULT_PROGRESS_BAR_LENGTH, GIT_CONCURRENT_LIMIT, PROGRESS_CHARS, PROGRESS_TEMPLATE,
+};
 use super::stats::SyncStatistics;
 
 /// Processing context that encapsulates all parameters needed for repository processing
@@ -61,7 +63,11 @@ pub fn create_processing_context(
     start_time: std::time::Instant,
 ) -> Result<ProcessingContext> {
     let total_repos = repositories.len();
-    let max_name_length = repositories.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let max_name_length = repositories
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0);
     let multi_progress = MultiProgress::new();
     let progress_style = create_progress_style()?;
     let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
@@ -87,7 +93,11 @@ pub fn create_generic_processing_context<T>(
     concurrent_limit: usize,
 ) -> Result<GenericProcessingContext<T>> {
     let total_repos = repositories.len();
-    let max_name_length = repositories.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let max_name_length = repositories
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0);
     let multi_progress = MultiProgress::new();
     let progress_style = create_progress_style()?;
     let statistics = Arc::new(Mutex::new(statistics));
@@ -129,11 +139,14 @@ pub fn create_progress_style() -> Result<ProgressStyle> {
 
 /// Helper functions for semaphore and mutex access
 pub async fn acquire_semaphore_permit(
-    semaphore: &Arc<tokio::sync::Semaphore>,
-) -> tokio::sync::SemaphorePermit {
-    semaphore.acquire().await.expect("Failed to acquire semaphore permit")
+    semaphore: &'_ Arc<tokio::sync::Semaphore>,
+) -> tokio::sync::SemaphorePermit<'_> {
+    semaphore
+        .acquire()
+        .await
+        .expect("Failed to acquire semaphore permit")
 }
 
-pub fn acquire_stats_lock<T>(stats: &Arc<Mutex<T>>) -> std::sync::MutexGuard<T> {
+pub fn acquire_stats_lock<T>(stats: &'_ Arc<Mutex<T>>) -> std::sync::MutexGuard<'_, T> {
     stats.lock().expect("Failed to acquire statistics lock")
 }

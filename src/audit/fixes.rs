@@ -6,12 +6,12 @@
 //! - Removing secrets from Git history
 
 use anyhow::{anyhow, Result};
+use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use tokio::process::Command;
-use serde_json;
 
 use super::hygiene::{HygieneStatistics, HygieneViolation, ViolationType};
 
@@ -106,7 +106,10 @@ pub async fn apply_fixes(
     }
     println!("✅ All repositories passed safety checks\n");
 
-    println!("🧹 Applying fixes to {} repositories...\n", repos_to_fix.len());
+    println!(
+        "🧹 Applying fixes to {} repositories...\n",
+        repos_to_fix.len()
+    );
 
     // Process each repository
     for (repo_name, repo_path, violations) in repos_to_fix {
@@ -202,7 +205,10 @@ async fn show_fix_summary(
     println!("Found violations in {} repositories:", repos.len());
 
     if options.fix_gitignore {
-        println!("  📝 {} files need .gitignore entries", total_gitignore + total_patterns);
+        println!(
+            "  📝 {} files need .gitignore entries",
+            total_gitignore + total_patterns
+        );
         if options.untrack_files {
             println!("     → Will untrack files after adding to .gitignore");
         } else {
@@ -276,10 +282,12 @@ async fn fix_gitignore_violations(
 ) -> Result<String> {
     let gitignore_violations: Vec<_> = violations
         .iter()
-        .filter(|v| matches!(
-            v.violation_type,
-            ViolationType::GitignoreViolation | ViolationType::UniversalBadPattern
-        ))
+        .filter(|v| {
+            matches!(
+                v.violation_type,
+                ViolationType::GitignoreViolation | ViolationType::UniversalBadPattern
+            )
+        })
         .collect();
 
     if gitignore_violations.is_empty() {
@@ -335,7 +343,7 @@ async fn fix_gitignore_violations(
     if options.untrack_files {
         for violation in gitignore_violations {
             let result = Command::new("git")
-                .args(&["rm", "--cached", "-r", &violation.file_path])
+                .args(["rm", "--cached", "-r", &violation.file_path])
                 .current_dir(repo_path)
                 .output()
                 .await?;
@@ -348,7 +356,7 @@ async fn fix_gitignore_violations(
 
     // Create commit
     Command::new("git")
-        .args(&["add", ".gitignore"])
+        .args(["add", ".gitignore"])
         .current_dir(repo_path)
         .output()
         .await?;
@@ -367,7 +375,7 @@ async fn fix_gitignore_violations(
     };
 
     Command::new("git")
-        .args(&["commit", "-m", &commit_message])
+        .args(["commit", "-m", &commit_message])
         .current_dir(repo_path)
         .output()
         .await?;
@@ -426,10 +434,7 @@ fn group_gitignore_patterns(violations: &[&HygieneViolation]) -> Vec<String> {
         }
     }
 
-    let mut result: Vec<String> = patterns
-        .keys()
-        .map(|&k| k.to_string())
-        .collect();
+    let mut result: Vec<String> = patterns.keys().map(|&k| k.to_string()).collect();
 
     result.sort();
     result
@@ -451,10 +456,7 @@ async fn fix_large_files(
     }
 
     if options.dry_run {
-        let total_size: u64 = large_files
-            .iter()
-            .map(|f| f.size_bytes.unwrap_or(0))
-            .sum();
+        let total_size: u64 = large_files.iter().map(|f| f.size_bytes.unwrap_or(0)).sum();
         return Ok(format!(
             "[DRY RUN] Would remove {} large files ({:.1} MB total)",
             large_files.len(),
@@ -480,7 +482,7 @@ async fn fix_large_files(
     let backup_ref = format!("refs/original/pre-fix-backup-large-{}", timestamp);
 
     Command::new("git")
-        .args(&["update-ref", &backup_ref, "HEAD"])
+        .args(["update-ref", &backup_ref, "HEAD"])
         .current_dir(repo_path)
         .output()
         .await?;
@@ -493,7 +495,10 @@ async fn fix_large_files(
 
     for file in &large_files {
         let size_mb = file.size_bytes.unwrap_or(0) as f64 / 1_048_576.0;
-        println!("    Removing {} ({:.1} MB) from history...", file.file_path, size_mb);
+        println!(
+            "    Removing {} ({:.1} MB) from history...",
+            file.file_path, size_mb
+        );
         // Add to paths file (literal paths for filter-repo)
         paths_content.push_str(&format!("literal:{}\n", file.file_path));
     }
@@ -503,11 +508,12 @@ async fn fix_large_files(
 
     // Run git filter-repo to remove the files
     let result = Command::new("git")
-        .args(&[
+        .args([
             "filter-repo",
             "--invert-paths",
-            "--paths-from-file", paths_file.to_str().unwrap(),
-            "--force",  // Required if there are existing remote refs
+            "--paths-from-file",
+            paths_file.to_str().unwrap(),
+            "--force", // Required if there are existing remote refs
         ])
         .current_dir(repo_path)
         .output()
@@ -523,7 +529,7 @@ async fn fix_large_files(
 
     // Run garbage collection to reclaim space
     Command::new("git")
-        .args(&["gc", "--prune=now", "--aggressive"])
+        .args(["gc", "--prune=now", "--aggressive"])
         .current_dir(repo_path)
         .output()
         .await?;
@@ -553,12 +559,12 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
     // Run TruffleHog to get detailed secret information
     let output = Command::new("trufflehog")
-        .args(&[
+        .args([
             "git",
             &format!("file://{}", repo_path),
             "--results=verified,unknown",
             "--json",
-            "--no-update",  // Don't auto-update during scan
+            "--no-update", // Don't auto-update during scan
         ])
         .current_dir(repo_path)
         .output()
@@ -602,7 +608,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     let backup_ref = format!("refs/original/pre-fix-backup-secrets-{}", timestamp);
 
     Command::new("git")
-        .args(&["update-ref", &backup_ref, "HEAD"])
+        .args(["update-ref", &backup_ref, "HEAD"])
         .current_dir(repo_path)
         .output()
         .await?;
@@ -611,7 +617,8 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     println!("    Found {} files with secrets", secret_files.len());
 
     // Create replacement file for filter-repo
-    let replacements_file = std::env::temp_dir().join(format!("filter-repo-secrets-{}.txt", timestamp));
+    let replacements_file =
+        std::env::temp_dir().join(format!("filter-repo-secrets-{}.txt", timestamp));
     let mut replacements_content = String::new();
 
     // Add patterns to be replaced with REDACTED
@@ -625,9 +632,10 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
         // Run git filter-repo to replace secrets with REDACTED
         let result = Command::new("git")
-            .args(&[
+            .args([
                 "filter-repo",
-                "--replace-text", replacements_file.to_str().unwrap(),
+                "--replace-text",
+                replacements_file.to_str().unwrap(),
                 "--force",
             ])
             .current_dir(repo_path)
@@ -646,7 +654,8 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     if !secret_files.is_empty() && secret_patterns.is_empty() {
         println!("    Removing entire files containing secrets...");
 
-        let paths_file = std::env::temp_dir().join(format!("filter-repo-secret-files-{}.txt", timestamp));
+        let paths_file =
+            std::env::temp_dir().join(format!("filter-repo-secret-files-{}.txt", timestamp));
         let paths_content: String = secret_files
             .iter()
             .map(|f| format!("literal:{}\n", f))
@@ -655,10 +664,11 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
         fs::write(&paths_file, paths_content)?;
 
         let result = Command::new("git")
-            .args(&[
+            .args([
                 "filter-repo",
                 "--invert-paths",
-                "--paths-from-file", paths_file.to_str().unwrap(),
+                "--paths-from-file",
+                paths_file.to_str().unwrap(),
                 "--force",
             ])
             .current_dir(repo_path)
@@ -675,7 +685,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
     // Run garbage collection
     Command::new("git")
-        .args(&["gc", "--prune=now", "--aggressive"])
+        .args(["gc", "--prune=now", "--aggressive"])
         .current_dir(repo_path)
         .output()
         .await?;
@@ -772,7 +782,7 @@ async fn check_repository_safety(repo_path: &str, options: &FixOptions) -> Resul
 /// Check if git filter-repo is installed
 async fn check_filter_repo_installed() -> bool {
     Command::new("git")
-        .args(&["filter-repo", "--version"])
+        .args(["filter-repo", "--version"])
         .output()
         .await
         .map(|o| o.status.success())
@@ -786,7 +796,10 @@ fn show_fix_results(results: &[FixResult]) {
     let successful = results.iter().filter(|r| r.errors.is_empty()).count();
     let failed = results.iter().filter(|r| !r.errors.is_empty()).count();
 
-    println!("✅ Fix Summary: {} successful, {} failed", successful, failed);
+    println!(
+        "✅ Fix Summary: {} successful, {} failed",
+        successful, failed
+    );
 
     if failed > 0 {
         println!("\n⚠️  Failed fixes:");

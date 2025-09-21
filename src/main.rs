@@ -7,16 +7,16 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod audit;
 mod commands;
 mod core;
 mod git;
-mod audit;
 mod utils;
 
-use git::UserArgs;
-use commands::sync::handle_sync_command;
 use commands::audit::handle_audit_command;
+use commands::sync::handle_sync_command;
 use commands::user::{handle_user_command, parse_user_command};
+use git::UserArgs;
 
 #[derive(Subcommand, Clone)]
 enum Commands {
@@ -136,18 +136,21 @@ async fn main() -> Result<()> {
             fix_all,
             dry_run,
             repos,
-        }) => handle_audit_command(
-            *install_tools,
-            *verify,
-            *json,
-            *interactive,
-            *fix_gitignore,
-            *fix_large,
-            *fix_secrets,
-            *fix_all,
-            *dry_run,
-            repos.clone(),
-        ).await,
+        }) => {
+            handle_audit_command(
+                *install_tools,
+                *verify,
+                *json,
+                *interactive,
+                *fix_gitignore,
+                *fix_large,
+                *fix_secrets,
+                *fix_all,
+                *dry_run,
+                repos.clone(),
+            )
+            .await
+        }
         None => {
             // Default behavior - show help
             use clap::CommandFactory;

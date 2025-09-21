@@ -1,7 +1,7 @@
 //! Statistics tracking for repository operations
 
-use std::time::Duration;
 use crate::git::Status;
+use std::time::Duration;
 
 /// Statistics for tracking repository synchronization results
 #[derive(Clone, Default, Debug)]

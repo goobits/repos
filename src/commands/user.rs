@@ -67,7 +67,9 @@ async fn show_config_selection_prompt() -> Result<UserArgs> {
     let config_source = match choice {
         "1" => {
             if global_name.is_none() && global_email.is_none() {
-                println!("\n❌ No global config found. Use 'git config --global' to set values first.");
+                println!(
+                    "\n❌ No global config found. Use 'git config --global' to set values first."
+                );
                 std::process::exit(1);
             }
             println!("\n✅ Using global config to sync all repositories");
@@ -173,7 +175,9 @@ pub async fn resolve_config_source(
         }
         ConfigSource::Interactive => {
             // This should never be reached as Interactive is resolved earlier
-            Err(anyhow::anyhow!("Interactive config source should be resolved before this point"))
+            Err(anyhow::anyhow!(
+                "Interactive config source should be resolved before this point"
+            ))
         }
     }
 }
@@ -296,7 +300,8 @@ async fn process_config_repositories(
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
     for (repo_name, _) in &context.repositories {
-        let progress_bar = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
+        let progress_bar =
+            create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(CONFIG_SYNCING_MESSAGE);
         repo_progress_bars.push(progress_bar);
     }
@@ -315,7 +320,8 @@ async fn process_config_repositories(
 
     // Initial footer display
     let initial_stats = crate::core::SyncStatistics::new();
-    let initial_summary = initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
+    let initial_summary =
+        initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
     footer_pb.set_message(initial_summary);
 
     // Add another blank line after the footer
@@ -328,7 +334,9 @@ async fn process_config_repositories(
     let start_time = context.start_time;
     let total_repos = context.total_repos;
 
-    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+    for ((repo_name, repo_path), progress_bar) in
+        context.repositories.into_iter().zip(repo_progress_bars)
+    {
         let stats_clone = std::sync::Arc::clone(&context.statistics);
         let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let footer_clone = footer_pb.clone();

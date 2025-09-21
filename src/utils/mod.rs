@@ -1,6 +1,6 @@
-pub mod terminal;
 pub mod fs;
+pub mod terminal;
 
 // Re-export commonly used items
-pub use terminal::*;
 pub use fs::*;
+pub use terminal::*;

@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 
-use crate::audit::{scanner::run_truffle_scan, fixes::apply_fixes};
+use crate::audit::{fixes::apply_fixes, scanner::run_truffle_scan};
 use crate::core::{set_terminal_title, set_terminal_title_and_flush};
 
 /// Main handler for the audit command with fix capabilities
@@ -26,12 +26,8 @@ pub async fn handle_audit_command(
     set_terminal_title("🚀 repos audit");
 
     // Run TruffleHog secret scanning
-    let (truffle_stats, hygiene_stats) = run_truffle_scan(
-        install_tools,
-        verify,
-        json,
-        target_repos.clone(),
-    ).await?;
+    let (truffle_stats, hygiene_stats) =
+        run_truffle_scan(install_tools, verify, json, target_repos.clone()).await?;
 
     // If any fix options are specified, apply them
     if interactive || fix_gitignore || fix_large || fix_secrets || fix_all {

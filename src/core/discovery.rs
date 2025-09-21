@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use super::config::{DEFAULT_REPO_NAME, UNKNOWN_REPO_NAME, SKIP_DIRECTORIES};
+use super::config::{DEFAULT_REPO_NAME, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME};
 
 /// Recursively searches for git repositories in the current directory
 /// Returns a vector of (repository_name, path) tuples with deduplication

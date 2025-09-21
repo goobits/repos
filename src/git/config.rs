@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use super::operations::{run_git, get_git_config, set_git_config};
+use super::operations::{get_git_config, run_git, set_git_config};
 use super::status::Status;
 
 /// Represents user configuration (name and email) to sync across repositories
@@ -108,7 +108,7 @@ pub async fn check_repo_config(
     target_config: &UserConfig,
     command: &UserCommand,
 ) -> (Status, String) {
-    use crate::commands::user::{prompt_for_config_resolution};
+    use crate::commands::user::prompt_for_config_resolution;
 
     // Get current config
     let (current_name, current_email) = get_current_user_config(path).await;
