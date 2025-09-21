@@ -23,7 +23,7 @@ pub async fn handle_audit_command(
     dry_run: bool,
     target_repos: Option<Vec<String>>,
 ) -> Result<()> {
-    set_terminal_title("🚀 sync-repos audit");
+    set_terminal_title("🚀 repos audit");
 
     // Run TruffleHog secret scanning
     let (truffle_stats, hygiene_stats) = run_truffle_scan(
@@ -52,7 +52,7 @@ pub async fn handle_audit_command(
         apply_fixes(&hygiene_stats, fix_options).await?;
     }
 
-    set_terminal_title_and_flush("✅ sync-repos");
+    set_terminal_title_and_flush("✅ repos");
 
     // Exit with error code if secrets were found and verify flag is set
     if verify && truffle_stats.verified_secrets > 0 {

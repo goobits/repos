@@ -1,4 +1,4 @@
-//! sync-repos: A tool for synchronizing multiple git repositories
+//! repos: A tool for managing and synchronizing multiple git repositories
 //!
 //! This tool scans for git repositories and provides commands to:
 //! - Push any unpushed commits to their upstream remotes
@@ -20,8 +20,7 @@ use commands::user::{handle_user_command, parse_user_command};
 
 #[derive(Subcommand, Clone)]
 enum Commands {
-    /// Sync git repositories (default behavior)
-    #[command(hide = true)]
+    /// Sync git repositories - push unpushed commits to remotes
     Sync {
         /// Automatically push branches with no upstream tracking
         #[arg(long)]
@@ -84,8 +83,8 @@ enum Commands {
 }
 
 #[derive(Parser)]
-#[command(name = "sync-repos")]
-#[command(about = "A tool for synchronizing multiple git repositories")]
+#[command(name = "repos")]
+#[command(about = "A tool for managing and synchronizing multiple git repositories")]
 #[command(version = "1.0")]
 struct Cli {
     /// Automatically push branches with no upstream tracking (for sync)
@@ -150,8 +149,11 @@ async fn main() -> Result<()> {
             repos.clone(),
         ).await,
         None => {
-            // Default behavior - run sync command
-            handle_sync_command(cli.force).await
+            // Default behavior - show help
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            cmd.print_help()?;
+            Ok(())
         }
     }
 }

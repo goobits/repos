@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# sync-repos installer script
-# Installs the sync-repos tool for managing multiple git repositories
+# repos installer script
+# Installs the repos tool for managing multiple git repositories
 #
 
 set -e  # Exit on any error
@@ -12,7 +12,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Change to script directory to ensure we're in the right place
 cd "$SCRIPT_DIR"
 
-echo "📦 Building sync-repos..."
+echo "📦 Building repos..."
 
 # Function to add cargo to PATH in shell configuration files
 add_cargo_to_path() {
@@ -33,7 +33,7 @@ add_cargo_to_path() {
     if [ -n "$shell_config" ] && [ -f "$shell_config" ]; then
         if ! grep -q '.cargo/env' "$shell_config"; then
             echo "" >> "$shell_config"
-            echo "# Added by sync-repos installer" >> "$shell_config"
+            echo "# Added by repos installer" >> "$shell_config"
             echo "source \"\$HOME/.cargo/env\"" >> "$shell_config"
             echo "📝 Added cargo to PATH in $shell_config"
         fi
@@ -92,17 +92,17 @@ fi
 
 # Install the binary
 echo "📁 Installing to $INSTALL_DIR..."
-cp "$SCRIPT_DIR/target/release/sync-repos" "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/sync-repos"
+cp "$SCRIPT_DIR/target/release/repos" "$INSTALL_DIR/"
+chmod +x "$INSTALL_DIR/repos"
 
 # Function to create environment file for PATH management
 create_sync_repos_env() {
-    local env_file="$HOME/.sync-repos-env"
+    local env_file="$HOME/.repos-env"
 
     cat > "$env_file" << 'EOF'
 #!/bin/sh
-# sync-repos shell setup
-# Check if sync-repos bin directory is already in PATH to avoid duplicates
+# repos shell setup
+# Check if repos bin directory is already in PATH to avoid duplicates
 case ":${PATH}:" in
     *:"INSTALL_DIR_PLACEHOLDER":*)
         ;;
@@ -122,13 +122,13 @@ EOF
 # Function to safely add sourcing line to shell config
 add_to_shell_config() {
     local config_file="$1"
-    local source_line=". \"\$HOME/.sync-repos-env\""
+    local source_line=". \"\$HOME/.repos-env\""
 
     if [ -f "$config_file" ]; then
         # Check if already present
-        if ! grep -q "sync-repos-env" "$config_file"; then
+        if ! grep -q "repos-env" "$config_file"; then
             echo "" >> "$config_file"
-            echo "# Added by sync-repos installer" >> "$config_file"
+            echo "# Added by repos installer" >> "$config_file"
             echo "$source_line" >> "$config_file"
             echo "📝 Added to $config_file"
         fi
@@ -148,10 +148,10 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     add_to_shell_config "$HOME/.zshrc"
 
     echo "✅ PATH configuration complete!"
-    echo "   Restart your shell or run: source ~/.sync-repos-env"
+    echo "   Restart your shell or run: source ~/.repos-env"
 else
     echo "✅ $INSTALL_DIR is already in PATH"
 fi
 
 echo "✅ Installation complete!"
-echo "   Run 'sync-repos' in any directory to sync all git repositories"
+echo "   Run 'repos' in any directory to manage your git repositories"

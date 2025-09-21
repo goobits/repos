@@ -1183,6 +1183,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "repos"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "dirs",
+ "flate2",
+ "futures",
+ "indicatif",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tar",
+ "tokio",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.12.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1466,26 +1486,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "sync-repos"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "dirs",
- "flate2",
- "futures",
- "indicatif",
- "reqwest",
- "serde",
- "serde_json",
- "tar",
- "tokio",
- "walkdir",
- "zip",
 ]
 
 [[package]]

@@ -1,15 +1,15 @@
 [package]
-name = "sync-repos"
+name = "repos"
 version = "1.0.0"
 edition = "2021"
 authors = ["goobits contributors"]
-description = "Fast Git repository synchronization tool"
+description = "Fast Git repository management and synchronization tool"
 readme = "README.md"
 license = "MIT"
 keywords = ["git", "sync", "repositories", "cli", "automation"]
 categories = ["command-line-utilities", "development-tools"]
-repository = "https://github.com/goobits/sync-repos"
-homepage = "https://github.com/goobits/sync-repos"
+repository = "https://github.com/goobits/repos"
+homepage = "https://github.com/goobits/repos"
 
 [dependencies]
 # Error handling
@@ -39,6 +39,6 @@ zip = { version = "1.0", default-features = false, features = ["deflate"] }
 chrono = "0.4"
 
 [[bin]]
-name = "sync-repos"
+name = "repos"
 path = "src/main.rs"
 doc = false  # Don't include binary in documentation

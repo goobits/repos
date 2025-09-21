@@ -322,7 +322,7 @@ async fn fix_gitignore_violations(
         gitignore_content.push('\n');
     }
 
-    gitignore_content.push_str("\n# Added by sync-repos audit --fix-gitignore\n");
+    gitignore_content.push_str("\n# Added by repos audit --fix-gitignore\n");
     for pattern in &new_patterns {
         gitignore_content.push_str(pattern);
         gitignore_content.push('\n');
@@ -707,7 +707,7 @@ async fn check_repository_safety(repo_path: &str, options: &FixOptions) -> Resul
         return Err(anyhow!(
             "Repository has uncommitted changes:\n{}\n\n\
              Please commit or stash changes before running fixes.\n\
-             Run: git stash push -m \"Before sync-repos fix\"",
+             Run: git stash push -m \"Before repos fix\"",
             changes.trim()
         ));
     }

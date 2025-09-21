@@ -1,5 +1,5 @@
-# sync-repos Makefile
-# Build and installation targets for the Git repository synchronization tool
+# repos Makefile
+# Build and installation targets for the Git repository management tool
 
 .PHONY: build install clean release-all dev test fmt lint help
 
@@ -29,7 +29,7 @@ release-all:
 # Build and run development version (debug build with faster compilation)
 dev:
 	cargo build
-	./target/debug/sync-repos
+	./target/debug/repos
 
 # Run all unit and integration tests
 test:

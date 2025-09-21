@@ -16,15 +16,15 @@ const SYNCING_MESSAGE: &str = "syncing...";
 
 /// Handles the repository sync command
 pub async fn handle_sync_command(force_push: bool) -> Result<()> {
-    // Set terminal title to indicate sync-repos is running
-    set_terminal_title("🚀 sync-repos");
+    // Set terminal title to indicate repos is running
+    set_terminal_title("🚀 repos");
 
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
         println!("\r{}", NO_REPOS_MESSAGE);
         // Set terminal title to green checkbox to indicate completion
-        set_terminal_title_and_flush("✅ sync-repos");
+        set_terminal_title_and_flush("✅ repos");
         return Ok(());
     }
 
@@ -45,7 +45,7 @@ pub async fn handle_sync_command(force_push: bool) -> Result<()> {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
-            set_terminal_title_and_flush("✅ sync-repos");
+            set_terminal_title_and_flush("✅ repos");
             return Err(e);
         }
     };
@@ -54,7 +54,7 @@ pub async fn handle_sync_command(force_push: bool) -> Result<()> {
     process_sync_repositories(context, force_push).await;
 
     // Set terminal title to green checkbox to indicate completion
-    set_terminal_title_and_flush("✅ sync-repos");
+    set_terminal_title_and_flush("✅ repos");
 
     Ok(())
 }

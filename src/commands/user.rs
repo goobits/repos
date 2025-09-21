@@ -209,7 +209,7 @@ pub async fn prompt_for_config_resolution(
 
 /// Handles the user config command
 pub async fn handle_user_command(args: UserArgs) -> Result<()> {
-    set_terminal_title("🚀 sync-repos user");
+    set_terminal_title("🚀 repos user");
 
     // Handle interactive config selection first if needed
     let resolved_args = if let UserCommand::Interactive(ConfigSource::Interactive) = &args.command {
@@ -222,7 +222,7 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
 
     if repos.is_empty() {
         println!("\r{}", NO_REPOS_MESSAGE);
-        set_terminal_title_and_flush("✅ sync-repos");
+        set_terminal_title_and_flush("✅ repos");
         return Ok(());
     }
 
@@ -235,7 +235,7 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
 
     if target_config.is_empty() {
         println!("\r❌ No user configuration found to sync");
-        set_terminal_title_and_flush("✅ sync-repos");
+        set_terminal_title_and_flush("✅ repos");
         return Ok(());
     }
 
@@ -269,7 +269,7 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
     let context = match create_processing_context(repos, start_time) {
         Ok(context) => context,
         Err(e) => {
-            set_terminal_title_and_flush("✅ sync-repos");
+            set_terminal_title_and_flush("✅ repos");
             return Err(e);
         }
     };
@@ -277,7 +277,7 @@ pub async fn handle_user_command(args: UserArgs) -> Result<()> {
     // Process all repositories concurrently for config sync
     process_config_repositories(context, resolved_args.command, target_config).await;
 
-    set_terminal_title_and_flush("✅ sync-repos");
+    set_terminal_title_and_flush("✅ repos");
     Ok(())
 }
 
