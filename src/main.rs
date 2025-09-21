@@ -85,7 +85,7 @@ enum Commands {
 #[derive(Parser)]
 #[command(name = "repos")]
 #[command(about = "A tool for managing and synchronizing multiple git repositories")]
-#[command(version = "1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     /// Automatically push branches with no upstream tracking (for sync)
     #[arg(long, global = true)]
