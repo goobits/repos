@@ -497,7 +497,7 @@ async fn install_trufflehog_direct() -> Result<()> {
     };
 
     let output = Command::new("sh")
-        .args(&["-c", &format!("curl -sSfL {} | sh -s -- -b {}", script_url, install_path)])
+        .args(["-c", &format!("curl -sSfL {} | sh -s -- -b {}", script_url, install_path)])
         .output()
         .await?;
 
