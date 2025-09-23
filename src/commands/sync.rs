@@ -63,7 +63,6 @@ pub async fn handle_push_command(force_push: bool) -> Result<()> {
 async fn process_push_repositories(context: crate::core::ProcessingContext, force_push: bool) {
     use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
-    use indicatif::{ProgressBar, ProgressStyle};
 
     let mut futures = FuturesUnordered::new();
 
@@ -77,16 +76,10 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
     }
 
     // Add a blank line before the footer
-    let separator_pb = context.multi_progress.add(ProgressBar::new(0));
-    separator_pb.set_style(ProgressStyle::default_bar().template(" ").unwrap());
-    separator_pb.finish();
+    let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
 
     // Create the footer progress bar
-    let footer_pb = context.multi_progress.add(ProgressBar::new(0));
-    let footer_style = ProgressStyle::default_bar()
-        .template("{wide_msg}")
-        .expect("Failed to create footer progress style");
-    footer_pb.set_style(footer_style);
+    let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
 
     // Initial footer display
     let initial_stats = crate::core::SyncStatistics::new();
@@ -95,9 +88,7 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
     footer_pb.set_message(initial_summary);
 
     // Add another blank line after the footer
-    let separator_pb2 = context.multi_progress.add(ProgressBar::new(0));
-    separator_pb2.set_style(ProgressStyle::default_bar().template(" ").unwrap());
-    separator_pb2.finish();
+    let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
 
     // Extract values we need in the async closures before moving context.repositories
     let max_name_length = context.max_name_length;

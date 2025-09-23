@@ -1,6 +1,7 @@
 //! Statistics tracking for repository operations
 
 use crate::git::Status;
+use crate::core::config::{PATH_DISPLAY_WIDTH, ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, TIMEOUT_SECONDS_DISPLAY};
 use std::time::Duration;
 
 /// Statistics for tracking repository synchronization results
@@ -116,7 +117,7 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, 30);
+                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
                     "   {} {:20} {:30} # {}",
                     tree_char, repo_name, short_path, error
@@ -137,7 +138,7 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, 30);
+                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
                     "   {} {:20} {:30} # git push -u origin <branch>",
                     tree_char, repo_name, short_path
@@ -158,7 +159,7 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, 30);
+                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
             }
             lines.push(String::new()); // Add blank line
@@ -176,7 +177,7 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, 30);
+                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
             }
         }
@@ -210,8 +211,8 @@ pub fn clean_error_message(error: &str) -> String {
         "email privacy restriction".to_string()
     } else if cleaned.contains("timed out") {
         // Extract timeout duration if present
-        if cleaned.contains("180") {
-            "timeout (180s)".to_string()
+        if cleaned.contains(&TIMEOUT_SECONDS_DISPLAY.to_string()) {
+            format!("timeout ({}s)", TIMEOUT_SECONDS_DISPLAY)
         } else {
             "timeout".to_string()
         }
@@ -223,8 +224,8 @@ pub fn clean_error_message(error: &str) -> String {
         "network error".to_string()
     } else {
         // Truncate long messages
-        if cleaned.len() > 40 {
-            format!("{}...", &cleaned[..37])
+        if cleaned.len() > ERROR_MESSAGE_MAX_LENGTH {
+            format!("{}...", &cleaned[..ERROR_MESSAGE_TRUNCATE_LENGTH])
         } else {
             cleaned
         }

@@ -141,7 +141,7 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
 
     // Check if current branch has an upstream
     let upstream_check = run_git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await;
-    let upstream_exists = upstream_check.is_ok() && upstream_check.as_ref().unwrap().0;
+    let upstream_exists = upstream_check.as_ref().is_ok_and(|result| result.0);
 
     if !upstream_exists {
         if force_push {

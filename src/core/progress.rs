@@ -150,3 +150,23 @@ pub async fn acquire_semaphore_permit(
 pub fn acquire_stats_lock<T>(stats: &'_ Arc<Mutex<T>>) -> std::sync::MutexGuard<'_, T> {
     stats.lock().expect("Failed to acquire statistics lock")
 }
+
+/// Creates a separator progress bar for visual spacing between sections
+/// Returns a finished ProgressBar that provides visual separation
+pub fn create_separator_progress_bar(multi_progress: &MultiProgress) -> ProgressBar {
+    let separator_pb = multi_progress.add(ProgressBar::new(0));
+    separator_pb.set_style(ProgressStyle::default_bar().template(" ").expect("Failed to create separator progress bar template - this indicates an invalid template string"));
+    separator_pb.finish();
+    separator_pb
+}
+
+/// Creates a footer progress bar for displaying summary information
+/// Returns a configured ProgressBar for showing operation summaries
+pub fn create_footer_progress_bar(multi_progress: &MultiProgress) -> ProgressBar {
+    let footer_pb = multi_progress.add(ProgressBar::new(0));
+    let footer_style = ProgressStyle::default_bar()
+        .template("{wide_msg}")
+        .expect("Failed to create footer progress style - this indicates an invalid template string in the progress bar configuration");
+    footer_pb.set_style(footer_style);
+    footer_pb
+}

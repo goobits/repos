@@ -100,7 +100,7 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
 pub fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, PathBuf)>) {
     println!();
     print!("{}", scanning_msg);
-    std::io::stdout().flush().unwrap();
+    std::io::stdout().flush().expect("Failed to flush stdout during repository scanning - this indicates a terminal or I/O issue");
 
     let start_time = std::time::Instant::now();
     let repos = find_repos();

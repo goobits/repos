@@ -202,7 +202,6 @@ pub async fn check_repo_config(
 }
 
 /// Validates if the provided email address is valid
-#[allow(dead_code)]
 pub fn is_valid_email(email: &str) -> bool {
     if email.is_empty() {
         return false;
@@ -214,7 +213,6 @@ pub fn is_valid_email(email: &str) -> bool {
 }
 
 /// Validates if the provided name is valid
-#[allow(dead_code)]
 pub fn is_valid_name(name: &str) -> bool {
     !name.trim().is_empty()
 }

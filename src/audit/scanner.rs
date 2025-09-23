@@ -141,10 +141,7 @@ impl TruffleStatistics {
 pub struct SecretFinding {
     pub detector_name: String,
     pub verified: bool,
-    #[allow(dead_code)]
     pub file_path: String,
-    #[allow(dead_code)]
-    pub line_number: Option<u32>,
 }
 
 /// Combined audit statistics
@@ -404,15 +401,10 @@ async fn scan_repository_secrets(repo_path: &std::path::Path, verify: bool) -> R
                 .unwrap_or("unknown")
                 .to_string();
 
-            let line_number = json["SourceMetadata"]["Data"]["Git"]["line"]
-                .as_u64()
-                .map(|n| n as u32);
-
             findings.push(SecretFinding {
                 detector_name,
                 verified,
                 file_path,
-                line_number,
             });
         }
     }

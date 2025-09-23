@@ -507,12 +507,15 @@ async fn fix_large_files(
     fs::write(&paths_file, paths_content)?;
 
     // Run git filter-repo to remove the files
+    let paths_file_str = paths_file.to_str()
+        .ok_or_else(|| anyhow!("Failed to convert temp file path to string"))?;
+
     let result = Command::new("git")
         .args([
             "filter-repo",
             "--invert-paths",
             "--paths-from-file",
-            paths_file.to_str().unwrap(),
+            paths_file_str,
             "--force", // Required if there are existing remote refs
         ])
         .current_dir(repo_path)
@@ -631,11 +634,14 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
         fs::write(&replacements_file, replacements_content)?;
 
         // Run git filter-repo to replace secrets with REDACTED
+        let replacements_file_str = replacements_file.to_str()
+            .ok_or_else(|| anyhow!("Failed to convert replacements file path to string"))?;
+
         let result = Command::new("git")
             .args([
                 "filter-repo",
                 "--replace-text",
-                replacements_file.to_str().unwrap(),
+                replacements_file_str,
                 "--force",
             ])
             .current_dir(repo_path)
@@ -663,12 +669,15 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
         fs::write(&paths_file, paths_content)?;
 
+        let paths_file_str = paths_file.to_str()
+            .ok_or_else(|| anyhow!("Failed to convert secret files path to string"))?;
+
         let result = Command::new("git")
             .args([
                 "filter-repo",
                 "--invert-paths",
                 "--paths-from-file",
-                paths_file.to_str().unwrap(),
+                paths_file_str,
                 "--force",
             ])
             .current_dir(repo_path)

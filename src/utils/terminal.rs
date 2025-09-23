@@ -11,5 +11,5 @@ pub fn set_terminal_title(title: &str) {
 /// Sets the terminal title and ensures it's flushed to the terminal
 pub fn set_terminal_title_and_flush(title: &str) {
     set_terminal_title(title);
-    std::io::stdout().flush().unwrap();
+    std::io::stdout().flush().expect("Failed to flush stdout when setting terminal title - this indicates a terminal or I/O issue");
 }

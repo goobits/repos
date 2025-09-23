@@ -10,13 +10,13 @@
 //! - Concurrent processing with progress tracking
 
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 
 use crate::core::{create_progress_bar, GenericProcessingContext};
+use crate::core::config::{PATH_DISPLAY_WIDTH, GIT_OBJECTS_CHUNK_SIZE, LARGE_FILES_DISPLAY_LIMIT};
 use crate::utils::shorten_path;
 
 // =====================================================================================
@@ -188,7 +188,7 @@ impl HygieneStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = shorten_path(repo_path, 30);
+                let short_path = shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 let violation_summary = format!(
                     "{} violations ({} gitignore, {} patterns, {} large)",
                     violations.len(),
@@ -225,7 +225,7 @@ impl HygieneStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = shorten_path(repo_path, 30);
+                let short_path = shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
                     "   {} {:20} {:30} # {}",
                     tree_char, repo_name, short_path, error
@@ -341,7 +341,7 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
 
     // Process in batches to avoid command line length limits
     let objects: Vec<&str> = objects_output.lines().collect();
-    for chunk in objects.chunks(100) {
+    for chunk in objects.chunks(GIT_OBJECTS_CHUNK_SIZE) {
         let batch_input = chunk.join("\n");
 
         let cat_file_output = Command::new("git")
@@ -383,7 +383,7 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
 
     // Sort by size (largest first) and limit to top 10
     violations.sort_by(|a, b| b.size_bytes.unwrap_or(0).cmp(&a.size_bytes.unwrap_or(0)));
-    violations.truncate(10);
+    violations.truncate(LARGE_FILES_DISPLAY_LIMIT);
 
     Ok(violations)
 }
@@ -466,16 +466,10 @@ pub async fn process_hygiene_repositories(context: GenericProcessingContext<Hygi
     }
 
     // Add a blank line before the footer
-    let separator_pb = context.multi_progress.add(ProgressBar::new(0));
-    separator_pb.set_style(ProgressStyle::default_bar().template(" ").unwrap());
-    separator_pb.finish();
+    let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
 
     // Create the footer progress bar
-    let footer_pb = context.multi_progress.add(ProgressBar::new(0));
-    let footer_style = ProgressStyle::default_bar()
-        .template("{wide_msg}")
-        .expect("Failed to create footer progress style");
-    footer_pb.set_style(footer_style);
+    let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
 
     // Initial footer display
     let initial_stats = HygieneStatistics::new();
@@ -484,9 +478,7 @@ pub async fn process_hygiene_repositories(context: GenericProcessingContext<Hygi
     footer_pb.set_message(initial_summary);
 
     // Add another blank line after the footer
-    let separator_pb2 = context.multi_progress.add(ProgressBar::new(0));
-    separator_pb2.set_style(ProgressStyle::default_bar().template(" ").unwrap());
-    separator_pb2.finish();
+    let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
 
     // Extract values we need in the async closures before moving context.repositories
     let max_name_length = context.max_name_length;

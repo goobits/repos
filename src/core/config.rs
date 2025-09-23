@@ -23,6 +23,16 @@ pub const CONFIG_SYNCING_MESSAGE: &str = "checking config...";
 pub const PROGRESS_CHARS: &str = "##-";
 pub const PROGRESS_TEMPLATE: &str = "{prefix:.bold} {wide_msg}";
 
+// Display formatting constants
+pub const PATH_DISPLAY_WIDTH: usize = 30;
+pub const ERROR_MESSAGE_MAX_LENGTH: usize = 40;
+pub const ERROR_MESSAGE_TRUNCATE_LENGTH: usize = 37;
+pub const TIMEOUT_SECONDS_DISPLAY: u64 = 180;
+
+// Processing limits and chunk sizes
+pub const GIT_OBJECTS_CHUNK_SIZE: usize = 100;
+pub const LARGE_FILES_DISPLAY_LIMIT: usize = 10;
+
 // Directories to skip during repository search
 pub const SKIP_DIRECTORIES: &[&str] = &[
     "node_modules",
