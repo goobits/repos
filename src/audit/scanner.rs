@@ -141,6 +141,7 @@ impl TruffleStatistics {
 pub struct SecretFinding {
     pub detector_name: String,
     pub verified: bool,
+    #[allow(dead_code)]
     pub file_path: String,
 }
 
