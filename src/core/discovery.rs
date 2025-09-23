@@ -1,6 +1,7 @@
 //! Repository discovery and initialization utilities
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -28,7 +29,27 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
         .flatten()
     {
         // Look for .git directories to identify repositories
-        if entry.file_name() == ".git" && entry.file_type().is_dir() {
+        if entry.file_name() == ".git" {
+            let entry_type = entry.file_type();
+
+            let is_git_repo = if entry_type.is_dir() {
+                true
+            } else if entry_type.is_file() {
+                // Submodules and worktrees expose a .git file that points to the actual gitdir.
+                match fs::read_to_string(entry.path()) {
+                    Ok(content) => content
+                        .lines()
+                        .any(|line| line.trim_start().starts_with("gitdir:")),
+                    Err(_) => false,
+                }
+            } else {
+                false
+            };
+
+            if !is_git_repo {
+                continue;
+            }
+
             if let Some(parent) = entry.path().parent() {
                 // Skip if we've already seen this exact path
                 // This treats symlinks as separate repositories per user request
