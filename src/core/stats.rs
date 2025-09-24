@@ -46,8 +46,8 @@ impl SyncStatistics {
                     self.total_commits_pushed += commits;
                 }
             }
-            Status::Synced | Status::ConfigSynced | Status::ConfigUpdated => self.synced_repos += 1,
-            Status::Skip | Status::ConfigSkipped => self.skipped_repos += 1,
+            Status::Synced | Status::ConfigSynced | Status::ConfigUpdated | Status::Staged | Status::Unstaged => self.synced_repos += 1,
+            Status::Skip | Status::ConfigSkipped | Status::NoChanges => self.skipped_repos += 1,
             Status::NoUpstream => {
                 self.skipped_repos += 1;
                 self.no_upstream_repos
@@ -58,7 +58,7 @@ impl SyncStatistics {
                 self.no_remote_repos
                     .push((repo_name.to_string(), repo_path.to_string()));
             }
-            Status::Error | Status::ConfigError => {
+            Status::Error | Status::ConfigError | Status::StagingError => {
                 self.error_repos += 1;
                 self.failed_repos.push((
                     repo_name.to_string(),
@@ -70,7 +70,7 @@ impl SyncStatistics {
 
         // Only track uncommitted changes for non-failed repos
         if has_uncommitted
-            && !matches!(status, Status::Error | Status::ConfigError)
+            && !matches!(status, Status::Error | Status::ConfigError | Status::StagingError)
             && !self
                 .uncommitted_repos
                 .iter()

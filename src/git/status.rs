@@ -23,16 +23,24 @@ pub enum Status {
     ConfigSkipped,
     /// Config operation failed
     ConfigError,
+    /// Files successfully staged
+    Staged,
+    /// Files successfully unstaged
+    Unstaged,
+    /// Staging operation failed
+    StagingError,
+    /// No files matched pattern
+    NoChanges,
 }
 
 impl Status {
     /// Returns the emoji symbol for this status
     pub fn symbol(&self) -> &str {
         match self {
-            Status::Synced | Status::Pushed | Status::ConfigSynced | Status::ConfigUpdated => "🟢",
-            Status::Skip | Status::NoRemote | Status::ConfigSkipped => "🟠",
+            Status::Synced | Status::Pushed | Status::ConfigSynced | Status::ConfigUpdated | Status::Staged | Status::Unstaged => "🟢",
+            Status::Skip | Status::NoRemote | Status::ConfigSkipped | Status::NoChanges => "🟠",
             Status::NoUpstream => "🟡",
-            Status::Error | Status::ConfigError => "🔴",
+            Status::Error | Status::ConfigError | Status::StagingError => "🔴",
         }
     }
 
@@ -49,6 +57,10 @@ impl Status {
             Status::ConfigUpdated => "config-updated",
             Status::ConfigSkipped => "config-skip",
             Status::ConfigError => "config-failed",
+            Status::Staged => "staged",
+            Status::Unstaged => "unstaged",
+            Status::StagingError => "failed",
+            Status::NoChanges => "no-changes",
         }
     }
 }

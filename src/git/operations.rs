@@ -17,6 +17,9 @@ const GIT_REV_PARSE_HEAD_ARGS: &[&str] = &["rev-parse", "--abbrev-ref", "HEAD"];
 const GIT_FETCH_ARGS: &[&str] = &["fetch", "--quiet"];
 const GIT_PUSH_ARGS: &[&str] = &["push"];
 const GIT_CONFIG_GET_ARGS: &[&str] = &["config", "--get"];
+const GIT_ADD_ARGS: &[&str] = &["add"];
+const GIT_RESTORE_STAGED_ARGS: &[&str] = &["restore", "--staged"];
+const GIT_STATUS_PORCELAIN_ARGS: &[&str] = &["status", "--porcelain"];
 
 // Status messages
 const DETACHED_HEAD_BRANCH: &str = "HEAD";
@@ -206,5 +209,30 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
             let error_message = clean_error_message(&e.to_string());
             (Status::Error, error_message, has_uncommitted)
         }
+    }
+}
+
+/// Stages files matching the given pattern in the specified repository
+/// Returns (success, stdout, stderr)
+pub async fn stage_files(path: &Path, pattern: &str) -> Result<(bool, String, String)> {
+    let mut args = Vec::from(GIT_ADD_ARGS);
+    args.push(pattern);
+    run_git(path, &args).await
+}
+
+/// Unstages files matching the given pattern in the specified repository
+/// Returns (success, stdout, stderr)
+pub async fn unstage_files(path: &Path, pattern: &str) -> Result<(bool, String, String)> {
+    let mut args = Vec::from(GIT_RESTORE_STAGED_ARGS);
+    args.push(pattern);
+    run_git(path, &args).await
+}
+
+/// Gets the staging status of the repository
+/// Returns (stdout, stderr) with git status --porcelain output
+pub async fn get_staging_status(path: &Path) -> Result<(String, String)> {
+    match run_git(path, GIT_STATUS_PORCELAIN_ARGS).await {
+        Ok((_, stdout, stderr)) => Ok((stdout, stderr)),
+        Err(e) => Err(e),
     }
 }

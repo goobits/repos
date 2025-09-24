@@ -14,6 +14,7 @@ mod git;
 mod utils;
 
 use commands::audit::handle_audit_command;
+use commands::staging::{handle_stage_command, handle_unstage_command, handle_staging_status_command};
 use commands::sync::handle_push_command;
 use commands::config::{handle_config_command, parse_config_command};
 use git::ConfigArgs;
@@ -47,6 +48,18 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Stage files matching pattern across all repositories
+    Stage {
+        /// Pattern to match files (e.g., "*.md", "README.md")
+        pattern: String,
+    },
+    /// Unstage files matching pattern across all repositories
+    Unstage {
+        /// Pattern to match files (e.g., "*.md", "README.md", "*")
+        pattern: String,
+    },
+    /// Show staging status across all repositories
+    Status,
     /// Audit repositories for security vulnerabilities and secrets
     Audit {
         /// Install required tools (TruffleHog) without prompting
@@ -104,6 +117,15 @@ async fn main() -> Result<()> {
         Some(Commands::Push { force }) => {
             let force_push = *force || cli.force;
             handle_push_command(force_push).await
+        }
+        Some(Commands::Stage { pattern }) => {
+            handle_stage_command(pattern.clone()).await
+        }
+        Some(Commands::Unstage { pattern }) => {
+            handle_unstage_command(pattern.clone()).await
+        }
+        Some(Commands::Status) => {
+            handle_staging_status_command().await
         }
         Some(Commands::Config {
             name,
