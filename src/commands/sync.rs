@@ -109,10 +109,8 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
                 check_repo(&repo_path, force_push).await;
 
             let display_message = if has_uncommitted_changes
-                && matches!(
-                    status,
-                    crate::git::Status::Synced | crate::git::Status::Pushed
-                ) {
+                && matches!(status, crate::git::Status::Synced)
+            {
                 format!("{} (uncommitted changes)", message)
             } else {
                 message.clone()
