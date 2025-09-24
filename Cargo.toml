@@ -11,6 +11,9 @@ categories = ["command-line-utilities", "development-tools"]
 repository = "https://github.com/goobits/repos"
 homepage = "https://github.com/goobits/repos"
 
+[dev-dependencies]
+tempfile = "3.0"
+
 [dependencies]
 # Error handling
 anyhow = "1.0"
