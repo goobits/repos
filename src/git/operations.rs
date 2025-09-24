@@ -90,6 +90,10 @@ pub async fn set_git_config(path: &Path, key: &str, value: &str) -> Result<bool>
 pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
     use crate::core::clean_error_message;
 
+    // Refresh the index to ensure accurate diff-index results
+    // This prevents false positives after git operations like fetch
+    let _ = run_git(path, &["update-index", "--refresh"]).await;
+
     // Check if directory has uncommitted changes
     let has_uncommitted = match run_git(path, GIT_DIFF_INDEX_ARGS).await {
         Ok((false, _, _)) => true, // Command failed means there are changes
