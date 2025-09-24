@@ -20,6 +20,8 @@ const GIT_CONFIG_GET_ARGS: &[&str] = &["config", "--get"];
 const GIT_ADD_ARGS: &[&str] = &["add"];
 const GIT_RESTORE_STAGED_ARGS: &[&str] = &["restore", "--staged"];
 const GIT_STATUS_PORCELAIN_ARGS: &[&str] = &["status", "--porcelain"];
+const GIT_COMMIT_ARGS: &[&str] = &["commit", "-m"];
+const GIT_DIFF_CACHED_ARGS: &[&str] = &["diff", "--cached", "--quiet"];
 
 // Status messages
 const DETACHED_HEAD_BRANCH: &str = "HEAD";
@@ -235,4 +237,30 @@ pub async fn get_staging_status(path: &Path) -> Result<(String, String)> {
         Ok((_, stdout, stderr)) => Ok((stdout, stderr)),
         Err(e) => Err(e),
     }
+}
+
+/// Checks if repository has staged changes ready to commit
+/// Returns true if there are staged changes, false if staging area is clean
+pub async fn has_staged_changes(path: &Path) -> Result<bool> {
+    match run_git(path, GIT_DIFF_CACHED_ARGS).await {
+        Ok((success, _, _)) => Ok(!success), // Command succeeds when NO changes (exit 0), so invert
+        Err(e) => Err(e),
+    }
+}
+
+/// Commits staged changes with the given message
+/// Returns (success, stdout, stderr)
+pub async fn commit_changes(
+    path: &Path,
+    message: &str,
+    allow_empty: bool,
+) -> Result<(bool, String, String)> {
+    let mut args = Vec::from(GIT_COMMIT_ARGS);
+    args.push(message);
+
+    if allow_empty {
+        args.insert(1, "--allow-empty"); // Insert after "commit" but before "-m"
+    }
+
+    run_git(path, &args).await
 }

@@ -13,7 +13,7 @@ use crate::core::{
 };
 use crate::git::{
     check_repo_config, get_current_user_config, get_global_user_config, validate_user_config,
-    ConfigSource, ConfigArgs, ConfigCommand, UserConfig,
+    ConfigArgs, ConfigCommand, ConfigSource, UserConfig,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -220,7 +220,8 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     set_terminal_title("🚀 repos config");
 
     // Handle interactive config selection first if needed
-    let resolved_args = if let ConfigCommand::Interactive(ConfigSource::Interactive) = &args.command {
+    let resolved_args = if let ConfigCommand::Interactive(ConfigSource::Interactive) = &args.command
+    {
         show_config_selection_prompt().await?
     } else {
         args

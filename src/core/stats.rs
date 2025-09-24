@@ -1,7 +1,10 @@
 //! Statistics tracking for repository operations
 
+use crate::core::config::{
+    ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, PATH_DISPLAY_WIDTH,
+    TIMEOUT_SECONDS_DISPLAY,
+};
 use crate::git::Status;
-use crate::core::config::{PATH_DISPLAY_WIDTH, ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, TIMEOUT_SECONDS_DISPLAY};
 use std::time::Duration;
 
 /// Statistics for tracking repository synchronization results
@@ -46,7 +49,12 @@ impl SyncStatistics {
                     self.total_commits_pushed += commits;
                 }
             }
-            Status::Synced | Status::ConfigSynced | Status::ConfigUpdated | Status::Staged | Status::Unstaged => self.synced_repos += 1,
+            Status::Synced
+            | Status::ConfigSynced
+            | Status::ConfigUpdated
+            | Status::Staged
+            | Status::Unstaged
+            | Status::Committed => self.synced_repos += 1,
             Status::Skip | Status::ConfigSkipped | Status::NoChanges => self.skipped_repos += 1,
             Status::NoUpstream => {
                 self.skipped_repos += 1;
@@ -58,7 +66,7 @@ impl SyncStatistics {
                 self.no_remote_repos
                     .push((repo_name.to_string(), repo_path.to_string()));
             }
-            Status::Error | Status::ConfigError | Status::StagingError => {
+            Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError => {
                 self.error_repos += 1;
                 self.failed_repos.push((
                     repo_name.to_string(),
@@ -70,7 +78,10 @@ impl SyncStatistics {
 
         // Only track uncommitted changes for non-failed repos
         if has_uncommitted
-            && !matches!(status, Status::Error | Status::ConfigError | Status::StagingError)
+            && !matches!(
+                status,
+                Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError
+            )
             && !self
                 .uncommitted_repos
                 .iter()

@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 
+use crate::core::config::{GIT_OBJECTS_CHUNK_SIZE, LARGE_FILES_DISPLAY_LIMIT, PATH_DISPLAY_WIDTH};
 use crate::core::{create_progress_bar, GenericProcessingContext};
-use crate::core::config::{PATH_DISPLAY_WIDTH, GIT_OBJECTS_CHUNK_SIZE, LARGE_FILES_DISPLAY_LIMIT};
 use crate::utils::shorten_path;
 
 // =====================================================================================

@@ -31,16 +31,28 @@ pub enum Status {
     StagingError,
     /// No files matched pattern
     NoChanges,
+    /// Commit was successful
+    Committed,
+    /// Commit operation failed
+    CommitError,
 }
 
 impl Status {
     /// Returns the emoji symbol for this status
     pub fn symbol(&self) -> &str {
         match self {
-            Status::Synced | Status::Pushed | Status::ConfigSynced | Status::ConfigUpdated | Status::Staged | Status::Unstaged => "🟢",
+            Status::Synced
+            | Status::Pushed
+            | Status::ConfigSynced
+            | Status::ConfigUpdated
+            | Status::Staged
+            | Status::Unstaged
+            | Status::Committed => "🟢",
             Status::Skip | Status::NoRemote | Status::ConfigSkipped | Status::NoChanges => "🟠",
             Status::NoUpstream => "🟡",
-            Status::Error | Status::ConfigError | Status::StagingError => "🔴",
+            Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError => {
+                "🔴"
+            }
         }
     }
 
@@ -61,6 +73,8 @@ impl Status {
             Status::Unstaged => "unstaged",
             Status::StagingError => "failed",
             Status::NoChanges => "no-changes",
+            Status::Committed => "committed",
+            Status::CommitError => "failed",
         }
     }
 }

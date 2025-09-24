@@ -12,7 +12,10 @@ fn test_sync_stats_initialization() {
 
 #[test]
 fn test_user_config_creation() {
-    let config = UserConfig::new(Some("Test User".to_string()), Some("test@example.com".to_string()));
+    let config = UserConfig::new(
+        Some("Test User".to_string()),
+        Some("test@example.com".to_string()),
+    );
     assert!(!config.is_empty());
 
     let empty_config = UserConfig::new(None, None);
