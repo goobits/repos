@@ -1,145 +1,105 @@
-# 🔄 repos
-Git repository management tool for batch synchronization, configuration, and security auditing.
+# repos
 
-## ✨ Key Features
-- **🔄 Batch Push** - Push commits across all repositories in directory tree
-- **⚙️ Config Management** - Synchronize git user.name/email across projects
-- **🔒 Security Audit** - Scan for exposed secrets and credentials
-- **⚡ Concurrent Processing** - Parallel operations with live progress tracking
-- **🎯 Auto Discovery** - Recursive repository detection with smart filtering
-- **🛠️ Zero Configuration** - Works immediately in any directory structure
+Git repository management tool for batch operations across multiple repositories.
 
-## 🚀 Quick Start
+## Features
+
+- **Batch Operations** - Push, commit, stage across all repos
+- **Publishing** - Publish to npm, cargo, PyPI with visibility filtering
+- **Config Management** - Sync git user.name/email across projects
+- **Security Audit** - Scan for secrets and vulnerabilities
+- **Concurrent Processing** - Parallel operations with progress tracking
+
+## Installation
+
 ```bash
-# Installation
 chmod +x install.sh && ./install.sh
+```
 
-# Alternative: Build from source
+Or build from source:
+```bash
 cargo build --release
-
-# Show help and available commands
-repos
-
-# Push all repos in current directory
-repos push
-
-# Configure git identity across all repos
-repos config --name "Your Name" --email "user@example.com"
-
-# Security scan for exposed secrets
-repos audit
 ```
 
-## 🔄 Push Command
+## Commands
+
+### Push
+
 ```bash
-# Push all unpushed commits to remotes
-repos push
-
-# Force upstream tracking for new branches
-repos push --force
-
-# Status indicators:
-# 🟢 synced/pushed  🟡 no upstream  🟠 skipped  🔴 failed
+repos push                      # Push all unpushed commits
+repos push --force              # Auto-push branches with no upstream
 ```
 
-## ⚙️ Configuration Management
+### Staging & Commits
+
 ```bash
-# Interactive mode - choose from available configs
-repos config
-
-# Set specific values
-repos config --name "Jane Dev" --email "jane@company.com"
-
-# Copy from global config
-repos config --from-global
-
-# Copy from current repository
-repos config --from-current
-
-# Preview changes without applying
-repos config --from-global --dry-run
-
-# Force overwrite without prompting
-repos config --from-global --force
+repos status                    # Show staging status across all repos
+repos stage "*.md"              # Stage files matching pattern
+repos unstage "*.md"            # Unstage files
+repos commit "Message"          # Commit staged changes
+repos commit "Message" --include-empty  # Include repos with no changes
 ```
 
-## 🔒 Security Auditing
+### Configuration
+
 ```bash
-# Basic secret scan (scan only, no fixes)
-repos audit
-
-# Install TruffleHog if missing
-repos audit --install-tools
-
-# Verify if secrets are still active
-repos audit --verify
-
-# Machine-readable output
-repos audit --json
-
-# Fix issues interactively (prompts for each fix)
-repos audit --interactive
-
-# Apply all fixes automatically
-repos audit --fix-all
-
-# Apply specific fixes only
-repos audit --fix-gitignore    # Add to .gitignore
-repos audit --fix-large        # Remove large files from history
-repos audit --fix-secrets      # Remove secrets from history
-
-# Preview fixes without applying
-repos audit --fix-all --dry-run
-
-# Fix specific repositories only
-repos audit --fix-all --repos "repo1,repo2"
-
-# Combined options for CI/CD
-repos audit --install-tools --verify --json
+repos config --name "Name" --email "you@example.com"
+repos config --from-global      # Copy from global git config
+repos config --from-current     # Copy from current repo
+repos config --dry-run          # Preview changes
+repos config --force            # Skip prompts
 ```
 
-> **Note**: The global `--force` flag appears in audit help but only applies to push operations.
+### Publishing
 
-## 🛠️ Advanced Features
 ```bash
-# Batch operations on discovered repositories
-# - Automatic timeout protection (3min per repo)
-# - Intelligent directory filtering (skips node_modules, target, vendor)
-# - Parallel processing with controlled concurrency
-# - Real-time progress bars with repository status
-
-# Repository discovery scope
-# ✅ Included: .git directories in current tree
-# ❌ Excluded: node_modules/, vendor/, target/, build/, dist/
-
-# Error handling
-# - Network timeouts handled gracefully
-# - Authentication errors reported clearly
-# - Merge conflicts detected and reported
-# - Partial failures don't block other repositories
+repos publish                   # Public repos only (default)
+repos publish my-app my-lib     # Specific repos
+repos publish --dry-run         # Preview
+repos publish --all             # All repos (public + private)
+repos publish --public-only     # Explicit public only
+repos publish --private-only    # Private only
+repos publish --tag             # Create git tags (v1.2.3)
+repos publish --allow-dirty     # Allow uncommitted changes
 ```
 
+See [docs/PUBLISH_FEATURES.md](docs/PUBLISH_FEATURES.md) for details.
 
-## 🧪 Development
+See [docs/CREDENTIALS_SETUP.md](docs/CREDENTIALS_SETUP.md) for credential setup.
+
+### Security Auditing
+
 ```bash
-# Build and test
+repos audit                     # Scan for secrets
+repos audit --install-tools     # Auto-install TruffleHog
+repos audit --verify            # Verify secrets are active
+repos audit --json              # JSON output
+repos audit --interactive       # Choose fixes interactively
+repos audit --fix-gitignore     # Add .gitignore entries
+repos audit --fix-large         # Remove large files
+repos audit --fix-secrets       # Remove secrets from history
+repos audit --fix-all           # Apply all fixes
+repos audit --dry-run           # Preview fixes
+repos audit --repos repo1,repo2 # Specific repos only
+```
+
+## How It Works
+
+- Recursively scans for `.git` directories in current tree
+- Excludes: `node_modules/`, `vendor/`, `target/`, `build/`, `dist/`
+- Parallel processing with controlled concurrency
+- 3-minute timeout per repository
+- Real-time progress bars
+
+## Development
+
+```bash
 cargo build
 cargo test
-
-# Check for dependency updates (built-in)
-cargo update --dry-run
-
-# View dependency tree
-cargo tree
-
-# Lint and format
 cargo clippy
 cargo fmt
 ```
 
-## 📝 License
-MIT - see [LICENSE](LICENSE) for details
+## License
 
-## 💡 Support
-- Report issues via GitHub Issues
-- Contributions welcome via Pull Requests
+MIT - see [LICENSE](LICENSE)
