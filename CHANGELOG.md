@@ -9,29 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Git commit command across repositories with `repos commit <message>`
-- Support for `--include-empty` flag to force empty commits
-- Auto-skip repositories with no staged changes by default
-- Display commit hash in success messages
-- Comprehensive test coverage for staging functionality
+- `--include-empty` flag to force empty commits
 - Repository visibility filtering to `repos publish` command
-- `--all` flag to publish all repositories (public + private)
-- `--public-only` flag to explicitly publish only public repositories
-- `--private-only` flag to publish only private repositories
+- `--all`, `--public-only`, `--private-only` flags for publish command
 - `--tag` flag to create and push git tags after successful publish
 - `--allow-dirty` flag to publish with uncommitted changes
-- `get_repo_visibility()` function using gh CLI to detect repository visibility
 
 ### Changed
-- Default behavior of `repos publish` now filters to public repositories only (safe default)
-- Unknown visibility is treated as private (fail-safe approach)
-- Added clear filtering feedback showing skip counts for publish command
+- `repos publish` now filters to public repositories only by default
+- Auto-skip repositories with no staged changes when committing
 
 ### Fixed
 - Only show uncommitted changes suffix for synced repos, not pushed
 - Refresh git index before checking for uncommitted changes
-
-### Removed
-- PUBLISH_DEMO.md (outdated documentation)
 
 ## [1.2.0] - 2025-09-24
 
