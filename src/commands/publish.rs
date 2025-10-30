@@ -64,22 +64,18 @@ pub async fn handle_publish_command(
         for (name, path) in repos {
             let visibility = get_repo_visibility(&path).await;
 
-            match visibility {
-                vis if vis == desired_visibility => {
+            if visibility == desired_visibility {
+                filtered_repos.push((name, path));
+            } else if visibility == RepoVisibility::Unknown {
+                // Treat unknown as private (fail-safe)
+                if desired_visibility == RepoVisibility::Private {
                     filtered_repos.push((name, path));
-                }
-                RepoVisibility::Unknown => {
-                    // Treat unknown as private (fail-safe)
-                    if desired_visibility == RepoVisibility::Private {
-                        filtered_repos.push((name, path));
-                    } else {
-                        skipped_count += 1;
-                        unknown_count += 1;
-                    }
-                }
-                _ => {
+                } else {
                     skipped_count += 1;
+                    unknown_count += 1;
                 }
+            } else {
+                skipped_count += 1;
             }
         }
 

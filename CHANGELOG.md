@@ -5,12 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] - 2025-10-30
-
-### BREAKING CHANGES
-- `repos publish` now only publishes public repositories by default to prevent accidental publishing of private packages. Use `--all` to publish all repositories regardless of visibility.
+## [1.3.0] - 2025-10-30
 
 ### Added
+- Git commit command across repositories with `repos commit <message>`
+- Support for `--include-empty` flag to force empty commits
+- Auto-skip repositories with no staged changes by default
+- Display commit hash in success messages
+- Comprehensive test coverage for staging functionality
 - Repository visibility filtering to `repos publish` command
 - `--all` flag to publish all repositories (public + private)
 - `--public-only` flag to explicitly publish only public repositories
@@ -20,25 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_repo_visibility()` function using gh CLI to detect repository visibility
 
 ### Changed
-- Default behavior of `repos publish` now filters to public repositories only
+- Default behavior of `repos publish` now filters to public repositories only (safe default)
 - Unknown visibility is treated as private (fail-safe approach)
-- Added clear filtering feedback showing skip counts
-
-### Removed
-- PUBLISH_DEMO.md (outdated documentation)
-
-## [1.3.0] - 2025-10-30
-
-### Added
-- Git commit command across repositories with `repos commit <message>`
-- Support for `--include-empty` flag to force empty commits
-- Auto-skip repositories with no staged changes by default
-- Display commit hash in success messages
-- Comprehensive test coverage for staging functionality
+- Added clear filtering feedback showing skip counts for publish command
 
 ### Fixed
 - Only show uncommitted changes suffix for synced repos, not pushed
 - Refresh git index before checking for uncommitted changes
+
+### Removed
+- PUBLISH_DEMO.md (outdated documentation)
 
 ## [1.2.0] - 2025-09-24
 
