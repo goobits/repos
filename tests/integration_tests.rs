@@ -378,3 +378,284 @@ async fn test_error_scenarios() {
         }
     }
 }
+
+#[test]
+fn test_repo_visibility_enum() {
+    use repos::git::RepoVisibility;
+
+    // Test enum variants exist
+    let public = RepoVisibility::Public;
+    let private = RepoVisibility::Private;
+    let unknown = RepoVisibility::Unknown;
+
+    // Test equality
+    assert_eq!(public, RepoVisibility::Public);
+    assert_eq!(private, RepoVisibility::Private);
+    assert_eq!(unknown, RepoVisibility::Unknown);
+
+    // Test inequality
+    assert_ne!(public, private);
+    assert_ne!(public, unknown);
+    assert_ne!(private, unknown);
+
+    // Test clone
+    let cloned = public.clone();
+    assert_eq!(cloned, RepoVisibility::Public);
+
+    // Test debug formatting
+    let debug_str = format!("{:?}", public);
+    assert!(debug_str.contains("Public"));
+}
+
+#[tokio::test]
+async fn test_get_repo_visibility_non_github() {
+    use repos::git::get_repo_visibility;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let repo_path = temp_dir.path();
+
+    // Initialize git repo
+    let init_result = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to run git init");
+
+    if !init_result.status.success() {
+        return; // Skip if git not available
+    }
+
+    // Add a non-GitHub remote (e.g., GitLab)
+    std::process::Command::new("git")
+        .args(["remote", "add", "origin", "https://gitlab.com/user/repo.git"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to add remote");
+
+    // Should return Unknown for non-GitHub repos
+    let visibility = get_repo_visibility(repo_path).await;
+    assert_eq!(visibility, repos::git::RepoVisibility::Unknown,
+        "Non-GitHub repos should return Unknown visibility");
+}
+
+#[tokio::test]
+async fn test_get_repo_visibility_no_remote() {
+    use repos::git::get_repo_visibility;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let repo_path = temp_dir.path();
+
+    // Initialize git repo without remote
+    let init_result = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to run git init");
+
+    if !init_result.status.success() {
+        return; // Skip if git not available
+    }
+
+    // Should return Unknown for repos without remote
+    let visibility = get_repo_visibility(repo_path).await;
+    assert_eq!(visibility, repos::git::RepoVisibility::Unknown,
+        "Repos without remote should return Unknown visibility");
+}
+
+#[tokio::test]
+async fn test_get_repo_visibility_github_repo() {
+    use repos::git::get_repo_visibility;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let repo_path = temp_dir.path();
+
+    // Initialize git repo
+    let init_result = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to run git init");
+
+    if !init_result.status.success() {
+        return; // Skip if git not available
+    }
+
+    // Add a GitHub remote
+    std::process::Command::new("git")
+        .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to add remote");
+
+    // This test will call gh CLI - result depends on whether gh is installed
+    let visibility = get_repo_visibility(repo_path).await;
+
+    // Should return Unknown if gh CLI is not available or repo doesn't exist
+    // (We can't guarantee a specific result without mocking gh, but we test it doesn't panic)
+    assert!(
+        matches!(visibility, repos::git::RepoVisibility::Public |
+                            repos::git::RepoVisibility::Private |
+                            repos::git::RepoVisibility::Unknown),
+        "Should return a valid RepoVisibility variant"
+    );
+}
+
+#[tokio::test]
+async fn test_has_uncommitted_changes() {
+    use repos::git::has_uncommitted_changes;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let repo_path = temp_dir.path();
+
+    // Initialize git repo
+    let init_result = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to run git init");
+
+    if !init_result.status.success() {
+        return; // Skip if git not available
+    }
+
+    // Configure git
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to set git user name");
+
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to set git user email");
+
+    // Create and commit a file
+    let test_file = repo_path.join("test.txt");
+    fs::write(&test_file, "initial content").expect("Failed to write test file");
+
+    std::process::Command::new("git")
+        .args(["add", "test.txt"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to stage file");
+
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to commit");
+
+    // Should have no uncommitted changes after commit
+    let has_changes = has_uncommitted_changes(repo_path).await;
+    assert!(!has_changes, "Should have no uncommitted changes after clean commit");
+
+    // Modify the file
+    fs::write(&test_file, "modified content").expect("Failed to modify test file");
+
+    // Should detect uncommitted changes
+    let has_changes = has_uncommitted_changes(repo_path).await;
+    assert!(has_changes, "Should detect uncommitted changes after file modification");
+
+    // Stage the changes
+    std::process::Command::new("git")
+        .args(["add", "test.txt"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to stage changes");
+
+    // Should still have uncommitted changes (staged but not committed)
+    let has_changes = has_uncommitted_changes(repo_path).await;
+    assert!(has_changes, "Should detect staged but uncommitted changes");
+
+    // Commit the changes
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Second commit"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to commit changes");
+
+    // Should have no uncommitted changes after commit
+    let has_changes = has_uncommitted_changes(repo_path).await;
+    assert!(!has_changes, "Should have no uncommitted changes after committing staged changes");
+}
+
+#[tokio::test]
+async fn test_create_and_push_tag() {
+    use repos::git::create_and_push_tag;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let repo_path = temp_dir.path();
+
+    // Initialize git repo
+    let init_result = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to run git init");
+
+    if !init_result.status.success() {
+        return; // Skip if git not available
+    }
+
+    // Configure git
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to set git user name");
+
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to set git user email");
+
+    // Create and commit a file (need at least one commit to tag)
+    let test_file = repo_path.join("test.txt");
+    fs::write(&test_file, "content").expect("Failed to write test file");
+
+    std::process::Command::new("git")
+        .args(["add", "test.txt"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to stage file");
+
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to commit");
+
+    // Create a tag (push will fail without remote, but tag creation should work)
+    let (success, message) = create_and_push_tag(repo_path, "v1.0.0").await;
+
+    // Tag creation should succeed even if push fails
+    assert!(success || message.contains("failed to create tag"),
+        "Tag operation should complete (creation succeeds, push may fail): {}", message);
+
+    // Verify tag was created
+    let tag_check = std::process::Command::new("git")
+        .args(["tag", "-l", "v1.0.0"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to list tags");
+
+    let tags = String::from_utf8_lossy(&tag_check.stdout);
+    assert!(tags.contains("v1.0.0"), "Tag v1.0.0 should be created");
+
+    // Try to create the same tag again - should indicate it already exists
+    let (success, message) = create_and_push_tag(repo_path, "v1.0.0").await;
+    assert!(success, "Should handle existing tag gracefully");
+    assert!(message.contains("already exists"),
+        "Should indicate tag already exists: {}", message);
+}
