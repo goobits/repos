@@ -80,6 +80,21 @@ enum Commands {
         /// Show what would be published without actually publishing
         #[arg(long)]
         dry_run: bool,
+        /// Create and push git tags after successful publish (e.g., v1.2.3)
+        #[arg(long)]
+        tag: bool,
+        /// Allow publishing with uncommitted changes (not recommended)
+        #[arg(long)]
+        allow_dirty: bool,
+        /// Publish all repositories regardless of visibility
+        #[arg(long, conflicts_with_all = ["public_only", "private_only"])]
+        all: bool,
+        /// Only publish public repositories (default behavior)
+        #[arg(long, conflicts_with_all = ["all", "private_only"])]
+        public_only: bool,
+        /// Only publish private repositories
+        #[arg(long, conflicts_with_all = ["all", "public_only"])]
+        private_only: bool,
     },
     /// Audit repositories for security vulnerabilities and secrets
     Audit {
@@ -146,8 +161,8 @@ async fn main() -> Result<()> {
             message,
             include_empty,
         }) => handle_commit_command(message.clone(), *include_empty).await,
-        Some(Commands::Publish { repos, dry_run }) => {
-            handle_publish_command(repos.clone(), *dry_run).await
+        Some(Commands::Publish { repos, dry_run, tag, allow_dirty, all, public_only, private_only }) => {
+            handle_publish_command(repos.clone(), *dry_run, *tag, *allow_dirty, *all, *public_only, *private_only).await
         }
         Some(Commands::Config {
             name,

@@ -10,6 +10,7 @@ use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
     NO_REPOS_MESSAGE,
 };
+use crate::git::operations::{has_uncommitted_changes, create_and_push_tag, get_repo_visibility, RepoVisibility};
 use crate::package::{detect_package_manager, get_package_info, publish_package, PublishStatus};
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for packages...";
@@ -19,6 +20,11 @@ const PUBLISHING_MESSAGE: &str = "publishing...";
 pub async fn handle_publish_command(
     target_repos: Vec<String>,
     dry_run: bool,
+    tag: bool,
+    allow_dirty: bool,
+    all: bool,
+    public_only: bool,
+    private_only: bool,
 ) -> Result<()> {
     // Set terminal title to indicate repos is running
     set_terminal_title("📦 repos");
@@ -38,12 +44,95 @@ pub async fn handle_publish_command(
         });
     }
 
-    // Filter out repositories without packages
+    // Determine visibility filter
+    // Default behavior: only public repos (unless --all, --public-only, or --private-only is set)
+    let filter_visibility = if all {
+        None // No filtering
+    } else if private_only {
+        Some(RepoVisibility::Private)
+    } else {
+        // Default or --public-only: filter for public repos
+        Some(RepoVisibility::Public)
+    };
+
+    // Filter by visibility if needed
+    if let Some(desired_visibility) = filter_visibility {
+        let mut filtered_repos = Vec::new();
+        let mut skipped_count = 0;
+        let mut unknown_count = 0;
+
+        for (name, path) in repos {
+            let visibility = get_repo_visibility(&path).await;
+
+            match visibility {
+                vis if vis == desired_visibility => {
+                    filtered_repos.push((name, path));
+                }
+                RepoVisibility::Unknown => {
+                    // Treat unknown as private (fail-safe)
+                    if desired_visibility == RepoVisibility::Private {
+                        filtered_repos.push((name, path));
+                    } else {
+                        skipped_count += 1;
+                        unknown_count += 1;
+                    }
+                }
+                _ => {
+                    skipped_count += 1;
+                }
+            }
+        }
+
+        repos = filtered_repos;
+
+        // Show filtering feedback
+        if skipped_count > 0 {
+            let visibility_type = match desired_visibility {
+                RepoVisibility::Public => "public",
+                RepoVisibility::Private => "private",
+                _ => "unknown",
+            };
+
+            let mut skip_msg = format!(
+                "\r📦 Filtered to {} repos only ({} skipped)",
+                visibility_type, skipped_count
+            );
+
+            if unknown_count > 0 {
+                skip_msg.push_str(&format!(" [{} unknown visibility treated as private]", unknown_count));
+            }
+
+            println!("{}\n", skip_msg);
+        }
+    }
+
+    // Filter out repositories without packages, and check for uncommitted changes
     let mut packages_to_publish = Vec::new();
+    let mut dirty_repos = Vec::new();
+
     for (name, path) in repos {
         if let Some(manager) = detect_package_manager(&path) {
+            // Check for uncommitted changes unless --allow-dirty is set or --dry-run
+            if !allow_dirty && !dry_run && has_uncommitted_changes(&path).await {
+                dirty_repos.push(name.clone());
+            }
             packages_to_publish.push((name, path, manager));
         }
+    }
+
+    // If there are dirty repos and we're not allowing dirty, stop
+    if !dirty_repos.is_empty() && !allow_dirty && !dry_run {
+        println!("\r❌ Cannot publish: {} {} uncommitted changes\n",
+            dirty_repos.len(),
+            if dirty_repos.len() == 1 { "repository has" } else { "repositories have" }
+        );
+        println!("Repositories with uncommitted changes:");
+        for repo in &dirty_repos {
+            println!("  • {}", repo);
+        }
+        println!("\nCommit your changes first, or use --allow-dirty to publish anyway (not recommended).\n");
+        set_terminal_title_and_flush("✅ repos");
+        return Ok(());
     }
 
     if packages_to_publish.is_empty() {
@@ -113,7 +202,7 @@ pub async fn handle_publish_command(
     };
 
     // Process all packages concurrently
-    process_publish_repositories(context, packages_to_publish).await;
+    process_publish_repositories(context, packages_to_publish, tag).await;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos");
@@ -166,6 +255,7 @@ impl PublishStatistics {
 async fn process_publish_repositories(
     context: crate::core::ProcessingContext,
     packages: Vec<(String, std::path::PathBuf, crate::package::PackageManager)>,
+    tag: bool,
 ) {
     use crate::core::{create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
@@ -226,19 +316,34 @@ async fn process_publish_repositories(
                 PublishStatus::Error
             };
 
+            // If tagging is enabled and publish was successful, create and push tag
+            let mut final_message = message.clone();
+            if tag && matches!(status, PublishStatus::Published) {
+                // Get package info to determine version
+                if let Some(info) = get_package_info(&repo_path).await {
+                    let tag_name = format!("v{}", info.version);
+                    let (tag_success, tag_message) = create_and_push_tag(&repo_path, &tag_name).await;
+                    if tag_success {
+                        final_message = format!("{}, {}", message, tag_message);
+                    } else {
+                        final_message = format!("{} (tag failed: {})", message, tag_message);
+                    }
+                }
+            }
+
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
                 status.symbol(),
                 repo_name,
                 width = max_name_length
             ));
-            progress_bar.set_message(format!("{:<20}   {}", status.text(), message));
+            progress_bar.set_message(format!("{:<20}   {}", status.text(), final_message));
             progress_bar.finish();
 
             // Update statistics
             {
                 let mut stats_guard = stats_clone.lock().unwrap();
-                stats_guard.update(&status, &repo_name, &message);
+                stats_guard.update(&status, &repo_name, &final_message);
 
                 // Update the footer summary
                 let summary = stats_guard.generate_summary(total_packages);

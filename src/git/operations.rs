@@ -268,3 +268,99 @@ pub async fn commit_changes(
 
     run_git(path, &args).await
 }
+
+/// Checks if a repository has uncommitted changes
+/// Returns true if there are uncommitted changes, false otherwise
+pub async fn has_uncommitted_changes(path: &Path) -> bool {
+    // Refresh the index to ensure accurate diff-index results
+    let _ = run_git(path, &["update-index", "--refresh"]).await;
+
+    // Check if directory has uncommitted changes
+    match run_git(path, GIT_DIFF_INDEX_ARGS).await {
+        Ok((false, _, _)) => true, // Command failed means there are changes
+        Ok((true, _, _)) => false, // Command succeeded means no changes
+        Err(_) => false,           // Error checking, assume no changes
+    }
+}
+
+/// Creates a git tag and pushes it to the remote
+/// Returns (success, message)
+pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) {
+    // Create the tag
+    let tag_result = run_git(path, &["tag", tag_name]).await;
+
+    if let Err(e) = tag_result {
+        return (false, format!("failed to create tag: {}", e));
+    }
+
+    let (success, _, stderr) = tag_result.unwrap();
+    if !success {
+        // Tag might already exist
+        if stderr.contains("already exists") {
+            return (true, "tag already exists".to_string());
+        }
+        return (false, format!("failed to create tag: {}", stderr));
+    }
+
+    // Push the tag
+    let push_result = run_git(path, &["push", "origin", tag_name]).await;
+
+    match push_result {
+        Ok((true, _, _)) => (true, format!("tagged & pushed {}", tag_name)),
+        Ok((false, _, stderr)) => {
+            // Tag was created but push failed - that's okay, we'll leave the local tag
+            (true, format!("tagged {} (push failed: {})", tag_name, stderr.lines().next().unwrap_or("unknown error")))
+        }
+        Err(e) => {
+            (true, format!("tagged {} (push failed: {})", tag_name, e))
+        }
+    }
+}
+
+/// Repository visibility status
+#[derive(Debug, Clone, PartialEq)]
+pub enum RepoVisibility {
+    Public,
+    Private,
+    Unknown,
+}
+
+/// Detects repository visibility using gh CLI
+/// Returns RepoVisibility (defaults to Unknown if gh is not available or repo is not on GitHub)
+pub async fn get_repo_visibility(path: &Path) -> RepoVisibility {
+    // First check if this is a GitHub repository by looking at the remote URL
+    let remote_url = match run_git(path, &["remote", "get-url", "origin"]).await {
+        Ok((true, url, _)) => url,
+        _ => return RepoVisibility::Unknown,
+    };
+
+    // Check if it's a GitHub URL
+    if !remote_url.contains("github.com") {
+        return RepoVisibility::Unknown;
+    }
+
+    // Use gh CLI to check repository visibility
+    // gh repo view --json isPrivate returns {"isPrivate": true/false}
+    let timeout_duration = Duration::from_secs(10); // Shorter timeout for API calls
+
+    let result = tokio::time::timeout(
+        timeout_duration,
+        Command::new("gh")
+            .args(&["repo", "view", "--json", "isPrivate", "-q", ".isPrivate"])
+            .current_dir(path)
+            .output(),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            match stdout.as_str() {
+                "true" => RepoVisibility::Private,
+                "false" => RepoVisibility::Public,
+                _ => RepoVisibility::Unknown,
+            }
+        }
+        _ => RepoVisibility::Unknown, // gh CLI not available or command failed
+    }
+}
