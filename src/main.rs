@@ -11,10 +11,12 @@ mod audit;
 mod commands;
 mod core;
 mod git;
+mod package;
 mod utils;
 
 use commands::audit::handle_audit_command;
 use commands::config::{handle_config_command, parse_config_command};
+use commands::publish::handle_publish_command;
 use commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
     handle_unstage_command,
@@ -70,6 +72,14 @@ enum Commands {
         /// Include repositories with no staged changes (create empty commits)
         #[arg(long)]
         include_empty: bool,
+    },
+    /// Publish packages to their registries (npm, cargo, PyPI)
+    Publish {
+        /// Specific repositories to publish (by name)
+        repos: Vec<String>,
+        /// Show what would be published without actually publishing
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Audit repositories for security vulnerabilities and secrets
     Audit {
@@ -136,6 +146,9 @@ async fn main() -> Result<()> {
             message,
             include_empty,
         }) => handle_commit_command(message.clone(), *include_empty).await,
+        Some(Commands::Publish { repos, dry_run }) => {
+            handle_publish_command(repos.clone(), *dry_run).await
+        }
         Some(Commands::Config {
             name,
             email,
