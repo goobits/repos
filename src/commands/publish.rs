@@ -4,7 +4,6 @@
 //! with packages and publishing them to their respective registries.
 
 use anyhow::Result;
-use std::collections::HashMap;
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
@@ -23,7 +22,7 @@ pub async fn handle_publish_command(
     tag: bool,
     allow_dirty: bool,
     all: bool,
-    public_only: bool,
+    _public_only: bool,
     private_only: bool,
 ) -> Result<()> {
     // Set terminal title to indicate repos is running
@@ -224,7 +223,7 @@ impl PublishStatistics {
         }
     }
 
-    fn generate_summary(&self, total: usize) -> String {
+    fn generate_summary(&self, _total: usize) -> String {
         let mut parts = Vec::new();
 
         if self.published > 0 {

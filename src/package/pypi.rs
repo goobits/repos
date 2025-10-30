@@ -44,7 +44,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
     let setup_py_path = repo_path.join("setup.py");
     if setup_py_path.exists() {
         if let Ok(output) = Command::new("python")
-            .args(&["-c", "import setuptools; print('OK')"])
+            .args(["-c", "import setuptools; print('OK')"])
             .current_dir(repo_path)
             .output()
             .await
@@ -143,7 +143,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
 async fn build_package(repo_path: &Path) -> Result<()> {
     // Try using build module (modern approach)
     let build_result = Command::new("python")
-        .args(&["-m", "build"])
+        .args(["-m", "build"])
         .current_dir(repo_path)
         .output()
         .await;
@@ -156,7 +156,7 @@ async fn build_package(repo_path: &Path) -> Result<()> {
 
     // Fallback to setup.py
     let setup_result = Command::new("python")
-        .args(&["setup.py", "sdist", "bdist_wheel"])
+        .args(["setup.py", "sdist", "bdist_wheel"])
         .current_dir(repo_path)
         .output()
         .await?;

@@ -1,6 +1,5 @@
 //! Cargo package publishing functionality
 
-use anyhow::Result;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
@@ -94,8 +93,7 @@ fn clean_cargo_error(error: &str) -> String {
         error
             .lines()
             .skip_while(|line| !line.contains("Caused by:"))
-            .skip(1)
-            .next()
+            .nth(1)
             .map(|line| line.trim().to_string())
             .unwrap_or_else(|| error.trim().to_string())
     } else {

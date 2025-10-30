@@ -1,6 +1,5 @@
 //! NPM package publishing functionality
 
-use anyhow::Result;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
@@ -54,7 +53,6 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
     match result {
         Ok(Ok(output)) => {
             if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
                 if dry_run {
                     (true, "dry-run ok".to_string())
                 } else {

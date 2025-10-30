@@ -346,7 +346,7 @@ pub async fn get_repo_visibility(path: &Path) -> RepoVisibility {
     let result = tokio::time::timeout(
         timeout_duration,
         Command::new("gh")
-            .args(&["repo", "view", "--json", "isPrivate", "-q", ".isPrivate"])
+            .args(["repo", "view", "--json", "isPrivate", "-q", ".isPrivate"])
             .current_dir(path)
             .output(),
     )

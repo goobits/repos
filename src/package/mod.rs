@@ -4,7 +4,6 @@ pub mod cargo;
 pub mod npm;
 pub mod pypi;
 
-use anyhow::Result;
 use std::path::Path;
 
 /// Supported package managers
@@ -37,6 +36,7 @@ impl PackageManager {
 
 /// Information about a detected package
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct PackageInfo {
     pub manager: PackageManager,
     pub name: String,
@@ -50,9 +50,7 @@ pub fn detect_package_manager(repo_path: &Path) -> Option<PackageManager> {
         Some(PackageManager::Npm)
     } else if repo_path.join("Cargo.toml").exists() {
         Some(PackageManager::Cargo)
-    } else if repo_path.join("pyproject.toml").exists() {
-        Some(PackageManager::PyPI)
-    } else if repo_path.join("setup.py").exists() {
+    } else if repo_path.join("pyproject.toml").exists() || repo_path.join("setup.py").exists() {
         Some(PackageManager::PyPI)
     } else {
         None
@@ -86,6 +84,7 @@ pub async fn publish_package(
 
 /// Status of a publish operation
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum PublishStatus {
     /// Package was successfully published
     Published,

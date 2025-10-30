@@ -410,7 +410,6 @@ fn test_repo_visibility_enum() {
 #[tokio::test]
 async fn test_get_repo_visibility_non_github() {
     use repos::git::get_repo_visibility;
-    use std::fs;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
