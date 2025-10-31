@@ -5,6 +5,7 @@ Git repository management tool for batch operations across multiple repositories
 ## Features
 
 - **Batch Operations** - Push, commit, stage across all repos
+- **Subrepo Drift Detection** - Track and sync nested repos across parents
 - **Publishing** - Publish to npm, cargo, PyPI with visibility filtering
 - **Config Management** - Sync git user.name/email across projects
 - **Security Audit** - Scan for secrets and vulnerabilities
@@ -82,6 +83,27 @@ repos audit --fix-all           # Apply all fixes
 repos audit --dry-run           # Preview fixes
 repos audit --repos repo1,repo2 # Specific repos only
 ```
+
+### Subrepo Drift Detection
+
+```bash
+repos subrepo validate          # Discover all nested repos
+repos subrepo status            # Show drift (problem-first)
+repos subrepo status --all      # Show all subrepos
+repos subrepo sync <name> --to <commit> --stash  # Safe sync
+repos subrepo update <name>     # Update to origin/main
+```
+
+Detects nested repositories shared across multiple parents and provides
+smart suggestions to synchronize them. Uses `🎯 SYNC TARGET` to identify
+the latest clean commit for safe syncing.
+
+**Key features:**
+- Identifies drift across shared subrepos
+- Smart sync target detection (latest clean commit)
+- `--stash` flag for safe, reversible syncing
+- Visual indicators: ✅ clean, ⚠️ uncommitted, 🎯 SYNC TARGET, ⬆️ LATEST
+- Groups by remote URL to avoid false positives
 
 ## How It Works
 

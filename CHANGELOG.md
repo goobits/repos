@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2025-10-31
+
+### Added
+- Subrepo drift detection and synchronization
+- `repos subrepo validate` - Discover all nested repositories
+- `repos subrepo status` - Show drift with smart sync suggestions
+- `repos subrepo sync` - Sync to specific commit with `--stash` flag
+- `repos subrepo update` - Update to latest from origin/main
+- Smart SYNC TARGET detection (latest clean commit)
+- Problem-first output (shows only drifted subrepos by default)
+- Visual indicators: ✅ clean, ⚠️ uncommitted, 🎯 SYNC TARGET, ⬆️ LATEST
+- Commit timestamp sorting to identify newest commits
+- Groups by remote URL (not name) to avoid false positives
+- Sync score calculation (0-100% synchronized)
+- `--verbose` flag for push command (detailed per-repo progress)
+
+### Changed
+- Push command now shows live tally by default (cleaner output)
+- Use `--verbose` flag to see detailed per-repo progress bars
+
 ## [1.3.0] - 2025-10-30
 
 ### Added
