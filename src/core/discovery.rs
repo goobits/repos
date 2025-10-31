@@ -127,7 +127,8 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
 
     // Extract repositories from Arc<Mutex<>>
     let mut repos = Arc::try_unwrap(repositories)
-        .unwrap_or_else(|arc| (*arc.lock().unwrap()).clone());
+        .map(|mutex| mutex.into_inner().unwrap())
+        .unwrap_or_else(|arc| arc.lock().unwrap().clone());
 
     // Sort repositories alphabetically by name (case-insensitive) using parallel sort
     repos.par_sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
