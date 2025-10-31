@@ -1,4 +1,4 @@
-version: 1.2.1
+version: "2.0"
 provider: docker
 os: auto
 project:
@@ -37,7 +37,9 @@ aliases:
   claudeyolo: claude --dangerously-skip-permissions
   codexyolo: codex --dangerously-bypass-approvals-and-sandbox
   geminiyolo: GEMINI_API_KEY=${GEMINI_API_KEY:-} gemini --approval-mode=yolo
-ai_sync: true
+host_sync:
+  git_config: true
+  ai_tools: true
 networking:
   networks:
   - jules

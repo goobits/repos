@@ -130,8 +130,8 @@ pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
     // Add footer with global update suggestion if there's drift
     if !drifted.is_empty() {
         println!();
-        println!("🔧 To update all drifted repos to their 'origin/main' branch instead, run:");
-        println!("   repos subrepo update <name>");
+        println!("🔧 To update a drifted repo to its 'origin/main' branch instead, run:");
+        println!("   repos subrepo update <name>  (e.g., 'repos subrepo update docs-engine')");
     }
 
     println!();
