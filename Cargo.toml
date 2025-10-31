@@ -22,11 +22,14 @@ anyhow = "1.0"
 indicatif = "0.18"
 
 # File system traversal
-walkdir = "2.4"
+ignore = "0.4"
 
 # Async runtime and utilities
 tokio = { version = "1.0", features = ["full"] }
 futures = "0.3"
+
+# Parallel processing
+rayon = "1.10"
 
 # Command line argument parsing
 clap = { version = "4.0", features = ["derive"] }

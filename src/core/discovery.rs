@@ -4,12 +4,14 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use std::sync::{Arc, Mutex};
+use ignore::WalkBuilder;
+use rayon::prelude::*;
 
-use super::config::{DEFAULT_REPO_NAME, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME};
+use super::config::{DEFAULT_REPO_NAME, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME, MAX_SCAN_DEPTH, ESTIMATED_REPO_COUNT};
 
 /// Check if a .git file (for submodules/worktrees) contains gitdir reference
-/// Only reads the first 512 bytes for efficiency
+/// Only reads the first 5 lines for efficiency
 fn is_git_file(path: &Path) -> bool {
     match fs::File::open(path) {
         Ok(file) => {
@@ -28,17 +30,17 @@ fn is_git_file(path: &Path) -> bool {
 /// Recursively searches for git repositories in the current directory
 /// Returns a vector of (repository_name, path) tuples with deduplication
 pub fn find_repos() -> Vec<(String, PathBuf)> {
-    let mut repositories = Vec::new();
-    let mut seen_paths = HashSet::new();
-    let mut name_counts = HashMap::new();
+    // Pre-allocate collections based on estimated repository count
+    let repositories = Arc::new(Mutex::new(Vec::with_capacity(ESTIMATED_REPO_COUNT)));
+    let seen_paths = Arc::new(Mutex::new(HashSet::with_capacity(ESTIMATED_REPO_COUNT)));
+    let name_counts = Arc::new(Mutex::new(HashMap::with_capacity(ESTIMATED_REPO_COUNT)));
 
-    // Walk through directory tree, skipping common build/dependency directories
-    // and git repository contents
-    for entry in WalkDir::new(".")
-        .follow_links(true) // Follow symlinks to find symlinked repos (loop detection built-in)
-        .into_iter()
-        .filter_entry(|e| {
-            let file_name = e.file_name().to_str().unwrap_or("");
+    // Build walker with optimizations
+    let walker = WalkBuilder::new(".")
+        .follow_links(true) // Follow symlinks to find symlinked repos
+        .max_depth(Some(MAX_SCAN_DEPTH)) // Limit depth to avoid deep recursion
+        .filter_entry(|entry| {
+            let file_name = entry.file_name().to_str().unwrap_or("");
 
             // Skip common build/dependency directories
             if SKIP_DIRECTORIES.contains(&file_name) {
@@ -47,20 +49,25 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
 
             // Skip .git directories themselves (don't descend into them)
             // This prevents scanning thousands of files in .git/objects/, etc.
-            // We still find nested repos because we continue walking into repo directories
             if file_name == ".git" {
                 return false;
             }
 
             true
         })
-        .flatten()
-    {
-        let path = entry.path();
+        .build();
 
-        // Look for .git directories to identify repositories
-        // Check if this directory contains a .git entry
-        if entry.file_type().is_dir() {
+    // Walk the directory tree
+    for result in walker {
+        if let Ok(entry) = result {
+            let path = entry.path();
+
+            // Only check directories
+            if !entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                continue;
+            }
+
+            // Check if this directory contains a .git entry
             let git_path = path.join(".git");
 
             if git_path.exists() {
@@ -75,8 +82,11 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
 
                 if is_git_repo {
                     // Skip if we've already seen this exact path
-                    if !seen_paths.insert(path.to_path_buf()) {
-                        continue;
+                    {
+                        let mut seen = seen_paths.lock().unwrap();
+                        if !seen.insert(path.to_path_buf()) {
+                            continue;
+                        }
                     }
 
                     let base_name = if path == Path::new(".") {
@@ -98,24 +108,31 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
                     };
 
                     // Handle duplicate names by adding a suffix
-                    let count = name_counts.entry(base_name.clone()).or_insert(0);
-                    *count += 1;
-                    let repo_name = if *count > 1 {
-                        format!("{}-{}", base_name, count)
-                    } else {
-                        base_name
+                    let repo_name = {
+                        let mut counts = name_counts.lock().unwrap();
+                        let count = counts.entry(base_name.clone()).or_insert(0);
+                        *count += 1;
+                        if *count > 1 {
+                            format!("{}-{}", base_name, count)
+                        } else {
+                            base_name
+                        }
                     };
 
-                    repositories.push((repo_name, path.to_path_buf()));
+                    repositories.lock().unwrap().push((repo_name, path.to_path_buf()));
                 }
             }
         }
     }
 
-    // Sort repositories alphabetically by name (case-insensitive)
-    repositories.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    // Extract repositories from Arc<Mutex<>>
+    let mut repos = Arc::try_unwrap(repositories)
+        .unwrap_or_else(|arc| (*arc.lock().unwrap()).clone());
 
-    repositories
+    // Sort repositories alphabetically by name (case-insensitive) using parallel sort
+    repos.par_sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+
+    repos
 }
 
 /// Common initialization for commands that scan repositories

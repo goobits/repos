@@ -45,3 +45,7 @@ pub const SKIP_DIRECTORIES: &[&str] = &[
     ".venv",
     "venv",
 ];
+
+// Repository discovery configuration
+pub const MAX_SCAN_DEPTH: usize = 10; // Maximum directory depth to scan
+pub const ESTIMATED_REPO_COUNT: usize = 50; // Pre-allocation hint for collections
