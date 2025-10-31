@@ -12,6 +12,7 @@ mod commands;
 mod core;
 mod git;
 mod package;
+mod subrepo;
 mod utils;
 
 use commands::audit::handle_audit_command;
@@ -132,6 +133,48 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         repos: Option<Vec<String>>,
     },
+    /// Manage nested repository synchronization
+    Subrepo {
+        #[command(subcommand)]
+        subcommand: SubrepoCommand,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+enum SubrepoCommand {
+    /// Validate subrepo setup and show all nested repos
+    Validate,
+
+    /// Show subrepo sync status (drift detection)
+    Status {
+        /// Show all subrepos, not just drifted ones
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Sync a subrepo to specific commit across all parents
+    Sync {
+        /// Subrepo name
+        name: String,
+        /// Target commit hash
+        #[arg(long)]
+        to: String,
+        /// Stash uncommitted changes before syncing (safe, reversible)
+        #[arg(long)]
+        stash: bool,
+        /// Force sync even with uncommitted changes (discards changes)
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Update a subrepo to latest commit across all parents
+    Update {
+        /// Subrepo name
+        name: String,
+        /// Force update even with uncommitted changes
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Parser)]
@@ -145,6 +188,28 @@ struct Cli {
 
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+/// Handles subrepo subcommands
+fn handle_subrepo_command(subcommand: SubrepoCommand) -> Result<()> {
+    match subcommand {
+        SubrepoCommand::Validate => {
+            let report = subrepo::validation::validate_subrepos()?;
+            subrepo::validation::display_report(&report);
+            Ok(())
+        }
+        SubrepoCommand::Status { all } => {
+            let statuses = subrepo::status::analyze_subrepos()?;
+            subrepo::status::display_status(&statuses, all);
+            Ok(())
+        }
+        SubrepoCommand::Sync { name, to, stash, force } => {
+            subrepo::sync::sync_subrepo(&name, &to, stash, force)
+        }
+        SubrepoCommand::Update { name, force } => {
+            subrepo::sync::update_subrepo(&name, force)
+        }
+    }
 }
 
 #[tokio::main]
@@ -212,6 +277,9 @@ async fn main() -> Result<()> {
                 repos.clone(),
             )
             .await
+        }
+        Some(Commands::Subrepo { subcommand }) => {
+            handle_subrepo_command(subcommand.clone())
         }
         None => {
             // Default behavior - show help
