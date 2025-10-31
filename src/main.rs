@@ -31,6 +31,9 @@ enum Commands {
         /// Automatically push branches with no upstream tracking
         #[arg(long)]
         force: bool,
+        /// Show detailed progress for all repositories
+        #[arg(long, short)]
+        verbose: bool,
     },
     /// Manage git configuration across repositories
     Config {
@@ -150,9 +153,9 @@ async fn main() -> Result<()> {
 
     // Determine the operation mode and handle commands
     match &cli.command {
-        Some(Commands::Push { force }) => {
+        Some(Commands::Push { force, verbose }) => {
             let force_push = *force || cli.force;
-            handle_push_command(force_push).await
+            handle_push_command(force_push, *verbose).await
         }
         Some(Commands::Stage { pattern }) => handle_stage_command(pattern.clone()).await,
         Some(Commands::Unstage { pattern }) => handle_unstage_command(pattern.clone()).await,
