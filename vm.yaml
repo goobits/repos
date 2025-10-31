@@ -22,9 +22,6 @@ apt_packages:
   - ripgrep
   - unzip
   - htop
-npm_packages:
-  - '@anthropic-ai/claude-code'
-  - '@google/gemini-cli'
 pip_packages:
   - claudeflow
 terminal:
