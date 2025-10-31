@@ -35,7 +35,7 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
     // Walk through directory tree, skipping common build/dependency directories
     // and git repository contents
     for entry in WalkDir::new(".")
-        .follow_links(false) // Don't follow symlinks to avoid cycles and duplicate scanning
+        .follow_links(true) // Follow symlinks to find symlinked repos (loop detection built-in)
         .into_iter()
         .filter_entry(|e| {
             let file_name = e.file_name().to_str().unwrap_or("");
@@ -46,7 +46,8 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
             }
 
             // Skip .git directories themselves (don't descend into them)
-            // We'll process them when we encounter them, but don't walk their contents
+            // This prevents scanning thousands of files in .git/objects/, etc.
+            // We still find nested repos because we continue walking into repo directories
             if file_name == ".git" {
                 return false;
             }
