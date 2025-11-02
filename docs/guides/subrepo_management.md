@@ -115,7 +115,7 @@ Sync a subrepo to a specific commit across all parent repositories.
 | `--stash` | Stash uncommitted changes (safe, reversible) |
 | `--force` | Force sync, discarding uncommitted changes |
 
-**Note:** `--stash` and `--force` are mutually exclusive.
+**Note:** If both `--stash` and `--force` are provided, `--stash` takes precedence.
 
 ```bash
 repos subrepo sync my-lib --to abc1234           # Sync (fails if uncommitted)

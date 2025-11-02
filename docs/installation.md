@@ -18,7 +18,7 @@ cd repos
 
 The install script:
 - Builds optimized release binary with `cargo build --release`
-- Installs to `~/.local/bin/repos` (or `/usr/local/bin` if writable)
+- Installs to first writable location: `/usr/local/bin`, `~/.local/bin`, or `~/bin`
 - Adds installation directory to PATH automatically
 - Optionally installs Rust toolchain if missing
 
