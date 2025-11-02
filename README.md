@@ -11,7 +11,18 @@ Git repository management tool for batch operations across multiple repositories
 - **Security Audit** - Scan for secrets and vulnerabilities
 - **Concurrent Processing** - Parallel operations with progress tracking
 
-## Installation
+## Documentation
+
+- **[Getting Started](docs/getting_started.md)** - Quick 5-minute tutorial
+- **[Installation](docs/installation.md)** - Detailed setup guide
+- **[Commands Reference](docs/guides/commands.md)** - All commands and flags
+- **[Publishing Guide](docs/guides/publishing.md)** - Package publishing workflows
+- **[Security Auditing](docs/guides/security_auditing.md)** - Secret scanning and hygiene
+- **[Subrepo Management](docs/guides/subrepo_management.md)** - Drift detection and sync
+- **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
+- **[Contributing](docs/contributing.md)** - Development guide
+
+## Quick Install
 
 ```bash
 chmod +x install.sh && ./install.sh
@@ -64,9 +75,9 @@ repos publish --tag             # Create git tags (v1.2.3)
 repos publish --allow-dirty     # Allow uncommitted changes
 ```
 
-See [docs/PUBLISH_FEATURES.md](docs/PUBLISH_FEATURES.md) for details.
+See [docs/guides/publishing.md](docs/guides/publishing.md) for details.
 
-See [docs/CREDENTIALS_SETUP.md](docs/CREDENTIALS_SETUP.md) for credential setup.
+See [docs/guides/credentials_setup.md](docs/guides/credentials_setup.md) for credential setup.
 
 ### Security Auditing
 
