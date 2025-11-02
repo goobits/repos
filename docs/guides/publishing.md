@@ -50,18 +50,55 @@ repos publish --tag             # 3. Publish + tag
 
 ## How It Works
 
+```mermaid
+graph TD
+    A[repos publish] --> B[Discover Repos]
+    B --> C{Has package.json?}
+    B --> D{Has Cargo.toml?}
+    B --> E{Has pyproject.toml?}
+    C -->|Yes| F[NPM Package]
+    D -->|Yes| G[Cargo Crate]
+    E -->|Yes| H[Python Package]
+    F --> I{Check Visibility}
+    G --> I
+    H --> I
+    I --> J{Public/Private Match?}
+    J -->|Yes| K{--dry-run?}
+    J -->|No| L[Skip]
+    K -->|Yes| M[Preview Only]
+    K -->|No| N[Publish to Registry]
+    N --> O{Success?}
+    O -->|Yes| P{--tag?}
+    O -->|No| Q[Report Error]
+    P -->|Yes| R[Create Git Tag]
+    P -->|No| S[Done]
+    R --> T[Push Tag]
+    T --> S
+    L --> S
+    M --> S
+    Q --> S
+```
+
 - Auto-detects package type (npm/Cargo/PyPI) per repo
 - Checks visibility via `gh` CLI (GitHub only; defaults to public otherwise)
 - Uses existing credentials (`~/.npmrc`, `~/.cargo/credentials.toml`, `~/.pypirc`)
 - Creates git tags after successful publish (if `--tag`)
 - Processes 3 packages concurrently
 
-See [credentials_setup.md](credentials_setup.md) for credential configuration.
+Learn more about [credential configuration](credentials_setup.md).
 
 ## Troubleshooting
 
 | Error | Solution |
 |-------|----------|
 | **"uncommitted changes"** | Commit first: `git add . && git commit -m "Release v1.2.3"` |
-| **"not authenticated"** | See [credentials_setup.md](credentials_setup.md) |
+| **"not authenticated"** | Configure [publishing credentials](credentials_setup.md) |
 | **"tag already exists"** | Delete tag: `git tag -d v1.2.3 && git push origin :refs/tags/v1.2.3` |
+
+---
+
+**Related Documentation:**
+- [Documentation Index](../README.md)
+- [Credentials Setup](credentials_setup.md)
+- [Commands Reference](commands.md)
+- [Troubleshooting](troubleshooting.md)

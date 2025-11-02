@@ -151,19 +151,9 @@ Integration tests are located in `tests/integration_tests.rs` and test end-to-en
 - First line should be concise (<72 characters)
 - Reference issues: "Fix #123" or "Closes #456"
 
-## Code of Conduct
-
-- Be respectful and inclusive in all interactions
-- Provide constructive feedback
-- Welcome newcomers and help them get started
-- Focus on what is best for the community
-- Show empathy towards other community members
-
 ## Questions?
 
 If you have questions or need help:
 - Open an issue for discussion
 - Check existing documentation in `docs/`
 - Review closed issues for similar questions
-
-Happy coding!

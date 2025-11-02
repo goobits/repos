@@ -1,6 +1,22 @@
 # Subrepo Management
 
-**NEW in v1.4.0** - Detect and synchronize nested repositories (subrepos) shared across multiple parent repos.
+Detect and synchronize nested repositories (subrepos) shared across multiple parent repos.
+
+## Table of Contents
+
+- [What are Subrepos?](#what-are-subrepos)
+- [Key Concepts](#key-concepts)
+  - [Drift Detection](#drift-detection)
+  - [Visual Indicators](#visual-indicators)
+  - [Sync Score](#sync-score)
+  - [Sync Target Algorithm](#sync-target-algorithm)
+- [Commands](#commands)
+  - [repos subrepo validate](#repos-subrepo-validate)
+  - [repos subrepo status](#repos-subrepo-status)
+  - [repos subrepo sync](#repos-subrepo-sync)
+  - [repos subrepo update](#repos-subrepo-update)
+- [Common Workflows](#common-workflows)
+- [Tips](#tips)
 
 ## What are Subrepos?
 
@@ -28,12 +44,7 @@ Subrepos are nested Git repositories within parent repos - directories containin
 
 ### Sync Score
 
-Formula: `(total_instances - unique_commits) / (total_instances - 1) × 100`
-
-**Examples:**
-- 2 instances, same commit → `(2-1)/(2-1) = 100%` (perfectly synced)
-- 2 instances, different commits → `(2-2)/(2-1) = 0%` (completely drifted)
-- 3 instances, 2 unique commits → `(3-2)/(3-1) = 50%` (partially synced)
+Shows how well synchronized your subrepos are: **100%** means all instances are at the same commit, **0%** means maximum drift.
 
 ### Sync Target Algorithm
 
@@ -45,6 +56,23 @@ The tool automatically selects a **SYNC TARGET** using this logic:
 4. **Mark separately** - Shows both 🎯 SYNC TARGET (recommended) and ⬆️ LATEST (absolute newest)
 
 This ensures sync suggestions are safe and reversible.
+
+```mermaid
+graph TD
+    A[Detect Subrepos] --> B{Same Remote URL?}
+    B -->|Yes| C[Group Instances]
+    B -->|No| D[Separate Groups]
+    C --> E[Compare Commits]
+    E --> F{All Same Commit?}
+    F -->|Yes| G[100% Synced ✅]
+    F -->|No| H[Calculate Drift]
+    H --> I{Has Uncommitted?}
+    I -->|Yes| J[Find Latest Clean Commit]
+    I -->|No| K[Mark Latest as Target]
+    J --> L[Mark as 🎯 SYNC TARGET]
+    K --> L
+    L --> M[Suggest Sync Command]
+```
 
 ## Commands
 
@@ -214,3 +242,11 @@ Lower scores indicate more drift and higher priority for synchronization.
 3. **Prefer `--stash` over `--force`** - Changes can be recovered with `git stash pop`
 4. **Check sync scores** - Lower scores need immediate attention
 5. **Groups by remote URL** - Subrepos with same name but different remotes are treated separately
+
+---
+
+**Related Documentation:**
+- [Documentation Index](../README.md)
+- [Getting Started](../getting_started.md)
+- [Commands Reference](commands.md)
+- [Troubleshooting](troubleshooting.md)

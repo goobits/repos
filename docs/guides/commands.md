@@ -2,6 +2,23 @@
 
 Quick reference for all `repos` commands.
 
+## Table of Contents
+
+- [Command Overview](#command-overview)
+- [repos push](#repos-push)
+- [repos stage](#repos-stage)
+- [repos unstage](#repos-unstage)
+- [repos status](#repos-status)
+- [repos commit](#repos-commit)
+- [repos config](#repos-config)
+- [repos publish](#repos-publish)
+- [repos audit](#repos-audit)
+- [repos subrepo](#repos-subrepo)
+  - [repos subrepo validate](#repos-subrepo-validate)
+  - [repos subrepo status](#repos-subrepo-status)
+  - [repos subrepo sync](#repos-subrepo-sync)
+  - [repos subrepo update](#repos-subrepo-update)
+
 ## Command Overview
 
 | Command | Purpose |
@@ -131,7 +148,7 @@ repos publish my-app my-lib       # Specific repos
 repos publish --all --tag         # All repos with tags
 ```
 
-See [publishing.md](publishing.md) for details.
+Learn more in [publishing.md](publishing.md).
 
 ---
 
@@ -220,3 +237,11 @@ Update a subrepo to latest origin/main across all parents.
 repos subrepo update my-lib         # Update to origin/main
 repos subrepo update my-lib --force # Force update
 ```
+
+---
+
+**Related Documentation:**
+- [Documentation Index](../README.md)
+- [Getting Started](../getting_started.md)
+- [Publishing Guide](publishing.md)
+- [Security Auditing](security_auditing.md)

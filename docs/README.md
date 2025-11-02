@@ -16,10 +16,12 @@ Welcome to the documentation for this project. This guide will help you get star
 - [Credentials Setup](guides/credentials_setup.md) - Authentication and credential configuration
 - [Troubleshooting](guides/troubleshooting.md) - Common issues and solutions
 
+## Reference
+
+- [Glossary](glossary.md) - Terms, flags, and concepts reference
+- [Architecture](architecture.md) - Technical overview and design patterns
+- [Examples](examples/README.md) - CI/CD integration and usage examples
+
 ## Developer
 
-- [Contributing](contributing.md) - Contribution guidelines and development setup
-
----
-
-For more information, see the [main README](../README.md).
+- [Contributing](../CONTRIBUTING.md) - Contribution guidelines and development setup

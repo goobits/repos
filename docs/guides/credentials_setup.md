@@ -1,6 +1,6 @@
 # Publishing Credentials
 
-`repos publish` uses existing package manager credentials.
+`repos publish` uses your existing package manager credentials to authenticate with registries. Configure credentials for each package manager you use.
 
 ## NPM
 
@@ -79,3 +79,10 @@ chmod 600 ~/.npmrc ~/.cargo/credentials.toml ~/.pypirc
 | **"not authenticated"** | NPM: `npm logout && npm login`<br>Cargo: `cargo login YOUR_NEW_TOKEN`<br>Python: Verify `~/.pypirc` format |
 | **"permission denied"** | NPM: `npm owner add USERNAME PACKAGE`<br>Cargo/PyPI: Add as maintainer in package settings |
 | **Multi-account** | Create per-project `.npmrc` or `.cargo/config.toml` |
+
+---
+
+**Related Documentation:**
+- [Documentation Index](../README.md)
+- [Publishing Guide](publishing.md)
+- [Troubleshooting](troubleshooting.md)

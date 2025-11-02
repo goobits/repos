@@ -2,6 +2,25 @@
 
 Comprehensive security scanning and repository hygiene checking with automated fixes.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [TruffleHog Secret Scanning](#trufflehog-secret-scanning)
+  - [Installation](#installation)
+  - [Secret Detection](#secret-detection)
+  - [Output](#output)
+- [Hygiene Checking](#hygiene-checking)
+  - [Gitignore Violations](#1-gitignore-violations)
+  - [Universal Bad Patterns](#2-universal-bad-patterns)
+  - [Large Files](#3-large-files)
+- [Automated Fixes](#automated-fixes)
+  - [Fix Flags](#fix-flags)
+  - [Fix Workflows](#fix-workflows)
+  - [Interactive Mode](#interactive-mode)
+- [Additional Flags](#additional-flags)
+- [Security Best Practices](#security-best-practices)
+- [Examples](#examples)
+
 ## Overview
 
 The `repos audit` command combines TruffleHog secret scanning with repository hygiene checking to identify security issues and improperly committed files across all repositories.
@@ -30,8 +49,8 @@ TruffleHog must be installed before running audits. Install manually or use `--i
 repos audit --install-tools
 
 # Manual installation
-brew install trufflesecurity/trufflehog/trufflehog                    # macOS
-curl -sSfL https://raw.githubusercontent.com/.../install.sh | sh      # Linux
+brew install trufflesecurity/trufflehog/trufflehog                                            # macOS
+curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh  # Linux
 ```
 
 ### Secret Detection
@@ -207,10 +226,10 @@ Found violations in 3 repositories:
 ⚠️  CONFIRMATION REQUIRED
 ═══════════════════════════════════════════════════════════════════
 
-🔴 DESTRUCTIVE OPERATION - HISTORY REWRITE
-   • Git history will be permanently rewritten
+History Rewriting
+   • Git history will be rewritten to remove files/secrets
    • Backups saved in refs/original/pre-fix-backup-*
-   • You will need to force-push: git push --force-with-lease
+   • Requires force-push: git push --force-with-lease
    • All collaborators must re-clone or reset their branches
 
    ROLLBACK: git reset --hard refs/original/pre-fix-backup-<timestamp>
@@ -360,3 +379,11 @@ repos audit --fix-secrets --repos api-server
 ```bash
 repos audit --fix-all --dry-run --json > audit-report.json
 ```
+
+---
+
+**Related Documentation:**
+- [Documentation Index](../README.md)
+- [Getting Started](../getting_started.md)
+- [Commands Reference](commands.md)
+- [Troubleshooting](troubleshooting.md)

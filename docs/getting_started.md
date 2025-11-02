@@ -1,6 +1,6 @@
 # Getting Started
 
-Fast Git repository management tool written in Rust for batch operations across multiple repositories.
+Batch Git operations across multiple repositories. Stage, commit, push, and manage configs in one command instead of manually visiting each repo.
 
 ## Installation
 
@@ -91,8 +91,67 @@ Set name/email across all repos:
 repos config --from-global --force    # No prompts
 ```
 
+## Frequently Asked Questions
+
+### When should I use `repos` instead of manual git commands?
+
+Use `repos` when you need to perform the same operation across multiple repositories. Instead of running `cd repo1 && git push && cd ../repo2 && git push...`, run `repos push` once.
+
+### Does `repos` work with git submodules?
+
+`repos` treats submodules as separate repositories. The `subrepo` commands are for nested repos (independent `.git` directories), not git submodules. Use `git submodule` commands for submodule management.
+
+### Can I use `repos` in a monorepo?
+
+Yes. `repos` works with any directory structure containing multiple git repositories. It discovers all repos recursively and operates on them concurrently.
+
+### What's the difference between `--force` and `--stash` in subrepo commands?
+
+- `--stash`: Safely stashes uncommitted changes before syncing. Changes can be recovered with `git stash pop`
+- `--force`: Permanently discards uncommitted changes. Use only when you're certain you don't need them
+
+### How do I target specific repositories instead of all of them?
+
+Most commands accept repository names as arguments:
+```bash
+repos publish my-app my-lib        # Only these repos
+repos audit --repos my-app,my-lib  # Comma-separated for audit
+```
+
+### Why does publishing skip some of my repos?
+
+By default, `repos publish` only publishes public repositories. Use `--all` to include private repos, or `--private-only` for only private repos.
+
+### Is it safe to use `repos audit --fix-all`?
+
+Only the `--fix-gitignore` operation is completely safe (just adds patterns to `.gitignore`). The `--fix-large` and `--fix-secrets` flags rewrite git history, which requires force-pushing and impacts all collaborators. Always run `--dry-run` first.
+
+### How do I undo a history rewrite from `repos audit --fix-secrets`?
+
+The tool creates backup refs before rewriting:
+```bash
+git reset --hard refs/original/pre-fix-backup-secrets-<timestamp>
+```
+
+### Do I need to install TruffleHog manually?
+
+No. Run `repos audit --install-tools` and it will auto-install TruffleHog for you.
+
+### Why is `repos audit --verify` slower than regular audit?
+
+Verification mode tests whether detected secrets are currently active by making API calls to verify them. This is thorough but slower. Use in CI/CD to fail builds on active secrets.
+
+### Can I use `repos` with private package registries?
+
+Yes. Configure your private registry credentials the same way you would for the package manager:
+- npm: `.npmrc` with registry URL
+- Cargo: `~/.cargo/config.toml` with registry index
+- Python: `~/.pypirc` with repository URL
+
+Learn more in [credentials_setup.md](guides/credentials_setup.md).
+
 ## Next Steps
 
-- [commands.md](guides/commands.md) - Full command reference
-- [publishing.md](guides/publishing.md) - Package publishing guide
-- [subrepo_management.md](guides/subrepo_management.md) - Advanced nested repo features
+- [Full command reference](guides/commands.md)
+- [Package publishing guide](guides/publishing.md)
+- [Advanced nested repo features](guides/subrepo_management.md)

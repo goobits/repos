@@ -16,11 +16,11 @@ cd repos
 ./install.sh
 ```
 
-The install script:
-- Builds optimized release binary with `cargo build --release`
-- Installs to first writable location: `/usr/local/bin`, `~/.local/bin`, or `~/bin`
-- Adds installation directory to PATH automatically
-- Optionally installs Rust toolchain if missing
+After running the script, you'll have:
+- Optimized release binary built and installed
+- Binary in `/usr/local/bin`, `~/.local/bin`, or `~/bin` (first writable location)
+- Installation directory added to your PATH
+- Rust toolchain installed if it was missing
 
 ### Method 2: Make
 
@@ -52,8 +52,6 @@ cd repos
 cargo build
 ./target/debug/repos --help
 ```
-
-Debug builds compile faster but run slower. Use for development only.
 
 ## Verify Installation
 

@@ -13,14 +13,24 @@ Git repository management tool for batch operations across multiple repositories
 
 ## Documentation
 
+### Getting Started
 - **[Getting Started](docs/getting_started.md)** - Quick 5-minute tutorial
 - **[Installation](docs/installation.md)** - Detailed setup guide
+
+### Guides
 - **[Commands Reference](docs/guides/commands.md)** - All commands and flags
 - **[Publishing Guide](docs/guides/publishing.md)** - Package publishing workflows
 - **[Security Auditing](docs/guides/security_auditing.md)** - Secret scanning and hygiene
 - **[Subrepo Management](docs/guides/subrepo_management.md)** - Drift detection and sync
 - **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
-- **[Contributing](docs/contributing.md)** - Development guide
+
+### Reference
+- **[Glossary](docs/glossary.md)** - Terms, flags, and concepts
+- **[Architecture](docs/architecture.md)** - Technical design and patterns
+- **[Examples](docs/examples/README.md)** - CI/CD integration and scripts
+
+### Developer
+- **[Contributing](CONTRIBUTING.md)** - Development guide
 
 ## Quick Install
 

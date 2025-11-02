@@ -14,7 +14,7 @@ Common issues and solutions for the repos tool.
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `not authenticated` or `401 Unauthorized` | Missing registry credentials | See [credentials_setup.md](credentials_setup.md) for authentication setup |
+| `not authenticated` or `401 Unauthorized` | Missing registry credentials | Configure [publishing credentials](credentials_setup.md) |
 | `uncommitted changes` or `dirty working directory` | Uncommitted files in repo | Commit or stash changes: `git status` to review |
 | `tag already exists` | Version tag already published | Delete tag locally and remotely, then retry: `git tag -d v1.0.0 && git push origin :refs/tags/v1.0.0` |
 | `not a package` or `no manifest found` | Missing package manifest | Ensure repo has `package.json`, `Cargo.toml`, or `pyproject.toml` |
@@ -104,3 +104,11 @@ For additional support, consult the main documentation:
 - [README.md](../README.md) - Main documentation
 - [getting_started.md](../getting_started.md) - Quick start guide
 - [credentials_setup.md](credentials_setup.md) - Authentication setup
+
+---
+
+**Related Documentation:**
+- [Documentation Index](../README.md)
+- [Getting Started](../getting_started.md)
+- [Commands Reference](commands.md)
+- [Security Auditing](security_auditing.md)
