@@ -35,6 +35,9 @@ enum Commands {
         /// Show detailed progress for all repositories
         #[arg(long, short)]
         verbose: bool,
+        /// Show file changes in repos with uncommitted changes
+        #[arg(long, short = 'c')]
+        show_changes: bool,
         /// Skip subrepo drift check (faster but less complete health check)
         #[arg(long)]
         no_drift_check: bool,
@@ -227,9 +230,9 @@ async fn main() -> Result<()> {
 
     // Determine the operation mode and handle commands
     match &cli.command {
-        Some(Commands::Push { force, verbose, no_drift_check, jobs, sequential }) => {
+        Some(Commands::Push { force, verbose, show_changes, no_drift_check, jobs, sequential }) => {
             let force_push = *force || cli.force;
-            handle_push_command(force_push, *verbose, *no_drift_check, *jobs, *sequential).await
+            handle_push_command(force_push, *verbose, *show_changes, *no_drift_check, *jobs, *sequential).await
         }
         Some(Commands::Stage { pattern }) => handle_stage_command(pattern.clone()).await,
         Some(Commands::Unstage { pattern }) => handle_unstage_command(pattern.clone()).await,

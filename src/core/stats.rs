@@ -116,7 +116,7 @@ impl SyncStatistics {
     }
 
     /// Generates detailed warning messages for repositories needing attention
-    pub fn generate_detailed_summary(&self) -> String {
+    pub fn generate_detailed_summary(&self, show_changes: bool) -> String {
         let mut lines = Vec::new();
 
         // Failed repos get priority
@@ -171,7 +171,29 @@ impl SyncStatistics {
                     "├─"
                 };
                 let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
-                lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
+
+                if show_changes {
+                    // Show repo header with path
+                    lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
+
+                    // Get and display file changes
+                    if let Ok(changes) = get_repo_changes(repo_path) {
+                        if !changes.is_empty() {
+                            let is_last_repo = i == self.uncommitted_repos.len() - 1;
+                            for (file_idx, change) in changes.iter().enumerate() {
+                                let is_last_file = file_idx == changes.len() - 1;
+                                let prefix = if is_last_repo {
+                                    if is_last_file { "      └─" } else { "      ├─" }
+                                } else {
+                                    if is_last_file { "   │  └─" } else { "   │  ├─" }
+                                };
+                                lines.push(format!("{}  {}", prefix, change));
+                            }
+                        }
+                    }
+                } else {
+                    lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
+                }
             }
             lines.push(String::new()); // Add blank line
         }
@@ -243,4 +265,37 @@ pub(crate) fn clean_error_message(error: &str) -> String {
     };
 
     message
+}
+
+/// Gets the list of changed files in a repository using git status --porcelain
+fn get_repo_changes(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
+    use std::path::Path;
+    use std::process::Command;
+
+    let path = Path::new(repo_path);
+    let output = Command::new("git")
+        .args(&["status", "--porcelain"])
+        .current_dir(path)
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let status_output = String::from_utf8_lossy(&output.stdout);
+    let mut changes = Vec::new();
+    const MAX_FILES: usize = 10; // Limit to first 10 files
+
+    for (i, line) in status_output.lines().enumerate() {
+        if i >= MAX_FILES {
+            let remaining = status_output.lines().count() - MAX_FILES;
+            changes.push(format!("... and {} more", remaining));
+            break;
+        }
+        if !line.is_empty() {
+            changes.push(line.to_string());
+        }
+    }
+
+    Ok(changes)
 }

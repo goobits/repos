@@ -16,6 +16,7 @@ const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 pub async fn handle_push_command(
     force_push: bool,
     verbose: bool,
+    show_changes: bool,
     no_drift_check: bool,
     jobs: Option<usize>,
     sequential: bool,
@@ -65,7 +66,7 @@ pub async fn handle_push_command(
     };
 
     // Process all repositories concurrently
-    process_push_repositories(context, force_push, verbose).await;
+    process_push_repositories(context, force_push, verbose, show_changes).await;
 
     // Check for subrepo drift unless explicitly skipped
     if !no_drift_check {
@@ -82,7 +83,7 @@ pub async fn handle_push_command(
 ///
 /// Phase 1: Fetch all repositories (2x concurrency) - read-only, safe to parallelize aggressively
 /// Phase 2: Push repositories that need it (1x concurrency) - respects rate limits
-async fn process_push_repositories(context: crate::core::ProcessingContext, force_push: bool, verbose: bool) {
+async fn process_push_repositories(context: crate::core::ProcessingContext, force_push: bool, verbose: bool, show_changes: bool) {
     use crate::core::{acquire_stats_lock, create_progress_bar};
     use crate::git::{fetch_and_analyze, push_if_needed, FetchResult};
     use futures::stream::{FuturesUnordered, StreamExt};
@@ -121,9 +122,16 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
     let mut fetch_futures = FuturesUnordered::new();
     for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
         let semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
+        let verbose_clone = verbose;
         let future = async move {
             let _permit = semaphore_clone.acquire().await.expect("Failed to acquire fetch permit");
             let fetch_result = fetch_and_analyze(&repo_path, force_push).await;
+
+            // Update progress bar after fetch completes (verbose mode only)
+            if verbose_clone {
+                progress_bar.set_message("fetched, queued for push...");
+            }
+
             (repo_name, repo_path, fetch_result, progress_bar)
         };
         fetch_futures.push(future);
@@ -233,7 +241,7 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
     footer_pb.finish();
 
     let final_stats = acquire_stats_lock(&context.statistics);
-    let detailed_summary = final_stats.generate_detailed_summary();
+    let detailed_summary = final_stats.generate_detailed_summary(show_changes);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
         println!("{}", detailed_summary);

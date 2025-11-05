@@ -256,7 +256,7 @@ async fn process_staging_repositories(
 
     // Print the final detailed summary if there are any issues to report
     let final_stats = acquire_stats_lock(&context.statistics);
-    let detailed_summary = final_stats.generate_detailed_summary();
+    let detailed_summary = final_stats.generate_detailed_summary(false);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
         println!("{}", detailed_summary);
@@ -498,7 +498,7 @@ async fn process_commit_repositories(
 
     // Print the final detailed summary if there are any issues to report
     let final_stats = acquire_stats_lock(&context.statistics);
-    let detailed_summary = final_stats.generate_detailed_summary();
+    let detailed_summary = final_stats.generate_detailed_summary(false);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
         println!("{}", detailed_summary);
