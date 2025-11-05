@@ -34,6 +34,9 @@ rayon = "1.10"
 # Command line argument parsing
 clap = { version = "4.0", features = ["derive"] }
 
+# System information
+num_cpus = "1.16"
+
 # TruffleHog integration dependencies
 reqwest = { version = "0.12", features = ["native-tls"] }
 serde = { version = "1.0", features = ["derive"] }

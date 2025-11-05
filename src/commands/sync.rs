@@ -9,13 +9,20 @@ use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
     NO_REPOS_MESSAGE,
 };
-use crate::git::check_repo;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 const PUSHING_MESSAGE: &str = "pushing...";
 
 /// Handles the repository push command
-pub async fn handle_push_command(force_push: bool, verbose: bool, no_drift_check: bool) -> Result<()> {
+pub async fn handle_push_command(
+    force_push: bool,
+    verbose: bool,
+    no_drift_check: bool,
+    jobs: Option<usize>,
+    sequential: bool,
+) -> Result<()> {
+    use crate::core::config::get_git_concurrency;
+
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos");
 
@@ -28,20 +35,28 @@ pub async fn handle_push_command(force_push: bool, verbose: bool, no_drift_check
         return Ok(());
     }
 
+    // Determine concurrency level based on CLI args and system resources
+    let (concurrent_limit, _used_deprecated) = get_git_concurrency(jobs, sequential);
+
     let total_repos = repos.len();
     let repo_word = if total_repos == 1 {
         "repository"
     } else {
         "repositories"
     };
+    let concurrency_info = if verbose {
+        format!(" ({} concurrent)", concurrent_limit)
+    } else {
+        String::new()
+    };
     print!(
-        "\r🚀 Pushing {} {}                    \n",
-        total_repos, repo_word
+        "\r🚀 Pushing {} {}{}                    \n",
+        total_repos, repo_word, concurrency_info
     );
     println!();
 
-    // Create processing context
-    let context = match create_processing_context(repos, start_time) {
+    // Create processing context with configured concurrency
+    let context = match create_processing_context(repos, start_time, concurrent_limit) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -64,145 +79,160 @@ pub async fn handle_push_command(force_push: bool, verbose: bool, no_drift_check
     Ok(())
 }
 
-/// Processes all repositories concurrently for pushing
+/// Processes all repositories using two-phase approach for optimal performance
+///
+/// Phase 1: Fetch all repositories (2x concurrency) - read-only, safe to parallelize aggressively
+/// Phase 2: Push repositories that need it (1x concurrency) - respects rate limits
 async fn process_push_repositories(context: crate::core::ProcessingContext, force_push: bool, verbose: bool) {
-    use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
+    use crate::core::{acquire_stats_lock, create_progress_bar};
+    use crate::git::{fetch_and_analyze, push_if_needed, FetchResult};
     use futures::stream::{FuturesUnordered, StreamExt};
+    use std::path::PathBuf;
 
-    let mut futures = FuturesUnordered::new();
-
-    // Create progress bars based on verbose mode
+    // Setup progress bars and statistics
     let repo_progress_bars: Vec<_> = if verbose {
-        // Verbose mode: create individual progress bars for each repo (current behavior)
         context.repositories.iter()
             .map(|(repo_name, _)| {
                 let pb = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
-                pb.set_message(PUSHING_MESSAGE);
+                pb.set_message("fetching...");
                 pb
             })
             .collect()
     } else {
-        // Default mode: create single updating progress bar
         use indicatif::{ProgressBar, ProgressStyle};
-
-        let single_pb = context.multi_progress.add(
-            ProgressBar::new(context.total_repos as u64)
-        );
-        single_pb.set_style(
-            ProgressStyle::default_bar()
-                .template("[{pos}/{len}] {msg}")
-                .unwrap()
-        );
-        single_pb.set_message("🚀 Starting...");
-
-        // Create vec of shared references to the same progress bar
+        let single_pb = context.multi_progress.add(ProgressBar::new(context.total_repos as u64));
+        single_pb.set_style(ProgressStyle::default_bar().template("[{pos}/{len}] {msg}").unwrap());
+        single_pb.set_message("📥 Fetching...");
         vec![single_pb; context.repositories.len()]
     };
 
-    // Add a blank line before the footer
     let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
-
-    // Create the footer progress bar
     let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
-
-    // Initial footer display
-    let initial_stats = crate::core::SyncStatistics::new();
-    if verbose {
-        let initial_summary =
-            initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
-        footer_pb.set_message(initial_summary);
-    } else {
-        footer_pb.set_message(
-            "✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string()
-        );
-    }
-
-    // Add another blank line after the footer
+    footer_pb.set_message("✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string());
     let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
 
-    // Extract values we need in the async closures before moving context.repositories
     let max_name_length = context.max_name_length;
     let start_time = context.start_time;
     let total_repos = context.total_repos;
 
-    for ((repo_name, repo_path), progress_bar) in
-        context.repositories.into_iter().zip(repo_progress_bars)
-    {
+    // PHASE 1: Fetch all repos with high concurrency (2x)
+    let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(context.semaphore.available_permits() * 2));
+    let mut fetch_results: Vec<(String, PathBuf, FetchResult, indicatif::ProgressBar)> = Vec::new();
+
+    let mut fetch_futures = FuturesUnordered::new();
+    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+        let semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
+        let future = async move {
+            let _permit = semaphore_clone.acquire().await.expect("Failed to acquire fetch permit");
+            let fetch_result = fetch_and_analyze(&repo_path, force_push).await;
+            (repo_name, repo_path, fetch_result, progress_bar)
+        };
+        fetch_futures.push(future);
+    }
+
+    while let Some(result) = fetch_futures.next().await {
+        fetch_results.push(result);
+    }
+
+    // PHASE 2: Push repos that need it with adaptive concurrency + rate limit protection
+    if !verbose {
+        // Update progress bar for push phase
+        if let Some(pb) = fetch_results.first().map(|(_, _, _, pb)| pb) {
+            pb.set_message("📤 Pushing...");
+            pb.set_position(0);
+        }
+    }
+
+    // Track rate limit errors for adaptive backoff
+    let rate_limit_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let has_rate_limit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let mut push_futures = FuturesUnordered::new();
+    for (repo_name, repo_path, fetch_result, progress_bar) in fetch_results {
         let stats_clone = std::sync::Arc::clone(&context.statistics);
         let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let footer_clone = footer_pb.clone();
-        let verbose_clone = verbose;
+        let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
+        let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
 
         let future = async move {
-            let _permit = acquire_semaphore_permit(&semaphore_clone).await;
+            let _permit = semaphore_clone.acquire().await.expect("Failed to acquire push permit");
 
-            let (status, message, has_uncommitted_changes) =
-                check_repo(&repo_path, force_push).await;
+            // Attempt push with retry on rate limit
+            let mut attempt = 0;
+            let max_attempts = 2;
+            let result = loop {
+                attempt += 1;
+                let (status, message, has_uncommitted) = push_if_needed(&repo_path, fetch_result.clone(), force_push).await;
 
-            let display_message = if has_uncommitted_changes
-                && matches!(status, crate::git::Status::Synced)
-            {
+                // Check for rate limit error
+                if message.contains("⚠️ RATE LIMIT") {
+                    has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                    rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                    if attempt < max_attempts {
+                        // Wait briefly and retry
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        continue;
+                    } else {
+                        // Max attempts reached, return with suggestion
+                        let suggestion = format!(
+                            "{} (try reducing concurrency with --jobs N or --sequential)",
+                            message.replace("⚠️ RATE LIMIT: ", "")
+                        );
+                        break (status, suggestion, has_uncommitted);
+                    }
+                }
+
+                break (status, message, has_uncommitted);
+            };
+
+            let (status, message, has_uncommitted_changes) = result;
+
+            let display_message = if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
                 format!("{} (uncommitted changes)", message)
             } else {
                 message.clone()
             };
 
-            if verbose_clone {
-                // Verbose mode: update individual progress bars
-                progress_bar.set_prefix(format!(
-                    "{} {:width$}",
-                    status.symbol(),
-                    repo_name,
-                    width = max_name_length
-                ));
+            if verbose {
+                progress_bar.set_prefix(format!("{} {:width$}", status.symbol(), repo_name, width = max_name_length));
                 progress_bar.set_message(format!("{:<10}   {}", status.text(), display_message));
                 progress_bar.finish();
             } else {
-                // Non-verbose mode: update single progress bar
                 progress_bar.set_message(format!("{} {} ({})", status.symbol(), repo_name, status.text()));
                 progress_bar.inc(1);
             }
 
-            // Update statistics based on operation result
             let mut stats_guard = acquire_stats_lock(&stats_clone);
-            let repo_path_str = repo_path.to_string_lossy();
-            stats_guard.update(
-                &repo_name,
-                &repo_path_str,
-                &status,
-                &message,
-                has_uncommitted_changes,
-            );
+            stats_guard.update(&repo_name, &repo_path.to_string_lossy(), &status, &message, has_uncommitted_changes);
 
-            // Update the footer summary after each repository completes
             let duration = start_time.elapsed();
-            if verbose_clone {
-                let summary = stats_guard.generate_summary(total_repos, duration);
-                footer_clone.set_message(summary);
+            if verbose {
+                footer_clone.set_message(stats_guard.generate_summary(total_repos, duration));
             } else {
-                // Non-verbose mode: show live counters
                 let live_counters = format!(
                     "✅ {} Pushed  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
-                    stats_guard.total_commits_pushed,
-                    stats_guard.synced_repos,
-                    stats_guard.error_repos,
-                    stats_guard.no_upstream_repos.len(),
-                    stats_guard.skipped_repos
+                    stats_guard.total_commits_pushed, stats_guard.synced_repos, stats_guard.error_repos,
+                    stats_guard.no_upstream_repos.len(), stats_guard.skipped_repos
                 );
                 footer_clone.set_message(live_counters);
             }
         };
-
-        futures.push(future);
+        push_futures.push(future);
     }
 
-    // Wait for all repository operations to complete
-    while futures.next().await.is_some() {}
+    while push_futures.next().await.is_some() {}
 
-    // Finish the footer progress bar
+    // Show rate limit warning if detected
+    if has_rate_limit.load(std::sync::atomic::Ordering::Relaxed) {
+        let count = rate_limit_count.load(std::sync::atomic::Ordering::Relaxed);
+        eprintln!("\n⚠️  Rate limit detected on {} operation(s).", count);
+        eprintln!("💡 Try reducing concurrency: repos push --jobs 3");
+    }
+
     footer_pb.finish();
 
-    // Print the final detailed summary if there are any issues to report
     let final_stats = acquire_stats_lock(&context.statistics);
     let detailed_summary = final_stats.generate_detailed_summary();
     if !detailed_summary.is_empty() {
@@ -210,8 +240,6 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
         println!("{}", detailed_summary);
         println!("{}", "━".repeat(70));
     }
-
-    // Add final spacing
     println!();
 }
 

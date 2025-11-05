@@ -57,7 +57,7 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
 
 /// Reads a git config value from the specified repository
 /// Returns the config value if it exists, None if not found
-pub async fn get_git_config(path: &Path, key: &str) -> Result<Option<String>> {
+pub(crate) async fn get_git_config(path: &Path, key: &str) -> Result<Option<String>> {
     let mut args = Vec::from(GIT_CONFIG_GET_ARGS);
     args.push(key);
 
@@ -76,7 +76,7 @@ pub async fn get_git_config(path: &Path, key: &str) -> Result<Option<String>> {
 
 /// Sets a git config value in the specified repository (local scope)
 /// Returns success status
-pub async fn set_git_config(path: &Path, key: &str, value: &str) -> Result<bool> {
+pub(crate) async fn set_git_config(path: &Path, key: &str, value: &str) -> Result<bool> {
     let args = vec!["config", key, value];
 
     match run_git(path, &args).await {
@@ -85,67 +85,110 @@ pub async fn set_git_config(path: &Path, key: &str, value: &str) -> Result<bool>
     }
 }
 
-/// Checks a repository for synchronization status and pushes if needed
-/// Returns (status, message, has_uncommitted_changes)
-pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
+/// Detects if an error message indicates a rate limit issue
+fn is_rate_limit_error(error_msg: &str) -> bool {
+    let error_lower = error_msg.to_lowercase();
+    error_lower.contains("rate limit")
+        || error_lower.contains("too many requests")
+        || error_lower.contains("secondary rate limit")
+        || (error_lower.contains("403") && error_lower.contains("github"))
+}
+
+/// Result of the fetch phase for a repository
+#[derive(Clone)]
+pub struct FetchResult {
+    pub has_uncommitted: bool,
+    pub current_branch: String,
+    pub ahead_count: u32,
+    pub upstream_exists: bool,
+    pub status: Status,
+    pub message: String,
+}
+
+/// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
+/// Returns FetchResult with repository state after fetching
+pub async fn fetch_and_analyze(path: &Path, force_push: bool) -> FetchResult {
     use crate::core::clean_error_message;
 
     // Refresh the index to ensure accurate diff-index results
-    // This prevents false positives after git operations like fetch
     let _ = run_git(path, &["update-index", "--refresh"]).await;
 
     // Check if directory has uncommitted changes
     let has_uncommitted = match run_git(path, GIT_DIFF_INDEX_ARGS).await {
-        Ok((false, _, _)) => true, // Command failed means there are changes
-        Ok((true, _, _)) => false, // Command succeeded means no changes
-        Err(_) => false,           // Error checking, assume no changes
+        Ok((false, _, _)) => true,
+        Ok((true, _, _)) => false,
+        Err(_) => false,
     };
 
     // Get list of remotes
     let remotes = match run_git(path, GIT_REMOTE_ARGS).await {
         Ok((true, output, _)) => output,
         Ok((false, _, _)) | Err(_) => {
-            return (
-                Status::NoRemote,
-                STATUS_NO_REMOTE.to_string(),
+            return FetchResult {
                 has_uncommitted,
-            );
+                current_branch: String::new(),
+                ahead_count: 0,
+                upstream_exists: false,
+                status: Status::NoRemote,
+                message: STATUS_NO_REMOTE.to_string(),
+            };
         }
     };
 
     if remotes.trim().is_empty() {
-        return (
-            Status::NoRemote,
-            STATUS_NO_REMOTE.to_string(),
+        return FetchResult {
             has_uncommitted,
-        );
+            current_branch: String::new(),
+            ahead_count: 0,
+            upstream_exists: false,
+            status: Status::NoRemote,
+            message: STATUS_NO_REMOTE.to_string(),
+        };
     }
 
     // Get current branch
     let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
         Ok((true, branch, _)) => branch,
         Ok((false, _, _)) | Err(_) => {
-            return (
-                Status::Skip,
-                STATUS_DETACHED_HEAD.to_string(),
+            return FetchResult {
                 has_uncommitted,
-            );
+                current_branch: String::new(),
+                ahead_count: 0,
+                upstream_exists: false,
+                status: Status::Skip,
+                message: STATUS_DETACHED_HEAD.to_string(),
+            };
         }
     };
 
     // Skip if in detached HEAD state
     if current_branch == DETACHED_HEAD_BRANCH {
-        return (
-            Status::Skip,
-            STATUS_DETACHED_HEAD.to_string(),
+        return FetchResult {
             has_uncommitted,
-        );
+            current_branch: String::new(),
+            ahead_count: 0,
+            upstream_exists: false,
+            status: Status::Skip,
+            message: STATUS_DETACHED_HEAD.to_string(),
+        };
     }
 
     // Fetch latest changes to ensure we have up-to-date refs
     if let Err(e) = run_git(path, GIT_FETCH_ARGS).await {
         let error_message = clean_error_message(&e.to_string());
-        return (Status::Error, error_message, has_uncommitted);
+        let final_message = if is_rate_limit_error(&error_message) {
+            format!("⚠️ RATE LIMIT: {}", error_message)
+        } else {
+            error_message
+        };
+        return FetchResult {
+            has_uncommitted,
+            current_branch,
+            ahead_count: 0,
+            upstream_exists: false,
+            status: Status::Error,
+            message: final_message,
+        };
     }
 
     // Check if current branch has an upstream
@@ -153,33 +196,19 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
     let upstream_exists = upstream_check.as_ref().is_ok_and(|result| result.0);
 
     if !upstream_exists {
-        if force_push {
-            // Try to set upstream and push
-            let push_args = vec!["push", "-u", "origin", &current_branch];
-            match run_git(path, &push_args).await {
-                Ok((true, _, _)) => {
-                    return (
-                        Status::Pushed,
-                        "set upstream & pushed".to_string(),
-                        has_uncommitted,
-                    );
-                }
-                Ok((false, _, stderr)) => {
-                    let error_message = clean_error_message(&stderr);
-                    return (Status::Error, error_message, has_uncommitted);
-                }
-                Err(e) => {
-                    let error_message = clean_error_message(&e.to_string());
-                    return (Status::Error, error_message, has_uncommitted);
-                }
-            }
+        let status = if force_push {
+            Status::NoUpstream // Will be pushed in phase 2
         } else {
-            return (
-                Status::NoUpstream,
-                STATUS_NO_UPSTREAM.to_string(),
-                has_uncommitted,
-            );
-        }
+            Status::NoUpstream
+        };
+        return FetchResult {
+            has_uncommitted,
+            current_branch,
+            ahead_count: 0,
+            upstream_exists: false,
+            status,
+            message: STATUS_NO_UPSTREAM.to_string(),
+        };
     }
 
     // Check if local is ahead of remote
@@ -190,32 +219,110 @@ pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool)
     };
 
     if ahead_count == 0 {
-        return (Status::Synced, STATUS_SYNCED.to_string(), has_uncommitted);
+        FetchResult {
+            has_uncommitted,
+            current_branch,
+            ahead_count: 0,
+            upstream_exists: true,
+            status: Status::Synced,
+            message: STATUS_SYNCED.to_string(),
+        }
+    } else {
+        FetchResult {
+            has_uncommitted,
+            current_branch,
+            ahead_count,
+            upstream_exists: true,
+            status: Status::Synced, // Will be pushed in phase 2
+            message: format!("{} commits ahead", ahead_count),
+        }
+    }
+}
+
+/// Phase 2: Push repository if needed (write operation, moderate concurrency)
+/// Returns (status, message, has_uncommitted_changes)
+pub async fn push_if_needed(path: &Path, fetch_result: FetchResult, force_push: bool) -> (Status, String, bool) {
+    use crate::core::clean_error_message;
+
+    // If already synced or has errors, return immediately
+    if fetch_result.status != Status::Synced && fetch_result.status != Status::NoUpstream {
+        return (fetch_result.status, fetch_result.message, fetch_result.has_uncommitted);
+    }
+
+    // Handle no upstream case
+    if !fetch_result.upstream_exists {
+        if force_push {
+            let push_args = vec!["push", "-u", "origin", &fetch_result.current_branch];
+            match run_git(path, &push_args).await {
+                Ok((true, _, _)) => {
+                    return (
+                        Status::Pushed,
+                        "set upstream & pushed".to_string(),
+                        fetch_result.has_uncommitted,
+                    );
+                }
+                Ok((false, _, stderr)) => {
+                    let error_message = clean_error_message(&stderr);
+                    return (Status::Error, error_message, fetch_result.has_uncommitted);
+                }
+                Err(e) => {
+                    let error_message = clean_error_message(&e.to_string());
+                    return (Status::Error, error_message, fetch_result.has_uncommitted);
+                }
+            }
+        } else {
+            return (Status::NoUpstream, STATUS_NO_UPSTREAM.to_string(), fetch_result.has_uncommitted);
+        }
+    }
+
+    // If no commits ahead, already synced
+    if fetch_result.ahead_count == 0 {
+        return (Status::Synced, STATUS_SYNCED.to_string(), fetch_result.has_uncommitted);
     }
 
     // Push changes
     match run_git(path, GIT_PUSH_ARGS).await {
         Ok((true, _, _)) => {
-            let commits_word = if ahead_count == 1 {
+            let commits_word = if fetch_result.ahead_count == 1 {
                 "commit"
             } else {
                 "commits"
             };
             (
                 Status::Pushed,
-                format!("{} {} pushed", ahead_count, commits_word),
-                has_uncommitted,
+                format!("{} {} pushed", fetch_result.ahead_count, commits_word),
+                fetch_result.has_uncommitted,
             )
         }
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
-            (Status::Error, error_message, has_uncommitted)
+            let final_message = if is_rate_limit_error(&error_message) {
+                format!("⚠️ RATE LIMIT: {}", error_message)
+            } else {
+                error_message
+            };
+            (Status::Error, final_message, fetch_result.has_uncommitted)
         }
         Err(e) => {
             let error_message = clean_error_message(&e.to_string());
-            (Status::Error, error_message, has_uncommitted)
+            let final_message = if is_rate_limit_error(&error_message) {
+                format!("⚠️ RATE LIMIT: {}", error_message)
+            } else {
+                error_message
+            };
+            (Status::Error, final_message, fetch_result.has_uncommitted)
         }
     }
+}
+
+/// Checks a repository for synchronization status and pushes if needed (single-phase wrapper)
+/// Returns (status, message, has_uncommitted_changes)
+///
+/// Note: This is a convenience wrapper around fetch_and_analyze() + push_if_needed().
+/// For better performance with multiple repos, use the two-phase approach directly.
+pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
+    let fetch_result = fetch_and_analyze(path, force_push).await;
+    push_if_needed(path, fetch_result, force_push).await
 }
 
 /// Stages files matching the given pattern in the specified repository

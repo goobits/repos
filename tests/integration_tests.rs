@@ -1,5 +1,5 @@
-use repos::core::stats::SyncStatistics;
-use repos::git::config::{is_valid_email, is_valid_name, UserConfig};
+use repos::core::SyncStatistics;
+use repos::git::{is_valid_email, is_valid_name, UserConfig};
 
 #[test]
 fn test_sync_stats_initialization() {
@@ -284,7 +284,7 @@ async fn test_staging_with_patterns() {
 
 #[test]
 fn test_stats_update_with_staging_statuses() {
-    use repos::core::stats::SyncStatistics;
+    use repos::core::SyncStatistics;
     use repos::git::Status;
 
     let mut stats = SyncStatistics::new();

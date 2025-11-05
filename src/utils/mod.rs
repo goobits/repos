@@ -1,6 +1,6 @@
-pub mod fs;
-pub mod terminal;
+pub(crate) mod fs;
+pub(crate) mod terminal;
 
-// Re-export commonly used items
-pub use fs::*;
-pub use terminal::*;
+// Public API - utilities used by commands
+pub use fs::shorten_path;
+pub use terminal::{set_terminal_title, set_terminal_title_and_flush};

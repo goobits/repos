@@ -1,8 +1,10 @@
-pub mod config;
-pub mod operations;
-pub mod status;
+// Internal modules - not part of public API
+pub(crate) mod config;
+pub(crate) mod operations;
+pub(crate) mod status;
 
-// Re-export commonly used items
-pub use config::*;
-pub use operations::*;
-pub use status::*;
+// Public API - curated exports only
+pub mod api;
+
+// Re-export key items at module level for convenience
+pub use api::*;

@@ -1,13 +1,11 @@
-pub mod config;
-pub mod discovery;
-pub mod progress;
-pub mod stats;
+// Internal modules - not part of public API
+pub(crate) mod config;
+pub(crate) mod discovery;
+pub(crate) mod progress;
+pub(crate) mod stats;
 
-// Re-export commonly used items
-pub use config::*;
-pub use discovery::*;
-pub use progress::*;
-pub use stats::*;
+// Public API - curated exports only
+pub mod api;
 
-// Re-export terminal utilities for convenience
-pub use crate::utils::{set_terminal_title, set_terminal_title_and_flush};
+// Re-export key items at module level for convenience
+pub use api::*;

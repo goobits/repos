@@ -203,7 +203,7 @@ impl SyncStatistics {
 }
 
 /// Cleans and formats error messages for display
-pub fn clean_error_message(error: &str) -> String {
+pub(crate) fn clean_error_message(error: &str) -> String {
     // Replace newlines/tabs with spaces and collapse whitespace
     let cleaned = error
         .replace('\n', " ")

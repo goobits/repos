@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    ProcessingContext, CONFIG_SYNCING_MESSAGE, NO_REPOS_MESSAGE,
+    ProcessingContext, CONFIG_SYNCING_MESSAGE, NO_REPOS_MESSAGE, GIT_CONCURRENT_LIMIT,
 };
 use crate::git::{
     check_repo_config, get_current_user_config, get_global_user_config, validate_user_config,
@@ -275,7 +275,7 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time) {
+    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_LIMIT) {
         Ok(context) => context,
         Err(e) => {
             set_terminal_title_and_flush("✅ repos");

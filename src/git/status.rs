@@ -1,7 +1,7 @@
 //! Git status enumeration and utilities
 
 /// Status enum representing the result of git operations
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Status {
     /// Repository is already up to date with remote
     Synced,

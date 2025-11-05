@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::config::{
-    DEFAULT_PROGRESS_BAR_LENGTH, GIT_CONCURRENT_LIMIT, PROGRESS_CHARS, PROGRESS_TEMPLATE,
+    DEFAULT_PROGRESS_BAR_LENGTH, GIT_CONCURRENT_CAP, PROGRESS_CHARS, PROGRESS_TEMPLATE,
 };
 use super::stats::SyncStatistics;
 
@@ -61,6 +61,7 @@ pub struct GenericProcessingContext<T> {
 pub fn create_processing_context(
     repositories: Vec<(String, PathBuf)>,
     start_time: std::time::Instant,
+    concurrent_limit: usize,
 ) -> Result<ProcessingContext> {
     let total_repos = repositories.len();
     let max_name_length = repositories
@@ -71,7 +72,7 @@ pub fn create_processing_context(
     let multi_progress = MultiProgress::new();
     let progress_style = create_progress_style()?;
     let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(GIT_CONCURRENT_LIMIT));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrent_limit));
 
     Ok(ProcessingContext {
         repositories,
@@ -117,7 +118,7 @@ pub fn create_generic_processing_context<T>(
 
 /// Creates and configures a progress bar for a repository
 /// Returns a configured ProgressBar with the specified repository name
-pub fn create_progress_bar(
+pub(crate) fn create_progress_bar(
     multi: &MultiProgress,
     style: &ProgressStyle,
     repo_name: &str,
@@ -131,7 +132,7 @@ pub fn create_progress_bar(
 
 /// Creates a progress bar style configuration
 /// Returns a ProgressStyle configured with the application's visual styling
-pub fn create_progress_style() -> Result<ProgressStyle> {
+pub(crate) fn create_progress_style() -> Result<ProgressStyle> {
     Ok(ProgressStyle::default_bar()
         .template(PROGRESS_TEMPLATE)?
         .progress_chars(PROGRESS_CHARS))
@@ -147,13 +148,13 @@ pub async fn acquire_semaphore_permit(
         .expect("Failed to acquire semaphore permit")
 }
 
-pub fn acquire_stats_lock<T>(stats: &'_ Arc<Mutex<T>>) -> std::sync::MutexGuard<'_, T> {
+pub(crate) fn acquire_stats_lock<T>(stats: &'_ Arc<Mutex<T>>) -> std::sync::MutexGuard<'_, T> {
     stats.lock().expect("Failed to acquire statistics lock")
 }
 
 /// Creates a separator progress bar for visual spacing between sections
 /// Returns a finished ProgressBar that provides visual separation
-pub fn create_separator_progress_bar(multi_progress: &MultiProgress) -> ProgressBar {
+pub(crate) fn create_separator_progress_bar(multi_progress: &MultiProgress) -> ProgressBar {
     let separator_pb = multi_progress.add(ProgressBar::new(0));
     separator_pb.set_style(ProgressStyle::default_bar().template(" ").expect("Failed to create separator progress bar template - this indicates an invalid template string"));
     separator_pb.finish();
@@ -162,7 +163,7 @@ pub fn create_separator_progress_bar(multi_progress: &MultiProgress) -> Progress
 
 /// Creates a footer progress bar for displaying summary information
 /// Returns a configured ProgressBar for showing operation summaries
-pub fn create_footer_progress_bar(multi_progress: &MultiProgress) -> ProgressBar {
+pub(crate) fn create_footer_progress_bar(multi_progress: &MultiProgress) -> ProgressBar {
     let footer_pb = multi_progress.add(ProgressBar::new(0));
     let footer_style = ProgressStyle::default_bar()
         .template("{wide_msg}")

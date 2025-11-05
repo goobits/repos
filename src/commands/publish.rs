@@ -7,9 +7,9 @@ use anyhow::Result;
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    NO_REPOS_MESSAGE,
+    NO_REPOS_MESSAGE, GIT_CONCURRENT_LIMIT,
 };
-use crate::git::operations::{has_uncommitted_changes, create_and_push_tag, get_repo_visibility, RepoVisibility};
+use crate::git::{has_uncommitted_changes, create_and_push_tag, get_repo_visibility, RepoVisibility};
 use crate::package::{detect_package_manager, get_package_info, publish_package, PublishStatus};
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for packages...";
@@ -188,7 +188,7 @@ pub async fn handle_publish_command(
         .map(|(name, path, _)| (name.clone(), path.clone()))
         .collect();
 
-    let context = match create_processing_context(repos_for_context, start_time) {
+    let context = match create_processing_context(repos_for_context, start_time, GIT_CONCURRENT_LIMIT) {
         Ok(context) => context,
         Err(e) => {
             set_terminal_title_and_flush("✅ repos");

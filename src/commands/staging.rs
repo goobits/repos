@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    NO_REPOS_MESSAGE,
+    NO_REPOS_MESSAGE, GIT_CONCURRENT_LIMIT,
 };
 use crate::git::{
     commit_changes, get_staging_status, has_staged_changes, stage_files, unstage_files, Status,
@@ -49,7 +49,7 @@ pub async fn handle_stage_command(pattern: String) -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time) {
+    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_LIMIT) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -94,7 +94,7 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time) {
+    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_LIMIT) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -139,7 +139,7 @@ pub async fn handle_staging_status_command() -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time) {
+    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_LIMIT) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -389,7 +389,7 @@ pub async fn handle_commit_command(message: String, include_empty: bool) -> Resu
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time) {
+    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_LIMIT) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
