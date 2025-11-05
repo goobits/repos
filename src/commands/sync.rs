@@ -15,7 +15,7 @@ const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 const PUSHING_MESSAGE: &str = "pushing...";
 
 /// Handles the repository push command
-pub async fn handle_push_command(force_push: bool, verbose: bool) -> Result<()> {
+pub async fn handle_push_command(force_push: bool, verbose: bool, no_drift_check: bool) -> Result<()> {
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos");
 
@@ -52,6 +52,11 @@ pub async fn handle_push_command(force_push: bool, verbose: bool) -> Result<()> 
 
     // Process all repositories concurrently
     process_push_repositories(context, force_push, verbose).await;
+
+    // Check for subrepo drift unless explicitly skipped
+    if !no_drift_check {
+        check_and_display_drift();
+    }
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos");
@@ -208,4 +213,15 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
 
     // Add final spacing
     println!();
+}
+
+/// Check for subrepo drift and display concise summary
+fn check_and_display_drift() {
+    // Try to analyze subrepos - if it fails (e.g., no subrepos), silently skip
+    if let Ok(statuses) = crate::subrepo::status::analyze_subrepos() {
+        // Only display if there's drift to report
+        if statuses.iter().any(|s| s.has_drift) {
+            crate::subrepo::status::display_drift_summary(&statuses);
+        }
+    }
 }

@@ -37,6 +37,9 @@ Used by: `config`, `publish`, `audit`
 **`--force`** - Force operation, bypassing safety checks
 Used by: `push`, `config`, `subrepo sync`, `subrepo update`
 
+**`--no-drift-check`** - Skip subrepo drift check in push (faster but less complete)
+Used by: `push`
+
 **`--verbose` / `-v`** - Show detailed operation logs
 Used by: Most commands
 
@@ -124,8 +127,8 @@ Used by: `audit`
 **Sync Score** - Percentage (0-100%) showing how well synchronized subrepo instances are
 → [Subrepo Management](guides/subrepo_management.md#sync-score)
 
-**Sync Target** - Latest clean commit recommended for synchronization
-→ [Subrepo Management](guides/subrepo_management.md#sync-target-algorithm)
+**Sync Target** - Latest clean commit recommended for synchronization (indicated by → arrow)
+→ [Subrepo Management](guides/subrepo_management.md#visual-indicators)
 
 ### Security Terms
 
@@ -189,10 +192,11 @@ Used by: `audit`
 
 ### Subrepo Indicators
 
+**→** - Arrow pointing to recommended sync target (latest clean commit)
 **✅ clean** - No uncommitted changes
 **⚠️ uncommitted** - Has uncommitted changes
-**🎯 SYNC TARGET** - Recommended commit for synchronization
-**⬆️ LATEST** - Absolute newest commit (may have uncommitted changes)
+**⬆️ LATEST** - Absolute newest commit
+**(outdated)** - Commit is older than the latest
 
 ---
 

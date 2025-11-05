@@ -35,6 +35,9 @@ enum Commands {
         /// Show detailed progress for all repositories
         #[arg(long, short)]
         verbose: bool,
+        /// Skip subrepo drift check (faster but less complete health check)
+        #[arg(long)]
+        no_drift_check: bool,
     },
     /// Manage git configuration across repositories
     Config {
@@ -218,9 +221,9 @@ async fn main() -> Result<()> {
 
     // Determine the operation mode and handle commands
     match &cli.command {
-        Some(Commands::Push { force, verbose }) => {
+        Some(Commands::Push { force, verbose, no_drift_check }) => {
             let force_push = *force || cli.force;
-            handle_push_command(force_push, *verbose).await
+            handle_push_command(force_push, *verbose, *no_drift_check).await
         }
         Some(Commands::Stage { pattern }) => handle_stage_command(pattern.clone()).await,
         Some(Commands::Unstage { pattern }) => handle_unstage_command(pattern.clone()).await,

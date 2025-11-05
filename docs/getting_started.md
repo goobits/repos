@@ -35,7 +35,15 @@ repos push
 Output:
 ```
 ✅ 3 repos pushed  ⚠️  2 already up-to-date
+
+🔴 SUBREPO DRIFT (1)
+auth: 2 instances at different commits
+  → 105ce4e  beheremeow-app  ✅ clean  ⬆️ LATEST
+    2f13c23  quest-keeper    ✅ clean  (outdated)
+    Sync: repos subrepo sync auth --to 105ce4e
 ```
+
+**Integrated Health Check**: `repos push` automatically checks for subrepo drift, showing you all repository health issues in one command.
 
 ### Stage Files Across Repos
 
@@ -140,6 +148,10 @@ No. Run `repos audit --install-tools` and it will auto-install TruffleHog for yo
 ### Why is `repos audit --verify` slower than regular audit?
 
 Verification mode tests whether detected secrets are currently active by making API calls to verify them. This is thorough but slower. Use in CI/CD to fail builds on active secrets.
+
+### What does the arrow → mean in subrepo output?
+
+The arrow points to the commit you should sync to. It marks the latest clean commit (no uncommitted changes), which is the safest sync target. Commits without the arrow are either outdated or have uncommitted changes.
 
 ### Can I use `repos` with private package registries?
 

@@ -39,16 +39,22 @@ Quick reference for all `repos` commands.
 
 Push unpushed commits to remotes across all repositories.
 
+`repos push` automatically checks for subrepo drift after pushing, giving you a complete repository health check in one command.
+
 | Flag | Description |
 |------|-------------|
 | `--force` | Auto-push branches with no upstream |
 | `--verbose`, `-v` | Show detailed progress for all repos |
+| `--no-drift-check` | Skip subrepo drift check (faster but less complete) |
 
 ```bash
-repos push                # Push all unpushed commits
+repos push                # Push all unpushed commits + check drift
 repos push --force        # Auto-create upstream for new branches
 repos push --verbose      # Show live progress with tally
+repos push --no-drift-check  # Skip drift check for speed
 ```
+
+**Integrated Health Check**: After pushing, `repos push` automatically checks for subrepo drift and displays a concise summary if any drifted subrepos are found. This gives you a complete picture of your repository health in one command.
 
 ---
 

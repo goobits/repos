@@ -22,6 +22,8 @@ Detect and synchronize nested repositories (subrepos) shared across multiple par
 
 Subrepos are nested Git repositories within parent repos - directories containing their own `.git` folders. When the same subrepo (identified by remote URL) appears in multiple parent repos, it can drift to different commits, creating synchronization problems.
 
+**Automatic Drift Detection**: `repos push` automatically checks for subrepo drift after pushing, displaying a concise summary if drift is found. For detailed analysis, use `repos subrepo status`.
+
 ## Key Concepts
 
 ### Drift Detection
@@ -37,10 +39,11 @@ Subrepos are nested Git repositories within parent repos - directories containin
 
 | Indicator | Meaning |
 |-----------|---------|
+| → | Points to recommended sync target (latest clean commit) |
 | ✅ clean | No uncommitted changes |
 | ⚠️ uncommitted | Has uncommitted changes |
-| 🎯 SYNC TARGET | Latest clean commit (recommended sync target) |
-| ⬆️ LATEST | Absolute newest commit (may have uncommitted changes) |
+| ⬆️ LATEST | Absolute newest commit |
+| (outdated) | Commit is older than the latest |
 
 ### Sync Score
 
@@ -116,9 +119,9 @@ docs-engine
   Remote: https://github.com/example/docs-engine
   Sync Score: 50% (2 commits across 3 repos)
 
-  abc1234  project-a                      ✅ clean  🎯 SYNC TARGET
-  abc1234  project-b                      ✅ clean  🎯 SYNC TARGET
-  def5678  project-c                      ⚠️ uncommitted  ⬆️ LATEST
+→ abc1234  project-a                      ✅ clean  ⬆️ LATEST
+→ abc1234  project-b                      ✅ clean  ⬆️ LATEST
+  def5678  project-c                      ⚠️ uncommitted  (outdated)
 
   💡 EASY FIX (Recommended):
      repos subrepo sync docs-engine --to abc1234 --stash
@@ -132,6 +135,11 @@ docs-engine
    Use --all to see them
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
+
+**Visual Guide**:
+- The arrow `→` points to the commit you should sync to (latest clean)
+- `⬆️ LATEST` marks the absolute newest commit
+- `(outdated)` indicates commits older than the latest
 
 ### repos subrepo sync
 
@@ -237,11 +245,12 @@ Lower scores indicate more drift and higher priority for synchronization.
 
 ## Tips
 
-1. **Use `--all` sparingly** - Default output focuses on problems that need fixing
-2. **Trust the SYNC TARGET** - The algorithm picks the safest commit to sync to
-3. **Prefer `--stash` over `--force`** - Changes can be recovered with `git stash pop`
-4. **Check sync scores** - Lower scores need immediate attention
-5. **Groups by remote URL** - Subrepos with same name but different remotes are treated separately
+1. **Use `repos push` for automatic checks** - Get push results + drift detection in one command
+2. **Use `--all` sparingly** - Default output focuses on problems that need fixing
+3. **Follow the arrow →** - It points to the safest commit to sync to (latest clean)
+4. **Prefer `--stash` over `--force`** - Changes can be recovered with `git stash pop`
+5. **Check sync scores** - Lower scores need immediate attention
+6. **Groups by remote URL** - Subrepos with same name but different remotes are treated separately
 
 ---
 

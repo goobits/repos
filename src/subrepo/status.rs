@@ -87,6 +87,98 @@ pub fn analyze_subrepos() -> Result<Vec<SubrepoStatus>> {
     Ok(statuses)
 }
 
+/// Display concise drift summary for use in repos push
+pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
+    let drifted: Vec<_> = statuses.iter().filter(|s| s.has_drift).collect();
+
+    if drifted.is_empty() {
+        return; // Don't show anything if no drift
+    }
+
+    let synced: Vec<_> = statuses.iter().filter(|s| !s.has_drift).collect();
+
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("🔴 SUBREPO DRIFT ({})", drifted.len());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+    for status in &drifted {
+        display_drift_summary_item(status);
+    }
+
+    if !synced.is_empty() {
+        println!("💡 {} subrepos are fully synced.", synced.len());
+    }
+    println!("💡 Run 'repos subrepo status' for a detailed analysis.");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+}
+
+/// Display a single drifted subrepo in concise format
+fn display_drift_summary_item(status: &SubrepoStatus) {
+    println!("{}: {} instances at different commits", status.name, status.instances.len());
+
+    // Find the latest clean commit (sync target)
+    let latest_clean = status.instances.iter()
+        .filter(|i| !i.has_uncommitted)
+        .max_by_key(|i| i.commit_timestamp);
+
+    // Find absolute latest
+    let latest = status.instances.iter()
+        .max_by_key(|i| i.commit_timestamp)
+        .unwrap();
+
+    // Group by commit for display
+    let mut by_commit: std::collections::HashMap<String, Vec<&SubrepoInstance>> = std::collections::HashMap::new();
+    for instance in &status.instances {
+        by_commit
+            .entry(instance.commit_hash.clone())
+            .or_default()
+            .push(instance);
+    }
+
+    // Sort commits by timestamp (newest first)
+    let mut commits: Vec<_> = by_commit.into_iter().collect();
+    commits.sort_by(|a, b| {
+        let a_timestamp = a.1.iter().map(|i| i.commit_timestamp).max().unwrap_or(0);
+        let b_timestamp = b.1.iter().map(|i| i.commit_timestamp).max().unwrap_or(0);
+        b_timestamp.cmp(&a_timestamp)
+    });
+
+    // Display commits with arrow notation
+    for (_commit, instances) in &commits {
+        for instance in instances {
+            let is_sync_target = latest_clean.map_or(false, |t| t.commit_hash == instance.commit_hash);
+            let is_latest = latest.commit_hash == instance.commit_hash;
+
+            let prefix = if is_sync_target { "→" } else { " " };
+            let status_indicator = if instance.has_uncommitted {
+                "⚠️ uncommitted"
+            } else {
+                "✅ clean"
+            };
+
+            let mut suffix = String::new();
+            if is_latest && !instance.has_uncommitted {
+                suffix.push_str("  ⬆️ LATEST");
+            } else if !is_latest {
+                suffix.push_str("  (outdated)");
+            }
+
+            println!("  {} {}  {:30}  {}{}",
+                prefix,
+                instance.short_hash,
+                instance.parent_repo,
+                status_indicator,
+                suffix
+            );
+        }
+    }
+
+    // Show sync command
+    let target_commit = latest_clean.map(|t| &t.short_hash).unwrap_or(&latest.short_hash);
+    println!("    Sync: repos subrepo sync {} --to {}", status.name, target_commit);
+    println!();
+}
+
 /// Display subrepo status (problem-first by default)
 pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
     if statuses.is_empty() {
@@ -199,32 +291,35 @@ fn display_drift_status(status: &SubrepoStatus) {
         b_timestamp.cmp(&a_timestamp)
     });
 
-    // Display commits and their instances with clear status indicators and tags
+    // Display commits and their instances with arrow notation
     for (_commit, instances) in &commits {
         for instance in instances {
+            let is_sync_target = latest_clean_timestamp.map_or(false, |t|
+                instance.commit_timestamp == t && !instance.has_uncommitted
+            );
+            let is_latest = instance.commit_timestamp == latest_timestamp;
+
+            let prefix = if is_sync_target { "→" } else { " " };
             let status_indicator = if instance.has_uncommitted {
                 "⚠️ uncommitted"
             } else {
                 "✅ clean"
             };
 
-            // Mark LATEST (absolute newest) and SYNC TARGET (latest clean)
-            let mut tags = String::new();
-            if instance.commit_timestamp == latest_timestamp {
-                tags.push_str("  ⬆️ LATEST");
-            }
-            if let Some(clean_ts) = latest_clean_timestamp {
-                if instance.commit_timestamp == clean_ts && !instance.has_uncommitted {
-                    tags.push_str("  🎯 SYNC TARGET");
-                }
+            let mut suffix = String::new();
+            if is_latest && !instance.has_uncommitted {
+                suffix.push_str("  ⬆️ LATEST");
+            } else if !is_latest {
+                suffix.push_str("  (outdated)");
             }
 
             // Align the repo name and status
-            println!("  {}  {:width$}  {}{}",
+            println!("  {} {}  {:width$}  {}{}",
+                prefix,
                 instance.short_hash,
                 instance.parent_repo,
                 status_indicator,
-                tags,
+                suffix,
                 width = 30
             );
         }

@@ -48,9 +48,12 @@ cargo build --release
 ### Push
 
 ```bash
-repos push                      # Push all unpushed commits
+repos push                      # Push all unpushed commits + check drift
 repos push --force              # Auto-push branches with no upstream
+repos push --no-drift-check     # Skip drift check for speed
 ```
+
+**Integrated Health Check**: `repos push` automatically checks for subrepo drift after pushing, giving you a complete repository health report in one command.
 
 ### Staging & Commits
 
