@@ -15,33 +15,21 @@ pub const GIT_CONCURRENT_CAP: usize = 12;
 /// Priority order:
 /// 1. --sequential flag → 1
 /// 2. --jobs N flag → N
-/// 3. REPOS_CONCURRENCY env var → N (deprecated, shows warning)
-/// 4. Smart default → min(CPU_CORES + 2, 12)
-pub fn get_git_concurrency(jobs: Option<usize>, sequential: bool) -> (usize, bool) {
+/// 3. Smart default → min(CPU_CORES + 2, 12)
+pub fn get_git_concurrency(jobs: Option<usize>, sequential: bool) -> usize {
     // Check for sequential mode
     if sequential {
-        return (1, false);
+        return 1;
     }
 
     // Check explicit jobs flag
     if let Some(n) = jobs {
-        return (n.max(1), false); // Ensure at least 1
-    }
-
-    // Check environment variable (deprecated)
-    if let Ok(env_concurrency) = std::env::var("REPOS_CONCURRENCY") {
-        if let Ok(n) = env_concurrency.parse::<usize>() {
-            if n > 0 {
-                eprintln!("⚠️  REPOS_CONCURRENCY environment variable is deprecated. Use --jobs N instead.");
-                return (n, true); // Return with deprecation flag
-            }
-        }
+        return n.max(1); // Ensure at least 1
     }
 
     // Smart default: CPU cores + 2, capped at 12
     let cpu_count = num_cpus::get();
-    let default = (cpu_count + 2).min(GIT_CONCURRENT_CAP);
-    (default, false)
+    (cpu_count + 2).min(GIT_CONCURRENT_CAP)
 }
 
 // Audit concurrency configuration

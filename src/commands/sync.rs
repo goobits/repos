@@ -11,7 +11,6 @@ use crate::core::{
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
-const PUSHING_MESSAGE: &str = "pushing...";
 
 /// Handles the repository push command
 pub async fn handle_push_command(
@@ -36,7 +35,7 @@ pub async fn handle_push_command(
     }
 
     // Determine concurrency level based on CLI args and system resources
-    let (concurrent_limit, _used_deprecated) = get_git_concurrency(jobs, sequential);
+    let concurrent_limit = get_git_concurrency(jobs, sequential);
 
     let total_repos = repos.len();
     let repo_word = if total_repos == 1 {

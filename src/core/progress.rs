@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::config::{
-    DEFAULT_PROGRESS_BAR_LENGTH, GIT_CONCURRENT_CAP, PROGRESS_CHARS, PROGRESS_TEMPLATE,
+    DEFAULT_PROGRESS_BAR_LENGTH, PROGRESS_CHARS, PROGRESS_TEMPLATE,
 };
 use super::stats::SyncStatistics;
 

@@ -19,9 +19,6 @@ pub use super::discovery::{find_repos, init_command};
 pub use super::config::{get_git_concurrency, GIT_CONCURRENT_CAP};
 pub use super::config::{TRUFFLE_CONCURRENT_LIMIT, HYGIENE_CONCURRENT_LIMIT};
 
-// Compatibility alias for renamed constant
-pub use super::config::GIT_CONCURRENT_CAP as GIT_CONCURRENT_LIMIT;
-
 // User-facing messages
 pub use super::config::{NO_REPOS_MESSAGE, CONFIG_SYNCING_MESSAGE};
 
