@@ -161,6 +161,10 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
         let footer_clone = footer_pb.clone();
         let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
         let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
+        let verbose_clone = verbose;
+        let max_name_length_clone = max_name_length;
+        let start_time_clone = start_time;
+        let total_repos_clone = total_repos;
 
         let future = async move {
             let _permit = semaphore_clone.acquire().await.expect("Failed to acquire push permit");
@@ -202,8 +206,8 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
                 message.clone()
             };
 
-            if verbose {
-                progress_bar.set_prefix(format!("{} {:width$}", status.symbol(), repo_name, width = max_name_length));
+            if verbose_clone {
+                progress_bar.set_prefix(format!("{} {:width$}", status.symbol(), repo_name, width = max_name_length_clone));
                 progress_bar.set_message(format!("{:<10}   {}", status.text(), display_message));
                 progress_bar.finish();
             } else {
@@ -214,9 +218,9 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             let mut stats_guard = acquire_stats_lock(&stats_clone);
             stats_guard.update(&repo_name, &repo_path.to_string_lossy(), &status, &message, has_uncommitted_changes);
 
-            let duration = start_time.elapsed();
-            if verbose {
-                footer_clone.set_message(stats_guard.generate_summary(total_repos, duration));
+            let duration = start_time_clone.elapsed();
+            if verbose_clone {
+                footer_clone.set_message(stats_guard.generate_summary(total_repos_clone, duration));
             } else {
                 let live_counters = format!(
                     "✅ {} Pushed  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
