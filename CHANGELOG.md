@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2025-11-05
+
+### Breaking Changes
+- **Removed CLI flags:** `--fast`, `--safe`, and `--concurrency` replaced with simplified `--jobs N` and `--sequential`
+- **Removed env var:** `REPOS_CONCURRENCY` no longer supported (use `--jobs` instead)
+- **Internal API changes:** Module structure refactored with API facade pattern
+- **Constant renamed:** `GIT_CONCURRENT_LIMIT` → `GIT_CONCURRENT_CAP`
+
+### Added
+- **Smart concurrency detection:** Automatically uses `min(CPU_CORES + 2, 12)` for optimal performance
+- **Two-phase pipeline:** Separate fetch (2x concurrency) and push (1x concurrency) phases for 2x performance improvement
+- **Rate limit protection:** Automatic GitHub rate limit detection with retry logic (2-second backoff)
+- **ARCHITECTURE.md:** Comprehensive documentation of 3-layer architecture and module boundaries
+- **Subrepo drift integration:** `repos push` now automatically checks for subrepo drift with `--no-drift-check` flag to disable
+- **API facades:** `core/api.rs` and `git/api.rs` for clean public API (reduced from ~150 to ~30 exports)
+
+### Changed
+- **Concurrency configuration:** Simplified from 6 options to 2 (`--jobs N` or `--sequential`)
+- **Architecture:** Refactored to 3-layer design (Commands → Core → Infrastructure)
+- **Module visibility:** 29 functions marked `pub(crate)` for internal use only
+- **Documentation:** Comprehensive overhaul for consistency and AI/tool navigation
+
+### Fixed
+- Export subrepo module in `lib.rs` for library usage
+- Visual clarity improvements in subrepo drift output
+
+### Performance
+- **2x faster push operations** through two-phase pipeline architecture
+- Optimized repository discovery and processing
+
 ## [1.4.0] - 2025-10-31
 
 ### Added
