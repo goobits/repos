@@ -13,10 +13,10 @@ pub use super::progress::{GenericProcessingContext, ProcessingContext, create_pr
 pub use super::stats::SyncStatistics;
 
 // Discovery
-pub use super::discovery::{find_repos, init_command};
+pub use super::discovery::init_command;
 
 // Configuration
-pub use super::config::{get_git_concurrency, GIT_CONCURRENT_CAP};
+pub use super::config::GIT_CONCURRENT_CAP;
 pub use super::config::{TRUFFLE_CONCURRENT_LIMIT, HYGIENE_CONCURRENT_LIMIT};
 
 // User-facing messages

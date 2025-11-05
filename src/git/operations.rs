@@ -315,16 +315,6 @@ pub async fn push_if_needed(path: &Path, fetch_result: FetchResult, force_push: 
     }
 }
 
-/// Checks a repository for synchronization status and pushes if needed (single-phase wrapper)
-/// Returns (status, message, has_uncommitted_changes)
-///
-/// Note: This is a convenience wrapper around fetch_and_analyze() + push_if_needed().
-/// For better performance with multiple repos, use the two-phase approach directly.
-pub async fn check_repo(path: &Path, force_push: bool) -> (Status, String, bool) {
-    let fetch_result = fetch_and_analyze(path, force_push).await;
-    push_if_needed(path, fetch_result, force_push).await
-}
-
 /// Stages files matching the given pattern in the specified repository
 /// Returns (success, stdout, stderr)
 pub async fn stage_files(path: &Path, pattern: &str) -> Result<(bool, String, String)> {

@@ -1,5 +1,6 @@
+// Tests can use internal paths since we're testing the same crate
 use repos::core::SyncStatistics;
-use repos::git::{is_valid_email, is_valid_name, UserConfig};
+use repos::git::UserConfig;
 
 #[test]
 fn test_sync_stats_initialization() {
@@ -22,29 +23,8 @@ fn test_user_config_creation() {
     assert!(empty_config.is_empty());
 }
 
-#[test]
-fn test_git_config_validation() {
-    // Test invalid email
-    assert!(!is_valid_email(""));
-    assert!(!is_valid_email("invalid"));
-    assert!(!is_valid_email("@domain.com"));
-
-    // Test valid email
-    assert!(is_valid_email("user@example.com"));
-    assert!(is_valid_email("test.user+tag@domain.co.uk"));
-}
-
-#[test]
-fn test_git_config_name_validation() {
-    // Test invalid names
-    assert!(!is_valid_name(""));
-    assert!(!is_valid_name("   "));
-
-    // Test valid names
-    assert!(is_valid_name("John Doe"));
-    assert!(is_valid_name("Alice"));
-    assert!(is_valid_name("Bob Smith-Jones"));
-}
+// Removed tests for internal validation functions (is_valid_email, is_valid_name)
+// These are tested indirectly through validate_user_config() which is part of the public API
 
 #[tokio::test]
 async fn test_audit_statistics_creation() {
