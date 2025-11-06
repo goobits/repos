@@ -28,20 +28,23 @@ fn is_git_file(path: &Path) -> bool {
     }
 }
 
-/// Recursively searches for git repositories in the current directory
+/// Recursively searches for git repositories from a specific path
 /// Returns a vector of (repository_name, path) tuples with deduplication
 ///
 /// This function uses parallel directory walking for significantly better performance
 /// with large directory trees (5-10x faster than sequential walking).
 /// Uses DashMap for lock-free concurrent access, eliminating mutex contention.
-pub fn find_repos() -> Vec<(String, PathBuf)> {
+pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathBuf)> {
+    let search_path = search_path.as_ref();
+
     // Use DashMap for lock-free concurrent access (20-40% faster than Mutex<HashMap>)
     let repositories = Arc::new(Mutex::new(Vec::with_capacity(ESTIMATED_REPO_COUNT)));
     let seen_paths = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
     let name_counts = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
+    let search_path_buf = search_path.to_path_buf();
 
     // Build parallel walker with optimizations
-    let walker = WalkBuilder::new(".")
+    let walker = WalkBuilder::new(search_path)
         .follow_links(true) // Follow symlinks to find symlinked repos
         .max_depth(Some(MAX_SCAN_DEPTH)) // Limit depth to avoid deep recursion
         .threads(num_cpus::get().min(8)) // Use up to 8 threads for directory walking
@@ -68,6 +71,7 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
         let repositories = Arc::clone(&repositories);
         let seen_paths = Arc::clone(&seen_paths);
         let name_counts = Arc::clone(&name_counts);
+        let search_path_buf = search_path_buf.clone();
 
         Box::new(move |result| {
             use ignore::WalkState;
@@ -102,17 +106,13 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
                             return WalkState::Continue;
                         }
 
-                        let base_name = if path == Path::new(".") {
-                            // If we're in the current directory, use the directory name
-                            if let Ok(current_dir) = std::env::current_dir() {
-                                current_dir
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or(DEFAULT_REPO_NAME)
-                                    .to_string()
-                            } else {
-                                DEFAULT_REPO_NAME.to_string()
-                            }
+                        let base_name = if path == search_path_buf {
+                            // If this is the search path itself, use its directory name
+                            search_path_buf
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(DEFAULT_REPO_NAME)
+                                .to_string()
                         } else {
                             path.file_name()
                                 .and_then(|n| n.to_str())
@@ -151,6 +151,15 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
     repos.par_sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
     repos
+}
+
+/// Recursively searches for git repositories in the current directory
+/// Returns a vector of (repository_name, path) tuples with deduplication
+///
+/// This is a convenience wrapper around find_repos_from_path() that searches
+/// from the current working directory.
+pub fn find_repos() -> Vec<(String, PathBuf)> {
+    find_repos_from_path(".")
 }
 
 /// Common initialization for commands that scan repositories
