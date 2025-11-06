@@ -43,7 +43,7 @@ pub struct PackageInfo {
     pub version: String,
 }
 
-/// Detects the package manager for a given repository path
+/// Detects the package manager for a given repository path (synchronous version)
 /// Returns None if no package manager is detected
 pub fn detect_package_manager(repo_path: &Path) -> Option<PackageManager> {
     if repo_path.join("package.json").exists() {
@@ -55,6 +55,31 @@ pub fn detect_package_manager(repo_path: &Path) -> Option<PackageManager> {
     } else {
         None
     }
+}
+
+/// Detects the package manager for a given repository path (async version using tokio::fs)
+/// Returns None if no package manager is detected
+/// This is significantly faster when called in parallel on many repositories
+pub async fn detect_package_manager_async(repo_path: &Path) -> Option<PackageManager> {
+    use tokio::fs;
+
+    // Check for package.json (npm)
+    if fs::metadata(repo_path.join("package.json")).await.is_ok() {
+        return Some(PackageManager::Npm);
+    }
+
+    // Check for Cargo.toml (cargo)
+    if fs::metadata(repo_path.join("Cargo.toml")).await.is_ok() {
+        return Some(PackageManager::Cargo);
+    }
+
+    // Check for pyproject.toml or setup.py (PyPI)
+    if fs::metadata(repo_path.join("pyproject.toml")).await.is_ok()
+        || fs::metadata(repo_path.join("setup.py")).await.is_ok() {
+        return Some(PackageManager::PyPI);
+    }
+
+    None
 }
 
 /// Gets package information from a repository

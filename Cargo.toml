@@ -30,6 +30,7 @@ futures = "0.3"
 
 # Parallel processing
 rayon = "1.10"
+dashmap = "6.0"
 
 # Command line argument parsing
 clap = { version = "4.0", features = ["derive"] }
