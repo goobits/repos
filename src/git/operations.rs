@@ -33,7 +33,18 @@ const STATUS_NO_UPSTREAM: &str = "no tracking";
 const STATUS_SYNCED: &str = "up to date";
 
 /// Runs a git command in the specified directory with a timeout
-/// Returns (success, stdout, stderr)
+///
+/// **INTERNAL API**: This is a low-level helper function intended for internal use.
+/// While marked `pub` for crate organization, this API is not stable and may change
+/// without notice. External crates should not depend on this function directly.
+///
+/// Returns `(success, stdout, stderr)` tuple:
+/// - `success`: true if git command exit code was 0
+/// - `stdout`: trimmed standard output as String
+/// - `stderr`: trimmed standard error as String
+///
+/// Includes a 180-second timeout to prevent hanging on network operations.
+#[doc(hidden)]
 pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String)> {
     let timeout_duration = Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS);
 
@@ -441,8 +452,14 @@ pub async fn commit_changes(
     run_git(path, &args).await
 }
 
-/// Checks if a repository has uncommitted changes
-/// Returns true if there are uncommitted changes, false otherwise
+/// Checks if a repository has uncommitted changes (tracked files only)
+///
+/// This checks only tracked files using `git diff-index --quiet HEAD`.
+/// Returns true if there are uncommitted changes, false otherwise.
+///
+/// Note: There are synchronous versions in subrepo/{mod.rs, sync.rs} for use
+/// in non-async contexts. The sync.rs version is more conservative and includes
+/// untracked files.
 pub async fn has_uncommitted_changes(path: &Path) -> bool {
     // Refresh the index to ensure accurate diff-index results
     let _ = run_git(path, &["update-index", "--refresh"]).await;

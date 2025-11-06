@@ -1,4 +1,9 @@
 //! Configuration constants and settings
+//!
+//! **API Stability Note**: Only items re-exported through `core::api` are part of the
+//! stable public API. Other `pub` items in this module are internal implementation details
+//! subject to change. External crates should import through `repos::core::*` rather than
+//! `repos::core::config::*` directly.
 
 // Concurrency Configuration
 //
@@ -9,6 +14,7 @@
 
 // Default concurrency cap for fetch operations to prevent overwhelming network
 // This is specifically for the fetch phase 2x multiplier, not base concurrency
+#[doc(hidden)] // Internal implementation detail
 pub const FETCH_CONCURRENT_CAP: usize = 24;
 
 // Default concurrency for commands that don't support --jobs flag yet
@@ -46,27 +52,39 @@ pub const TRUFFLE_CONCURRENT_LIMIT: usize = 1; // For CPU-intensive TruffleHog s
 pub const HYGIENE_CONCURRENT_LIMIT: usize = 3; // For I/O-bound hygiene git operations
 
 // Progress bar configuration
+#[doc(hidden)] // Internal UI detail
 pub const DEFAULT_PROGRESS_BAR_LENGTH: u64 = 100;
+#[doc(hidden)] // Internal UI detail
 pub const DEFAULT_REPO_NAME: &str = "current";
+#[doc(hidden)] // Internal UI detail
 pub const UNKNOWN_REPO_NAME: &str = "unknown";
 
 // UI Constants
 pub const NO_REPOS_MESSAGE: &str = "No git repositories found in current directory.";
 pub const CONFIG_SYNCING_MESSAGE: &str = "checking config...";
+#[doc(hidden)] // Internal UI styling
 pub const PROGRESS_CHARS: &str = "##-";
+#[doc(hidden)] // Internal UI styling
 pub const PROGRESS_TEMPLATE: &str = "{prefix:.bold} {wide_msg}";
 
 // Display formatting constants
+#[doc(hidden)] // Internal formatting detail
 pub const PATH_DISPLAY_WIDTH: usize = 30;
+#[doc(hidden)] // Internal formatting detail
 pub const ERROR_MESSAGE_MAX_LENGTH: usize = 40;
+#[doc(hidden)] // Internal formatting detail
 pub const ERROR_MESSAGE_TRUNCATE_LENGTH: usize = 37;
+#[doc(hidden)] // Internal formatting detail
 pub const TIMEOUT_SECONDS_DISPLAY: u64 = 180;
 
 // Processing limits and chunk sizes
+#[doc(hidden)] // Internal processing detail
 pub const GIT_OBJECTS_CHUNK_SIZE: usize = 100;
+#[doc(hidden)] // Internal display limit
 pub const LARGE_FILES_DISPLAY_LIMIT: usize = 10;
 
 // Directories to skip during repository search
+#[doc(hidden)] // Internal discovery configuration
 pub const SKIP_DIRECTORIES: &[&str] = &[
     "node_modules",
     "vendor",
@@ -80,7 +98,9 @@ pub const SKIP_DIRECTORIES: &[&str] = &[
 ];
 
 // Repository discovery configuration
+#[doc(hidden)] // Internal discovery limit
 pub const MAX_SCAN_DEPTH: usize = 10; // Maximum directory depth to scan
+#[doc(hidden)] // Internal optimization hint
 pub const ESTIMATED_REPO_COUNT: usize = 50; // Pre-allocation hint for collections
 
 #[cfg(test)]

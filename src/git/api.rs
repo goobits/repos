@@ -17,7 +17,7 @@ pub use super::status::Status;
 
 // Configuration
 pub use super::config::{
-    ConfigArgs, ConfigCommand, ConfigSource, UserConfig,
+    ConfigArgs, ConfigCommand, ConfigSource, UserConfig, PromptFn,
     validate_user_config,
     get_current_user_config, get_global_user_config, check_repo_config
 };

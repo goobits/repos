@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-11-06
+
+### Added
+- **--show-changes flag:** Display file changes in repos with uncommitted changes using `repos push --show-changes` (or `-c`)
+  - Tree-style display with git status for each repo
+  - Limits to first 10 files per repo for clarity
+  - Combines with `--verbose` for detailed progress tracking
+
+### Performance
+- **50-100x faster publish command:** Reduced from 15 minutes to 10-20 seconds for 500+ repos
+  - Combined parallel analysis for visibility, package detection, and dirty status checks
+  - In-memory visibility caching to avoid repeated process spawning
+  - Async package detection using tokio::fs for non-blocking filesystem checks
+- **2.5x faster overall runtime:** Repository processing improved from ~3 minutes to ~1.2 minutes
+  - Parallelized repository discovery using up to 8 threads (5-10x faster)
+  - Removed artificial 12-operation concurrency cap to scale with CPU cores
+  - Increased publish concurrency from 3 to 8 operations
+  - DashMap for lock-free concurrent access (20-40% reduction in mutex contention)
+
+### Security
+- **TruffleHog installer hardening:** Fixed two medium-priority security issues
+  - Proper cleanup of test files in /usr/local/bin
+  - Eliminated pipe-to-shell pattern (curl | sh) in download script
+
+### Fixed
+- Verbose mode progress bars now update correctly after fetch phase (no more hanging)
+- Async variable capture in push phase futures (verbose, timing, and stats now display properly)
+
 ## [2.0.0] - 2025-11-05
 
 ### Breaking Changes

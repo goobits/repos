@@ -13,7 +13,7 @@ use crate::core::{
 };
 use crate::git::{
     check_repo_config, get_current_user_config, get_global_user_config, validate_user_config,
-    ConfigArgs, ConfigCommand, ConfigSource, UserConfig,
+    ConfigArgs, ConfigCommand, ConfigSource, UserConfig, PromptFn,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -330,6 +330,12 @@ async fn process_config_repositories(
     let start_time = context.start_time;
     let total_repos = context.total_repos;
 
+    // Create the prompt function for interactive mode
+    let prompt_fn: PromptFn = Box::new(|repo_name, current, target| {
+        Box::pin(prompt_for_config_resolution(repo_name, current, target))
+    });
+    let prompt_fn = std::sync::Arc::new(prompt_fn);
+
     for ((repo_name, repo_path), progress_bar) in
         context.repositories.into_iter().zip(repo_progress_bars)
     {
@@ -338,12 +344,13 @@ async fn process_config_repositories(
         let footer_clone = footer_pb.clone();
         let command_clone = command.clone();
         let target_config_clone = target_config.clone();
+        let prompt_clone = std::sync::Arc::clone(&prompt_fn);
 
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
             let (status, message) =
-                check_repo_config(&repo_path, &repo_name, &target_config_clone, &command_clone)
+                check_repo_config(&repo_path, &repo_name, &target_config_clone, &command_clone, Some(&*prompt_clone))
                     .await;
 
             progress_bar.set_prefix(format!(

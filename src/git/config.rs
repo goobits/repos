@@ -2,9 +2,15 @@
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use std::future::Future;
+use std::pin::Pin;
 
 use super::operations::{get_git_config, run_git, set_git_config};
 use super::status::Status;
+
+/// Type alias for the interactive prompt function
+/// Takes (repo_name, current_config, target_config) and returns whether to apply changes
+pub type PromptFn = Box<dyn Fn(&str, &UserConfig, &UserConfig) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>> + Send + Sync>;
 
 /// Represents user configuration (name and email) to sync across repositories
 #[derive(Clone, Debug)]
@@ -100,16 +106,23 @@ pub fn validate_user_config(config: &UserConfig) -> Result<()> {
     Ok(())
 }
 
-/// Checks and optionally updates repository user configuration
-/// Returns (status, message) indicating the result of the config operation
+/// Checks and optionally updates git configuration for a repository
+///
+/// # Parameters
+/// - `path`: Path to the repository
+/// - `repo_name`: Display name of the repository
+/// - `target_config`: Desired configuration values
+/// - `command`: Config command mode (Interactive, Force, or DryRun)
+/// - `prompt_fn`: Optional function to prompt user for interactive mode conflicts
+///
+/// Returns `(Status, message)` tuple indicating the result
 pub async fn check_repo_config(
     path: &Path,
     repo_name: &str,
     target_config: &UserConfig,
     command: &ConfigCommand,
+    prompt_fn: Option<&PromptFn>,
 ) -> (Status, String) {
-    use crate::commands::config::prompt_for_config_resolution;
-
     // Get current config
     let (current_name, current_email) = get_current_user_config(path).await;
     let current_config = UserConfig::new(current_name, current_email);
@@ -154,10 +167,15 @@ pub async fn check_repo_config(
     let should_update = match command {
         ConfigCommand::Force(_) => true,
         ConfigCommand::Interactive(_) => {
-            // For interactive mode, prompt user for conflicts
-            prompt_for_config_resolution(repo_name, &current_config, target_config)
-                .await
-                .unwrap_or_default()
+            // For interactive mode, use provided prompt function or default to false
+            if let Some(prompt) = prompt_fn {
+                prompt(repo_name, &current_config, target_config)
+                    .await
+                    .unwrap_or(false)
+            } else {
+                // No prompt function provided, default to not updating
+                false
+            }
         }
         ConfigCommand::DryRun(_) => false, // Already handled above
     };
