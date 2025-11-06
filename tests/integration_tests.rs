@@ -2,6 +2,9 @@
 use repos::core::SyncStatistics;
 use repos::git::UserConfig;
 
+mod common;
+use common::{setup_git_repo, create_test_commit, TestRepoBuilder, is_git_available};
+
 #[test]
 fn test_sync_stats_initialization() {
     let stats = SyncStatistics::new();
@@ -58,36 +61,22 @@ fn test_staging_status_variants() {
 async fn test_git_staging_operations() {
     use repos::git::{stage_files, unstage_files, has_staged_changes, commit_changes};
     use std::fs;
-    use tempfile::TempDir;
 
-    // Create a temporary git repository
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let repo_path = temp_dir.path();
-
-    // Initialize git repo
-    let init_result = std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to run git init");
-
-    if !init_result.status.success() {
-        // Skip test if git is not available
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
         return;
     }
 
-    // Configure git for testing
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to set git user name");
+    // Create a test repository using helper
+    let repo = match TestRepoBuilder::new("test-repo").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
 
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to set git user email");
+    let repo_path = repo.path();
 
     // Create a test file
     let test_file = repo_path.join("test.txt");
@@ -359,33 +348,9 @@ async fn test_error_scenarios() {
     }
 }
 
-#[test]
-fn test_repo_visibility_enum() {
-    use repos::git::RepoVisibility;
-
-    // Test enum variants exist
-    let public = RepoVisibility::Public;
-    let private = RepoVisibility::Private;
-    let unknown = RepoVisibility::Unknown;
-
-    // Test equality
-    assert_eq!(public, RepoVisibility::Public);
-    assert_eq!(private, RepoVisibility::Private);
-    assert_eq!(unknown, RepoVisibility::Unknown);
-
-    // Test inequality
-    assert_ne!(public, private);
-    assert_ne!(public, unknown);
-    assert_ne!(private, unknown);
-
-    // Test clone
-    let cloned = public.clone();
-    assert_eq!(cloned, RepoVisibility::Public);
-
-    // Test debug formatting
-    let debug_str = format!("{:?}", public);
-    assert!(debug_str.contains("Public"));
-}
+// REMOVED: test_repo_visibility_enum
+// This test was testing Rust's derive(Clone, Debug, PartialEq) behavior,
+// not application logic. Framework behavior should not be tested.
 
 #[tokio::test]
 async fn test_get_repo_visibility_non_github() {

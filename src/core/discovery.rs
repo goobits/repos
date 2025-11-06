@@ -164,3 +164,84 @@ pub fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, Pat
 
     (start_time, repos)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dashmap_concurrent_access() {
+        // Test that DashMap handles concurrent access correctly
+        let map: Arc<DashMap<String, i32>> = Arc::new(DashMap::new());
+
+        // Simulate concurrent inserts from multiple threads
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let map_clone = Arc::clone(&map);
+                std::thread::spawn(move || {
+                    for j in 0..100 {
+                        let key = format!("key-{}-{}", i, j);
+                        map_clone.insert(key, i * 1000 + j);
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify all 1000 items were inserted (10 threads * 100 items)
+        assert_eq!(map.len(), 1000, "All concurrent inserts should succeed");
+    }
+
+    #[test]
+    fn test_dashmap_no_race_conditions() {
+        // Test that DashMap entry API provides atomic operations
+        let map: Arc<DashMap<String, i32>> = Arc::new(DashMap::new());
+
+        // Multiple threads incrementing the same counter
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let map_clone = Arc::clone(&map);
+                std::thread::spawn(move || {
+                    for _ in 0..1000 {
+                        let mut entry = map_clone.entry("counter".to_string()).or_insert(0);
+                        *entry += 1;
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Should have exactly 10,000 (10 threads * 1,000 increments)
+        assert_eq!(*map.get("counter").unwrap(), 10000, "Counter should be atomic");
+    }
+
+    #[test]
+    fn test_path_deduplication_with_dashmap() {
+        use std::path::PathBuf;
+
+        let seen: Arc<DashMap<PathBuf, ()>> = Arc::new(DashMap::new());
+
+        let path1 = PathBuf::from("/test/repo1");
+        let path2 = PathBuf::from("/test/repo2");
+        let path1_dup = PathBuf::from("/test/repo1");
+
+        // First insert should return None (new entry)
+        assert!(seen.insert(path1.clone(), ()).is_none());
+
+        // Second insert of same path should return Some (existing entry)
+        assert!(seen.insert(path1_dup, ()).is_some());
+
+        // Different path should return None
+        assert!(seen.insert(path2, ()).is_none());
+
+        // Should have 2 unique paths
+        assert_eq!(seen.len(), 2);
+    }
+}
