@@ -513,6 +513,8 @@ async fn install_trufflehog_direct() -> Result<()> {
     let install_path = if std::fs::metadata(install_dir).is_ok()
         && std::fs::File::create(format!("{}/test_write", install_dir)).is_ok()
     {
+        // Clean up test file
+        let _ = std::fs::remove_file(format!("{}/test_write", install_dir));
         install_dir.to_string()
     } else {
         // Fallback to user's local bin
@@ -523,18 +525,41 @@ async fn install_trufflehog_direct() -> Result<()> {
         user_bin
     };
 
-    let output = Command::new("sh")
+    // Download script to temporary file for security (avoid piping curl to shell)
+    let temp_script = format!("/tmp/trufflehog-install-{}.sh", std::process::id());
+
+    // Download the installation script
+    let download_output = Command::new("curl")
         .args([
-            "-c",
-            &format!("curl -sSfL {} | sh -s -- -b {}", script_url, install_path),
+            "-sSfL",
+            "-o",
+            &temp_script,
+            script_url,
         ])
         .output()
         .await?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !download_output.status.success() {
+        let stderr = String::from_utf8_lossy(&download_output.stderr);
         return Err(anyhow!(
-            "Failed to download and install TruffleHog: {}",
+            "Failed to download TruffleHog installer: {}",
+            stderr
+        ));
+    }
+
+    // Execute the downloaded script
+    let install_output = Command::new("sh")
+        .args([&temp_script, "-b", &install_path])
+        .output()
+        .await?;
+
+    // Clean up temporary script file
+    let _ = std::fs::remove_file(&temp_script);
+
+    if !install_output.status.success() {
+        let stderr = String::from_utf8_lossy(&install_output.stderr);
+        return Err(anyhow!(
+            "Failed to install TruffleHog: {}",
             stderr
         ));
     }
