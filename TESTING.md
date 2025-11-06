@@ -55,20 +55,43 @@ src/
 - ✅ No race conditions in atomic operations
 - ✅ Path deduplication correctness
 
-#### Package Manager Detection (`src/package/mod.rs`) - 10 tests
+#### Package Manager Detection (`src/package/mod.rs`) - 6 tests
 - ✅ NPM package detection (package.json)
 - ✅ Cargo package detection (Cargo.toml)
-- ✅ PyPI package detection (pyproject.toml)
-- ✅ PyPI package detection (setup.py)
+- ✅ PyPI package detection (pyproject.toml, setup.py)
 - ✅ No package detection
-- ✅ Priority handling (npm over cargo)
-- ✅ Async detection (npm, cargo, none)
-- ✅ Sync vs async consistency
+- ✅ Async detection correctness
 
 #### String Allocation Optimization (`src/git/operations.rs`) - 2 tests
 - ✅ Empty string handling (no unnecessary allocation)
 - ✅ Whitespace trimming
 - ✅ Content preservation
+
+#### Configuration & Concurrency (`src/core/config.rs`) - 8 tests
+- ✅ Sequential mode always returns 1
+- ✅ Explicit --jobs flag respected
+- ✅ Zero jobs converted to 1 minimum
+- ✅ Default scales with CPU cores (cores + 2)
+- ✅ Concurrency constants validation
+- ✅ Max scan depth prevents infinite recursion
+- ✅ Skip directories contains common dirs
+
+#### Statistics Tracking (`src/core/stats_tests.rs`) - 13 tests
+- ✅ Statistics initialization
+- ✅ Update with all status types (Pushed, Synced, Error, etc.)
+- ✅ Commit counting and parsing
+- ✅ Uncommitted changes tracking
+- ✅ Error message cleaning (newlines, tabs)
+- ✅ Summary generation
+- ✅ Multiple updates accumulation
+
+#### Status Enum (`src/git/status.rs`) - 10 tests
+- ✅ Symbol mapping (green/orange/yellow/red circles)
+- ✅ Text representation for all variants
+- ✅ Success states return green circle
+- ✅ Error states return red circle
+- ✅ Skip states return orange circle
+- ✅ Enum cloneability and equality
 
 ## Test Utilities
 
@@ -167,13 +190,14 @@ cargo test -- --nocapture
 
 | Module | Integration Tests | Unit Tests | Coverage |
 |--------|------------------|-----------|----------|
-| **Repository Discovery** | 10 | 3 | ✅ Excellent |
-| **Git Operations** | 13 | 2 | ✅ Good |
-| **Package Detection** | 0 | 10 | ✅ Excellent |
-| **Staging/Commit** | 6 | 0 | ✅ Good |
-| **Performance Optimizations** | 0 | 5 | ✅ Good |
+| **Repository Discovery** | 8 | 3 | ✅ Excellent |
+| **Git Operations** | 4 | 12 | ✅ Excellent |
+| **Package Detection** | 0 | 6 | ✅ Good |
+| **Config & Concurrency** | 0 | 8 | ✅ Excellent |
+| **Statistics Tracking** | 0 | 13 | ✅ Excellent |
+| **Performance Optimizations** | 0 | 0 | ✅ Covered Above |
 
-**Total Tests**: 36 tests
+**Total Tests**: 54 tests (+18 from v1.0)
 
 ## Performance Optimizations Testing
 

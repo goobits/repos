@@ -78,3 +78,96 @@ impl Status {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_status_symbol_green_success_states() {
+        // All success states should have green circle
+        assert_eq!(Status::Synced.symbol(), "🟢");
+        assert_eq!(Status::Pushed.symbol(), "🟢");
+        assert_eq!(Status::ConfigSynced.symbol(), "🟢");
+        assert_eq!(Status::ConfigUpdated.symbol(), "🟢");
+        assert_eq!(Status::Staged.symbol(), "🟢");
+        assert_eq!(Status::Unstaged.symbol(), "🟢");
+        assert_eq!(Status::Committed.symbol(), "🟢");
+    }
+
+    #[test]
+    fn test_status_symbol_orange_skip_states() {
+        // Skip/no-op states should have orange circle
+        assert_eq!(Status::Skip.symbol(), "🟠");
+        assert_eq!(Status::NoRemote.symbol(), "🟠");
+        assert_eq!(Status::ConfigSkipped.symbol(), "🟠");
+        assert_eq!(Status::NoChanges.symbol(), "🟠");
+    }
+
+    #[test]
+    fn test_status_symbol_yellow_warning_states() {
+        // Warning states should have yellow circle
+        assert_eq!(Status::NoUpstream.symbol(), "🟡");
+    }
+
+    #[test]
+    fn test_status_symbol_red_error_states() {
+        // All error states should have red circle
+        assert_eq!(Status::Error.symbol(), "🔴");
+        assert_eq!(Status::ConfigError.symbol(), "🔴");
+        assert_eq!(Status::StagingError.symbol(), "🔴");
+        assert_eq!(Status::CommitError.symbol(), "🔴");
+    }
+
+    #[test]
+    fn test_status_text_git_operations() {
+        // Test git operation status text representations
+        assert_eq!(Status::Synced.text(), "synced");
+        assert_eq!(Status::Pushed.text(), "pushed");
+        assert_eq!(Status::Skip.text(), "skip");
+        assert_eq!(Status::NoUpstream.text(), "no-upstream");
+        assert_eq!(Status::NoRemote.text(), "skip");
+        assert_eq!(Status::Error.text(), "failed");
+    }
+
+    #[test]
+    fn test_status_text_config_operations() {
+        // Test config operation status text representations
+        assert_eq!(Status::ConfigSynced.text(), "config-ok");
+        assert_eq!(Status::ConfigUpdated.text(), "config-updated");
+        assert_eq!(Status::ConfigSkipped.text(), "config-skip");
+        assert_eq!(Status::ConfigError.text(), "config-failed");
+    }
+
+    #[test]
+    fn test_status_text_staging_operations() {
+        // Test staging operation status text representations
+        assert_eq!(Status::Staged.text(), "staged");
+        assert_eq!(Status::Unstaged.text(), "unstaged");
+        assert_eq!(Status::StagingError.text(), "failed");
+        assert_eq!(Status::NoChanges.text(), "no-changes");
+    }
+
+    #[test]
+    fn test_status_text_commit_operations() {
+        // Test commit operation status text representations
+        assert_eq!(Status::Committed.text(), "committed");
+        assert_eq!(Status::CommitError.text(), "failed");
+    }
+
+    #[test]
+    fn test_status_enum_is_cloneable() {
+        // Ensure Status can be cloned
+        let status = Status::Pushed;
+        let cloned = status.clone();
+        assert_eq!(status, cloned);
+    }
+
+    #[test]
+    fn test_status_enum_equality() {
+        // Test equality between status variants
+        assert_eq!(Status::Synced, Status::Synced);
+        assert_ne!(Status::Synced, Status::Pushed);
+        assert_ne!(Status::Error, Status::ConfigError);
+    }
+}

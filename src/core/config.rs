@@ -82,3 +82,74 @@ pub const SKIP_DIRECTORIES: &[&str] = &[
 // Repository discovery configuration
 pub const MAX_SCAN_DEPTH: usize = 10; // Maximum directory depth to scan
 pub const ESTIMATED_REPO_COUNT: usize = 50; // Pre-allocation hint for collections
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_git_concurrency_sequential_mode() {
+        // Sequential mode should always return 1
+        assert_eq!(get_git_concurrency(None, true), 1);
+        assert_eq!(get_git_concurrency(Some(100), true), 1);
+    }
+
+    #[test]
+    fn test_get_git_concurrency_explicit_jobs() {
+        // Explicit jobs flag should be respected
+        assert_eq!(get_git_concurrency(Some(5), false), 5);
+        assert_eq!(get_git_concurrency(Some(20), false), 20);
+        assert_eq!(get_git_concurrency(Some(1), false), 1);
+    }
+
+    #[test]
+    fn test_get_git_concurrency_zero_jobs_becomes_one() {
+        // Zero should be converted to 1 (at least 1)
+        assert_eq!(get_git_concurrency(Some(0), false), 1);
+    }
+
+    #[test]
+    fn test_get_git_concurrency_default_scales_with_cpu() {
+        // Default should be CPU cores + 2
+        let concurrency = get_git_concurrency(None, false);
+        let expected = num_cpus::get() + 2;
+        assert_eq!(concurrency, expected);
+
+        // Should be at least 3 on any system (1 core + 2)
+        assert!(concurrency >= 3);
+    }
+
+    #[test]
+    fn test_concurrency_constants_are_reasonable() {
+        // Ensure constants are sensible
+        assert!(FETCH_CONCURRENT_CAP > 0, "FETCH_CONCURRENT_CAP must be positive");
+        assert!(FETCH_CONCURRENT_CAP >= 12, "FETCH_CONCURRENT_CAP should allow reasonable parallelism");
+
+        assert!(GIT_CONCURRENT_CAP > 0, "GIT_CONCURRENT_CAP must be positive");
+        assert!(GIT_CONCURRENT_CAP >= 12, "GIT_CONCURRENT_CAP should allow reasonable parallelism");
+
+        assert!(TRUFFLE_CONCURRENT_LIMIT >= 1, "TRUFFLE_CONCURRENT_LIMIT must be at least 1");
+        assert!(HYGIENE_CONCURRENT_LIMIT >= 1, "HYGIENE_CONCURRENT_LIMIT must be at least 1");
+    }
+
+    #[test]
+    fn test_max_scan_depth_prevents_infinite_recursion() {
+        assert!(MAX_SCAN_DEPTH > 0, "MAX_SCAN_DEPTH must be positive");
+        assert!(MAX_SCAN_DEPTH <= 50, "MAX_SCAN_DEPTH should prevent excessive recursion");
+    }
+
+    #[test]
+    fn test_estimated_repo_count_for_preallocation() {
+        assert!(ESTIMATED_REPO_COUNT > 0, "ESTIMATED_REPO_COUNT must be positive");
+        assert!(ESTIMATED_REPO_COUNT <= 1000, "ESTIMATED_REPO_COUNT should be reasonable");
+    }
+
+    #[test]
+    fn test_skip_directories_contains_common_dirs() {
+        // Verify common problematic directories are skipped
+        assert!(SKIP_DIRECTORIES.contains(&"node_modules"));
+        assert!(SKIP_DIRECTORIES.contains(&"target"));
+        assert!(SKIP_DIRECTORIES.contains(&".venv"));
+        assert!(SKIP_DIRECTORIES.len() > 5, "Should skip multiple common directories");
+    }
+}

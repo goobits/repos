@@ -4,6 +4,10 @@ pub(crate) mod discovery;
 pub(crate) mod progress;
 pub(crate) mod stats;
 
+// Test modules
+#[cfg(test)]
+mod stats_tests;
+
 // Public API - curated exports only
 pub mod api;
 
