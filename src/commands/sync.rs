@@ -117,7 +117,7 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
 
     // PHASE 1: Fetch all repos with high concurrency (2x)
     // Cap at FETCH_CONCURRENT_CAP to prevent overwhelming network/services
-    use crate::core::config::FETCH_CONCURRENT_CAP;
+    use crate::core::config::{FETCH_CONCURRENT_CAP, FETCH_STAGGER_BATCH_SIZE, FETCH_STAGGER_DELAY_MS};
     let fetch_concurrency = (context.semaphore.available_permits() * 2).min(FETCH_CONCURRENT_CAP);
     let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_concurrency));
 
@@ -126,21 +126,32 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
         Vec::with_capacity(context.repositories.len());
 
     let mut fetch_futures = FuturesUnordered::new();
-    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
-        let semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
-        let verbose_clone = verbose;
-        let future = async move {
-            let _permit = semaphore_clone.acquire().await.expect("Failed to acquire fetch permit");
-            let fetch_result = fetch_and_analyze(&repo_path, force_push).await;
 
-            // Update progress bar after fetch completes (verbose mode only)
-            if verbose_clone {
-                progress_bar.set_message("fetched, queued for push...");
-            }
+    // Staggered start: Create futures in batches with delays to prevent connection bursts
+    let repos_with_progress: Vec<_> = context.repositories.into_iter().zip(repo_progress_bars).collect();
+    for (batch_index, batch) in repos_with_progress.chunks(FETCH_STAGGER_BATCH_SIZE).enumerate() {
+        // Add delay between batches (but not before the first batch)
+        if batch_index > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(FETCH_STAGGER_DELAY_MS)).await;
+        }
 
-            (repo_name, repo_path, fetch_result, progress_bar)
-        };
-        fetch_futures.push(future);
+        // Create futures for this batch
+        for ((repo_name, repo_path), progress_bar) in batch.iter().cloned() {
+            let semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
+            let verbose_clone = verbose;
+            let future = async move {
+                let _permit = semaphore_clone.acquire().await.expect("Failed to acquire fetch permit");
+                let fetch_result = fetch_and_analyze(&repo_path, force_push).await;
+
+                // Update progress bar after fetch completes (verbose mode only)
+                if verbose_clone {
+                    progress_bar.set_message("fetched, queued for push...");
+                }
+
+                (repo_name, repo_path, fetch_result, progress_bar)
+            };
+            fetch_futures.push(future);
+        }
     }
 
     while let Some(result) = fetch_futures.next().await {
