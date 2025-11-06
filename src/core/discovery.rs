@@ -1,6 +1,5 @@
 //! Repository discovery and initialization utilities
 
-use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -97,8 +96,9 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
                     if is_git_repo {
                         // Skip if we've already seen this exact path
                         // DashMap provides lock-free concurrent insert
+                        // insert() returns Some(old_value) if key existed, None if new
                         let path_buf = path.to_path_buf();
-                        if !seen_paths.insert(path_buf.clone(), ()) {
+                        if seen_paths.insert(path_buf.clone(), ()).is_some() {
                             return WalkState::Continue;
                         }
 

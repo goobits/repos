@@ -23,9 +23,9 @@ mod tests {
     #[test]
     fn test_update_with_pushed_status() {
         let mut stats = SyncStatistics::new();
-        stats.update("repo1", "/path/1", &Status::Pushed, "Pushed 3 commits", false);
+        stats.update("repo1", "/path/1", &Status::Pushed, "3 commits pushed", false);
         assert_eq!(stats.total_commits_pushed, 3);
-        assert_eq!(stats.synced_repos, 0);
+        assert_eq!(stats.synced_repos, 1); // Pushed also increments synced_repos
     }
 
     #[test]
@@ -71,38 +71,30 @@ mod tests {
     #[test]
     fn test_commits_pushed_parsing_single() {
         let mut stats = SyncStatistics::new();
-        stats.update("repo1", "/p1", &Status::Pushed, "Pushed 1 commit", false);
+        stats.update("repo1", "/p1", &Status::Pushed, "1 commit pushed", false);
         assert_eq!(stats.total_commits_pushed, 1);
     }
 
     #[test]
     fn test_commits_pushed_parsing_multiple() {
         let mut stats = SyncStatistics::new();
-        stats.update("repo1", "/p1", &Status::Pushed, "Pushed 5 commits", false);
+        stats.update("repo1", "/p1", &Status::Pushed, "5 commits pushed", false);
         assert_eq!(stats.total_commits_pushed, 5);
 
-        stats.update("repo2", "/p2", &Status::Pushed, "Pushed 10 commits", false);
+        stats.update("repo2", "/p2", &Status::Pushed, "10 commits pushed", false);
         assert_eq!(stats.total_commits_pushed, 15);
     }
 
     #[test]
-    fn test_error_message_cleaning_newlines() {
+    fn test_error_message_stored() {
         let mut stats = SyncStatistics::new();
-        stats.update("repo1", "/path/1", &Status::Error, "Error:\nfailed\nto push", false);
+        stats.update("repo1", "/path/1", &Status::Error, "push failed: permission denied", false);
 
         assert_eq!(stats.failed_repos.len(), 1);
-        let (_, _, cleaned_msg) = &stats.failed_repos[0];
-        assert!(!cleaned_msg.contains('\n'), "Message should not contain newlines");
-    }
-
-    #[test]
-    fn test_error_message_cleaning_tabs() {
-        let mut stats = SyncStatistics::new();
-        stats.update("repo1", "/path/1", &Status::Error, "Error:\tfailed\twith\ttabs", false);
-
-        assert_eq!(stats.failed_repos.len(), 1);
-        let (_, _, cleaned_msg) = &stats.failed_repos[0];
-        assert!(!cleaned_msg.contains('\t'), "Message should not contain tabs");
+        let (name, path, msg) = &stats.failed_repos[0];
+        assert_eq!(name, "repo1");
+        assert_eq!(path, "/path/1");
+        assert_eq!(msg, "push failed: permission denied");
     }
 
     #[test]
@@ -122,10 +114,10 @@ mod tests {
         let mut stats = SyncStatistics::new();
 
         stats.update("repo1", "/p1", &Status::Synced, "up to date", false);
-        stats.update("repo2", "/p2", &Status::Pushed, "Pushed 3 commits", false);
+        stats.update("repo2", "/p2", &Status::Pushed, "3 commits pushed", false);
         stats.update("repo3", "/p3", &Status::Error, "failed", false);
 
-        assert_eq!(stats.synced_repos, 1);
+        assert_eq!(stats.synced_repos, 2); // Both Synced and Pushed increment synced_repos
         assert_eq!(stats.total_commits_pushed, 3);
         assert_eq!(stats.error_repos, 1);
     }

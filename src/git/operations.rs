@@ -74,8 +74,6 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_string_allocation_optimization() {
         // Test that empty strings don't allocate unnecessarily
@@ -492,7 +490,7 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
 }
 
 /// Repository visibility status
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RepoVisibility {
     Public,
     Private,

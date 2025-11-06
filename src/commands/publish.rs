@@ -10,7 +10,7 @@ use crate::core::{
     NO_REPOS_MESSAGE, GIT_CONCURRENT_CAP,
 };
 use crate::git::{has_uncommitted_changes, create_and_push_tag, get_repo_visibility, RepoVisibility};
-use crate::package::{detect_package_manager, get_package_info, publish_package, PublishStatus};
+use crate::package::{get_package_info, publish_package, PublishStatus};
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for packages...";
 const PUBLISHING_MESSAGE: &str = "publishing...";
