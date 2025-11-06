@@ -17,6 +17,10 @@
 #[doc(hidden)] // Internal implementation detail
 pub const FETCH_CONCURRENT_CAP: usize = 24;
 
+// Slow repo warning threshold - show elapsed time if operation takes longer than this
+#[doc(hidden)] // Internal implementation detail
+pub const SLOW_REPO_THRESHOLD_SECS: u64 = 10;
+
 // Default concurrency for commands that don't support --jobs flag yet
 // Increased from 12 to 32 to better utilize modern multi-core systems
 pub const GIT_CONCURRENT_CAP: usize = 32;

@@ -138,6 +138,11 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
         let total_repos_clone = total_repos;
 
         let future = async move {
+            use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
+
+            // Track start time for this repo
+            let repo_start_time = std::time::Instant::now();
+
             // PHASE 1: Fetch with high concurrency
             let fetch_result = {
                 let _fetch_permit = fetch_semaphore_clone.acquire().await.expect("Failed to acquire fetch permit");
@@ -178,10 +183,21 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
 
             let (status, message, has_uncommitted_changes) = result;
 
+            // Calculate elapsed time for this repo
+            let repo_elapsed = repo_start_time.elapsed();
+            let repo_elapsed_secs = repo_elapsed.as_secs_f32();
+
             let display_message = if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
                 format!("{} (uncommitted changes)", message)
             } else {
                 message.clone()
+            };
+
+            // Add elapsed time warning if repo took longer than threshold
+            let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
+                format!("{} ({:.1}s)", display_message, repo_elapsed_secs)
+            } else {
+                display_message
             };
 
             if verbose_clone {
