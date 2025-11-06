@@ -20,9 +20,9 @@ pub const FETCH_CONCURRENT_CAP: usize = 24;
 // Staggered start configuration to prevent connection bursts
 // Start fetches in batches with delays to avoid rate limits and smooth network load
 #[doc(hidden)] // Internal implementation detail
-pub const FETCH_STAGGER_BATCH_SIZE: usize = 8; // Number of fetches to start per batch
+pub const FETCH_STAGGER_BATCH_SIZE: usize = 3; // Number of fetches to start per batch
 #[doc(hidden)] // Internal implementation detail
-pub const FETCH_STAGGER_DELAY_MS: u64 = 150; // Milliseconds to wait between batches
+pub const FETCH_STAGGER_DELAY_MS: u64 = 200; // Milliseconds to wait between batches
 
 // Default concurrency for commands that don't support --jobs flag yet
 // Increased from 12 to 32 to better utilize modern multi-core systems
