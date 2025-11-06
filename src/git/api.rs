@@ -10,7 +10,7 @@
 
 // Core operations
 pub use super::operations::{fetch_and_analyze, push_if_needed};
-pub use super::operations::{FetchResult, RepoVisibility};
+pub use super::operations::RepoVisibility;
 
 // Status
 pub use super::status::Status;

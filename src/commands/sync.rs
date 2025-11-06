@@ -79,22 +79,21 @@ pub async fn handle_push_command(
     Ok(())
 }
 
-/// Processes all repositories using two-phase approach for optimal performance
+/// Processes all repositories with pipelined fetch+push for optimal performance
 ///
-/// Phase 1: Fetch all repositories (2x concurrency) - read-only, safe to parallelize aggressively
-/// Phase 2: Push repositories that need it (1x concurrency) - respects rate limits
+/// Each repository flows through: fetch → immediately push (no waiting for all fetches)
+/// Fetch uses high concurrency (2x), push uses standard concurrency with rate limit protection
 async fn process_push_repositories(context: crate::core::ProcessingContext, force_push: bool, verbose: bool, show_changes: bool) {
     use crate::core::{acquire_stats_lock, create_progress_bar};
-    use crate::git::{fetch_and_analyze, push_if_needed, FetchResult};
+    use crate::git::{fetch_and_analyze, push_if_needed};
     use futures::stream::{FuturesUnordered, StreamExt};
-    use std::path::PathBuf;
 
     // Setup progress bars and statistics
     let repo_progress_bars: Vec<_> = if verbose {
         context.repositories.iter()
             .map(|(repo_name, _)| {
                 let pb = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
-                pb.set_message("fetching...");
+                pb.set_message("processing...");
                 pb
             })
             .collect()
@@ -102,7 +101,7 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
         use indicatif::{ProgressBar, ProgressStyle};
         let single_pb = context.multi_progress.add(ProgressBar::new(context.total_repos as u64));
         single_pb.set_style(ProgressStyle::default_bar().template("[{pos}/{len}] {msg}").unwrap());
-        single_pb.set_message("📥 Fetching...");
+        single_pb.set_message("📤 Processing...");
         vec![single_pb; context.repositories.len()]
     };
 
@@ -115,95 +114,21 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
     let start_time = context.start_time;
     let total_repos = context.total_repos;
 
-    // PHASE 1: Fetch all repos with high concurrency (2x)
-    // Cap at FETCH_CONCURRENT_CAP to prevent overwhelming network/services
+    // Use 2x concurrency for fetch phase (I/O bound), standard concurrency for push phase
     use crate::core::config::FETCH_CONCURRENT_CAP;
     let fetch_concurrency = (context.semaphore.available_permits() * 2).min(FETCH_CONCURRENT_CAP);
     let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_concurrency));
-
-    // Pre-allocate Vec to avoid reallocations during collection (5-15% faster)
-    let mut fetch_results: Vec<(String, PathBuf, FetchResult, indicatif::ProgressBar)> =
-        Vec::with_capacity(context.repositories.len());
-
-    let mut fetch_futures = FuturesUnordered::new();
-
-    // Track active and completed fetches with atomic counters (no lock contention)
-    let active_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let completed_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-    // Create all futures immediately - semaphore naturally limits concurrency
-    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
-        let semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
-        let verbose_clone = verbose;
-        let active_count_clone = std::sync::Arc::clone(&active_count);
-        let completed_count_clone = std::sync::Arc::clone(&completed_count);
-        let pb_clone = if !verbose { Some(progress_bar.clone()) } else { None };
-
-        let future = async move {
-            let _permit = semaphore_clone.acquire().await.expect("Failed to acquire fetch permit");
-
-            // Increment active counter
-            if !verbose_clone {
-                let active = active_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                let completed = completed_count_clone.load(std::sync::atomic::Ordering::Relaxed);
-
-                if let Some(pb) = &pb_clone {
-                    pb.set_message(format!("📥 Fetching... [{} active, {}/{} complete]",
-                        active, completed, total_repos));
-                }
-            }
-
-            let fetch_result = fetch_and_analyze(&repo_path, force_push).await;
-
-            // Decrement active, increment completed
-            if !verbose_clone {
-                let active = active_count_clone.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) - 1;
-                let completed = completed_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-
-                if let Some(pb) = &pb_clone {
-                    // Update position to show progress
-                    pb.set_position(completed as u64);
-
-                    if completed == total_repos {
-                        pb.set_message(format!("📥 Fetched {}/{} repos", completed, total_repos));
-                    } else {
-                        pb.set_message(format!("📥 Fetching... [{} active, {}/{} complete]",
-                            active, completed, total_repos));
-                    }
-                }
-            }
-
-            // Update progress bar after fetch completes (verbose mode only)
-            if verbose_clone {
-                progress_bar.set_message("fetched, queued for push...");
-            }
-
-            (repo_name, repo_path, fetch_result, progress_bar)
-        };
-        fetch_futures.push(future);
-    }
-
-    while let Some(result) = fetch_futures.next().await {
-        fetch_results.push(result);
-    }
-
-    // PHASE 2: Push repos that need it with adaptive concurrency + rate limit protection
-    if !verbose {
-        // Update progress bar for push phase
-        if let Some(pb) = fetch_results.first().map(|(_, _, _, pb)| pb) {
-            pb.set_message("📤 Pushing...");
-            pb.set_position(0);
-        }
-    }
 
     // Track rate limit errors for adaptive backoff
     let rate_limit_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let has_rate_limit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let mut push_futures = FuturesUnordered::new();
-    for (repo_name, repo_path, fetch_result, progress_bar) in fetch_results {
+    // Create pipelined futures: each does fetch → immediately push
+    let mut pipeline_futures = FuturesUnordered::new();
+    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+        let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
+        let push_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let stats_clone = std::sync::Arc::clone(&context.statistics);
-        let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let footer_clone = footer_pb.clone();
         let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
         let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
@@ -213,7 +138,14 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
         let total_repos_clone = total_repos;
 
         let future = async move {
-            let _permit = semaphore_clone.acquire().await.expect("Failed to acquire push permit");
+            // PHASE 1: Fetch with high concurrency
+            let fetch_result = {
+                let _fetch_permit = fetch_semaphore_clone.acquire().await.expect("Failed to acquire fetch permit");
+                fetch_and_analyze(&repo_path, force_push).await
+            }; // Fetch permit released here
+
+            // PHASE 2: Push with standard concurrency + rate limit protection
+            let _push_permit = push_semaphore_clone.acquire().await.expect("Failed to acquire push permit");
 
             // Attempt push with retry on rate limit
             let mut attempt = 0;
@@ -276,10 +208,10 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
                 footer_clone.set_message(live_counters);
             }
         };
-        push_futures.push(future);
+        pipeline_futures.push(future);
     }
 
-    while push_futures.next().await.is_some() {}
+    while pipeline_futures.next().await.is_some() {}
 
     // Show rate limit warning if detected
     if has_rate_limit.load(std::sync::atomic::Ordering::Relaxed) {
