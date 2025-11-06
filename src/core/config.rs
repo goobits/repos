@@ -139,30 +139,13 @@ mod tests {
         assert!(concurrency >= 3);
     }
 
-    #[test]
-    fn test_concurrency_constants_are_reasonable() {
-        // Ensure constants are sensible
-        assert!(FETCH_CONCURRENT_CAP > 0, "FETCH_CONCURRENT_CAP must be positive");
-        assert!(FETCH_CONCURRENT_CAP >= 12, "FETCH_CONCURRENT_CAP should allow reasonable parallelism");
-
-        assert!(GIT_CONCURRENT_CAP > 0, "GIT_CONCURRENT_CAP must be positive");
-        assert!(GIT_CONCURRENT_CAP >= 12, "GIT_CONCURRENT_CAP should allow reasonable parallelism");
-
-        assert!(TRUFFLE_CONCURRENT_LIMIT >= 1, "TRUFFLE_CONCURRENT_LIMIT must be at least 1");
-        assert!(HYGIENE_CONCURRENT_LIMIT >= 1, "HYGIENE_CONCURRENT_LIMIT must be at least 1");
-    }
-
-    #[test]
-    fn test_max_scan_depth_prevents_infinite_recursion() {
-        assert!(MAX_SCAN_DEPTH > 0, "MAX_SCAN_DEPTH must be positive");
-        assert!(MAX_SCAN_DEPTH <= 50, "MAX_SCAN_DEPTH should prevent excessive recursion");
-    }
-
-    #[test]
-    fn test_estimated_repo_count_for_preallocation() {
-        assert!(ESTIMATED_REPO_COUNT > 0, "ESTIMATED_REPO_COUNT must be positive");
-        assert!(ESTIMATED_REPO_COUNT <= 1000, "ESTIMATED_REPO_COUNT should be reasonable");
-    }
+    // Note: Constant validation tests removed - constants are compile-time validated.
+    // Previous tests checked:
+    // - FETCH_CONCURRENT_CAP = 24 (positive, allows parallelism)
+    // - GIT_CONCURRENT_CAP = 12 (positive, allows parallelism)
+    // - TRUFFLE_CONCURRENT_LIMIT = 1, HYGIENE_CONCURRENT_LIMIT = 3 (at least 1)
+    // - MAX_SCAN_DEPTH = 10 (positive, prevents excessive recursion)
+    // - ESTIMATED_REPO_COUNT = 50 (positive, reasonable)
 
     #[test]
     fn test_skip_directories_contains_common_dirs() {

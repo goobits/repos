@@ -3,7 +3,6 @@
 use anyhow::Result;
 use std::path::Path;
 use std::process::Command;
-use tempfile::TempDir;
 
 /// Sets up a git repository with user config
 /// Returns Ok(()) on success, or skips test if git is not available
@@ -57,6 +56,7 @@ pub fn create_test_commit(path: &Path, file_name: &str, content: &str, message: 
 }
 
 /// Creates multiple test repositories in a parent directory
+#[allow(dead_code)]
 pub fn create_multiple_repos(parent_dir: &Path, count: usize) -> Result<Vec<String>> {
     let mut repo_names = Vec::new();
 

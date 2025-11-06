@@ -67,61 +67,59 @@ fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<Su
         })
         .build();
 
-    for result in walker {
-        if let Ok(entry) = result {
-            let path = entry.path();
+    for entry in walker.flatten() {
+        let path = entry.path();
 
-            // Only check directories
-            if !entry.file_type().map_or(false, |ft| ft.is_dir()) {
-                continue;
-            }
-
-            // Skip the parent's root directory
-            if path == parent_path {
-                continue;
-            }
-
-            // Check if this directory has a .git
-            let git_path = path.join(".git");
-            if !git_path.exists() {
-                continue;
-            }
-
-            // This is a nested repo! Get its info
-            let subrepo_name = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            let relative_path = path.strip_prefix(parent_path)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
-
-            // Get git info
-            let commit_hash = match get_current_commit(path) {
-                Ok(hash) => hash,
-                Err(_) => continue, // Skip if can't get commit
-            };
-
-            let short_hash = commit_hash.chars().take(7).collect();
-            let remote_url = get_remote_url(path).ok();
-            let uncommitted = has_uncommitted_changes(path);
-            let commit_timestamp = get_commit_timestamp(path, &commit_hash);
-
-            nested.push(SubrepoInstance {
-                parent_repo: parent_name.to_string(),
-                parent_path: parent_path.to_path_buf(),
-                subrepo_name,
-                subrepo_path: path.to_path_buf(),
-                relative_path,
-                commit_hash,
-                short_hash,
-                remote_url,
-                has_uncommitted: uncommitted,
-                commit_timestamp,
-            });
+        // Only check directories
+        if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
+            continue;
         }
+
+        // Skip the parent's root directory
+        if path == parent_path {
+            continue;
+        }
+
+        // Check if this directory has a .git
+        let git_path = path.join(".git");
+        if !git_path.exists() {
+            continue;
+        }
+
+        // This is a nested repo! Get its info
+        let subrepo_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let relative_path = path.strip_prefix(parent_path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+
+        // Get git info
+        let commit_hash = match get_current_commit(path) {
+            Ok(hash) => hash,
+            Err(_) => continue, // Skip if can't get commit
+        };
+
+        let short_hash = commit_hash.chars().take(7).collect();
+        let remote_url = get_remote_url(path).ok();
+        let uncommitted = has_uncommitted_changes(path);
+        let commit_timestamp = get_commit_timestamp(path, &commit_hash);
+
+        nested.push(SubrepoInstance {
+            parent_repo: parent_name.to_string(),
+            parent_path: parent_path.to_path_buf(),
+            subrepo_name,
+            subrepo_path: path.to_path_buf(),
+            relative_path,
+            commit_hash,
+            short_hash,
+            remote_url,
+            has_uncommitted: uncommitted,
+            commit_timestamp,
+        });
     }
 
     Ok(nested)

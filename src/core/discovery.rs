@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
-use num_cpus;
 use dashmap::DashMap;
 
 use super::config::{DEFAULT_REPO_NAME, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME, MAX_SCAN_DEPTH, ESTIMATED_REPO_COUNT};
@@ -80,7 +79,7 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                 let path = entry.path();
 
                 // Only check directories
-                if !entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
                     return WalkState::Continue;
                 }
 

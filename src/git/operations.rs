@@ -193,7 +193,7 @@ pub struct FetchResult {
 
 /// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
 /// Returns FetchResult with repository state after fetching
-pub async fn fetch_and_analyze(path: &Path, force_push: bool) -> FetchResult {
+pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
     use crate::core::clean_error_message;
 
     // Refresh the index to ensure accurate diff-index results
@@ -282,11 +282,8 @@ pub async fn fetch_and_analyze(path: &Path, force_push: bool) -> FetchResult {
     let upstream_exists = upstream_check.as_ref().is_ok_and(|result| result.0);
 
     if !upstream_exists {
-        let status = if force_push {
-            Status::NoUpstream // Will be pushed in phase 2
-        } else {
-            Status::NoUpstream
-        };
+        // Will be pushed in phase 2 (with or without force flag)
+        let status = Status::NoUpstream;
         return FetchResult {
             has_uncommitted,
             current_branch,

@@ -38,7 +38,7 @@ fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<S
 /// Uses `git status --porcelain` to detect all modifications.
 fn has_uncommitted_changes(path: &Path) -> bool {
     let output = Command::new("git")
-        .args(&["-C", path.to_str().unwrap(), "status", "--porcelain"])
+        .args(["-C", path.to_str().unwrap(), "status", "--porcelain"])
         .output();
 
     match output {
@@ -50,7 +50,7 @@ fn has_uncommitted_changes(path: &Path) -> bool {
 /// Stash uncommitted changes in a repository
 fn stash_changes(path: &Path) -> Result<()> {
     let output = Command::new("git")
-        .args(&[
+        .args([
             "-C",
             path.to_str().unwrap(),
             "stash",
@@ -72,7 +72,7 @@ fn stash_changes(path: &Path) -> Result<()> {
 /// Checkout a specific commit in a git repository
 fn checkout_commit(path: &Path, commit: &str) -> Result<()> {
     let output = Command::new("git")
-        .args(&[
+        .args([
             "-C",
             path.to_str().unwrap(),
             "checkout",
@@ -93,7 +93,7 @@ fn checkout_commit(path: &Path, commit: &str) -> Result<()> {
 fn fetch_latest_commit(path: &Path) -> Result<String> {
     // Fetch from remote
     let fetch_output = Command::new("git")
-        .args(&["-C", path.to_str().unwrap(), "fetch", "origin"])
+        .args(["-C", path.to_str().unwrap(), "fetch", "origin"])
         .output()
         .context("Failed to run git fetch")?;
 
@@ -105,7 +105,7 @@ fn fetch_latest_commit(path: &Path) -> Result<String> {
     // Try to get latest commit from origin/HEAD, then origin/main, then origin/master
     for branch in &["origin/HEAD", "origin/main", "origin/master"] {
         let output = Command::new("git")
-            .args(&[
+            .args([
                 "-C",
                 path.to_str().unwrap(),
                 "rev-parse",

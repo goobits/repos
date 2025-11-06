@@ -146,7 +146,7 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
     // Display commits with arrow notation
     for (_commit, instances) in &commits {
         for instance in instances {
-            let is_sync_target = latest_clean.map_or(false, |t| t.commit_hash == instance.commit_hash);
+            let is_sync_target = latest_clean.is_some_and(|t| t.commit_hash == instance.commit_hash);
             let is_latest = latest.commit_hash == instance.commit_hash;
 
             let prefix = if is_sync_target { "→" } else { " " };
@@ -294,7 +294,7 @@ fn display_drift_status(status: &SubrepoStatus) {
     // Display commits and their instances with arrow notation
     for (_commit, instances) in &commits {
         for instance in instances {
-            let is_sync_target = latest_clean_timestamp.map_or(false, |t|
+            let is_sync_target = latest_clean_timestamp.is_some_and(|t|
                 instance.commit_timestamp == t && !instance.has_uncommitted
             );
             let is_latest = instance.commit_timestamp == latest_timestamp;

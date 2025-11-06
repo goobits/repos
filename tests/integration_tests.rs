@@ -3,7 +3,7 @@ use repos::core::SyncStatistics;
 use repos::git::UserConfig;
 
 mod common;
-use common::{setup_git_repo, create_test_commit, TestRepoBuilder, is_git_available};
+use common::{TestRepoBuilder, is_git_available};
 
 #[test]
 fn test_sync_stats_initialization() {
@@ -239,7 +239,7 @@ async fn test_staging_with_patterns() {
     // Check specifically that .md files are not staged (first character is not A or M)
     let staged_md_files: Vec<&str> = status_str.lines()
         .filter(|line| {
-            let first_char = line.chars().nth(0).unwrap_or(' ');
+            let first_char = line.chars().next().unwrap_or(' ');
             (first_char == 'A' || first_char == 'M') && line.contains(".md")
         })
         .collect();

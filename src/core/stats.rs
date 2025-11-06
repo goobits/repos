@@ -184,9 +184,7 @@ impl SyncStatistics {
                                 let is_last_file = file_idx == changes.len() - 1;
                                 let prefix = if is_last_repo {
                                     if is_last_file { "      └─" } else { "      ├─" }
-                                } else {
-                                    if is_last_file { "   │  └─" } else { "   │  ├─" }
-                                };
+                                } else if is_last_file { "   │  └─" } else { "   │  ├─" };
                                 lines.push(format!("{}  {}", prefix, change));
                             }
                         }
@@ -274,7 +272,7 @@ fn get_repo_changes(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
 
     let path = Path::new(repo_path);
     let output = Command::new("git")
-        .args(&["status", "--porcelain"])
+        .args(["status", "--porcelain"])
         .current_dir(path)
         .output()?;
 

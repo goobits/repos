@@ -7,6 +7,7 @@ use tempfile::TempDir;
 use super::git::{setup_git_repo, create_test_commit, add_git_remote};
 
 /// A test repository with automatic cleanup
+#[allow(dead_code)]
 pub struct TestRepo {
     pub temp_dir: TempDir,
     pub name: String,

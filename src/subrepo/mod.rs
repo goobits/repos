@@ -49,7 +49,7 @@ impl ValidationReport {
 /// Get current commit hash for a git repository
 fn get_current_commit(path: &Path) -> Result<String> {
     let output = Command::new("git")
-        .args(&["-C", path.to_str().unwrap(), "rev-parse", "HEAD"])
+        .args(["-C", path.to_str().unwrap(), "rev-parse", "HEAD"])
         .output()
         .context("Failed to run git rev-parse")?;
 
@@ -63,7 +63,7 @@ fn get_current_commit(path: &Path) -> Result<String> {
 /// Get remote URL for a git repository
 fn get_remote_url(path: &Path) -> Result<String> {
     let output = Command::new("git")
-        .args(&["-C", path.to_str().unwrap(), "remote", "get-url", "origin"])
+        .args(["-C", path.to_str().unwrap(), "remote", "get-url", "origin"])
         .output()
         .context("Failed to run git remote")?;
 
@@ -91,7 +91,7 @@ fn normalize_remote_url(url: &str) -> String {
 /// See subrepo/sync.rs for a more conservative version that includes untracked files.
 fn has_uncommitted_changes(path: &Path) -> bool {
     let output = Command::new("git")
-        .args(&["-C", path.to_str().unwrap(), "diff-index", "--quiet", "HEAD", "--"])
+        .args(["-C", path.to_str().unwrap(), "diff-index", "--quiet", "HEAD", "--"])
         .output();
 
     match output {
@@ -103,7 +103,7 @@ fn has_uncommitted_changes(path: &Path) -> bool {
 /// Get commit timestamp (Unix epoch seconds)
 pub(crate) fn get_commit_timestamp(path: &Path, commit_hash: &str) -> i64 {
     let output = Command::new("git")
-        .args(&[
+        .args([
             "-C",
             path.to_str().unwrap(),
             "show",

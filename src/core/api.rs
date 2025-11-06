@@ -13,7 +13,7 @@ pub use super::progress::{GenericProcessingContext, ProcessingContext, create_pr
 pub use super::stats::SyncStatistics;
 
 // Discovery
-pub use super::discovery::{init_command, find_repos, find_repos_from_path};
+pub use super::discovery::{init_command, find_repos_from_path};
 
 // Configuration
 pub use super::config::GIT_CONCURRENT_CAP;

@@ -332,7 +332,13 @@ async fn process_config_repositories(
 
     // Create the prompt function for interactive mode
     let prompt_fn: PromptFn = Box::new(|repo_name, current, target| {
-        Box::pin(prompt_for_config_resolution(repo_name, current, target))
+        // Convert borrowed data to owned to satisfy lifetime requirements
+        let repo_name = repo_name.to_string();
+        let current = current.clone();
+        let target = target.clone();
+        Box::pin(async move {
+            prompt_for_config_resolution(&repo_name, &current, &target).await
+        })
     });
     let prompt_fn = std::sync::Arc::new(prompt_fn);
 
