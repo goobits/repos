@@ -143,9 +143,12 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
                 let _permit = semaphore_clone.acquire().await.expect("Failed to acquire fetch permit");
                 let fetch_result = fetch_and_analyze(&repo_path, force_push).await;
 
-                // Update progress bar after fetch completes (verbose mode only)
+                // Update progress bar after fetch completes
                 if verbose_clone {
                     progress_bar.set_message("fetched, queued for push...");
+                } else {
+                    // Increment progress counter in non-verbose mode so user sees progress
+                    progress_bar.inc(1);
                 }
 
                 (repo_name, repo_path, fetch_result, progress_bar)
