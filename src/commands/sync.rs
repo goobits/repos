@@ -207,12 +207,6 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             } else {
                 progress_bar.set_message(format!("{} {} ({})", status.symbol(), repo_name, status.text()));
                 progress_bar.inc(1);
-
-                // Stream error details immediately for failed repos
-                use crate::git::Status;
-                if matches!(status, Status::Error) {
-                    eprintln!("\n🔴 {} - {}", repo_name, display_message);
-                }
             }
 
             let mut stats_guard = acquire_stats_lock(&stats_clone);
