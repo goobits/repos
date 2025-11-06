@@ -116,7 +116,10 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
     let total_repos = context.total_repos;
 
     // PHASE 1: Fetch all repos with high concurrency (2x)
-    let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(context.semaphore.available_permits() * 2));
+    // Cap at FETCH_CONCURRENT_CAP to prevent overwhelming network/services
+    use crate::core::config::FETCH_CONCURRENT_CAP;
+    let fetch_concurrency = (context.semaphore.available_permits() * 2).min(FETCH_CONCURRENT_CAP);
+    let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_concurrency));
     let mut fetch_results: Vec<(String, PathBuf, FetchResult, indicatif::ProgressBar)> = Vec::new();
 
     let mut fetch_futures = FuturesUnordered::new();

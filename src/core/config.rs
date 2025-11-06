@@ -7,15 +7,23 @@
 // - TruffleHog scanning is CPU-intensive and benefits from lower concurrency to prevent system overload
 // - Hygiene checking is I/O-bound (git commands) but moderate concurrency prevents overwhelming git
 
-// Default concurrency cap to prevent overwhelming GitHub's concurrent request limits
-pub const GIT_CONCURRENT_CAP: usize = 12;
+// Default concurrency cap for fetch operations to prevent overwhelming network
+// This is specifically for the fetch phase 2x multiplier, not base concurrency
+pub const FETCH_CONCURRENT_CAP: usize = 24;
+
+// Default concurrency for commands that don't support --jobs flag yet
+// Increased from 12 to 32 to better utilize modern multi-core systems
+pub const GIT_CONCURRENT_CAP: usize = 32;
 
 /// Determines the concurrency limit for git operations based on CLI args and system resources
 ///
 /// Priority order:
 /// 1. --sequential flag → 1
 /// 2. --jobs N flag → N
-/// 3. Smart default → min(CPU_CORES + 2, 12)
+/// 3. Smart default → CPU_CORES + 2 (scales with hardware)
+///
+/// Note: Removed the previous hard cap of 12 to allow scaling on high-core systems.
+/// Users experiencing rate limits can use --jobs N to limit concurrency.
 pub fn get_git_concurrency(jobs: Option<usize>, sequential: bool) -> usize {
     // Check for sequential mode
     if sequential {
@@ -27,9 +35,10 @@ pub fn get_git_concurrency(jobs: Option<usize>, sequential: bool) -> usize {
         return n.max(1); // Ensure at least 1
     }
 
-    // Smart default: CPU cores + 2, capped at 12
+    // Smart default: CPU cores + 2, no artificial cap
+    // This allows the tool to scale naturally with available hardware
     let cpu_count = num_cpus::get();
-    (cpu_count + 2).min(GIT_CONCURRENT_CAP)
+    cpu_count + 2
 }
 
 // Audit concurrency configuration

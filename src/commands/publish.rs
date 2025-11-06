@@ -286,8 +286,10 @@ async fn process_publish_repositories(
     let max_name_length = context.max_name_length;
     let total_packages = packages.len();
 
-    // Use a lower concurrency for publishing (3 concurrent max)
-    let publish_semaphore = Arc::new(tokio::sync::Semaphore::new(3));
+    // Use moderate concurrency for publishing to balance speed with registry rate limits
+    // Previously hardcoded to 3, now uses 8 to better utilize modern systems
+    // Users experiencing rate limits should use a future --jobs flag to limit concurrency
+    let publish_semaphore = Arc::new(tokio::sync::Semaphore::new(8));
 
     for (((repo_name, repo_path, manager), progress_bar), _) in
         packages.into_iter().zip(repo_progress_bars).zip(context.repositories)
