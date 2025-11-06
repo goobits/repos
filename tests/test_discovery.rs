@@ -4,10 +4,12 @@ mod common;
 
 use common::{create_multiple_repos, setup_git_repo, TestRepoBuilder, is_git_available};
 use repos::core::find_repos;
+use serial_test::serial;
 use std::fs;
 use tempfile::TempDir;
 
 #[test]
+#[serial]
 fn test_find_single_repo() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
@@ -40,6 +42,7 @@ fn test_find_single_repo() {
 }
 
 #[test]
+#[serial]
 fn test_find_multiple_repos() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
@@ -73,6 +76,7 @@ fn test_find_multiple_repos() {
 }
 
 #[test]
+#[serial]
 fn test_find_repos_with_duplicate_names() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
@@ -117,6 +121,7 @@ fn test_find_repos_with_duplicate_names() {
 }
 
 #[test]
+#[serial]
 fn test_skips_node_modules() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
@@ -151,6 +156,7 @@ fn test_skips_node_modules() {
 }
 
 #[test]
+#[serial]
 fn test_max_depth_limit() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
@@ -190,6 +196,7 @@ fn test_max_depth_limit() {
 }
 
 #[test]
+#[serial]
 fn test_handles_symlinks() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
@@ -230,6 +237,7 @@ fn test_handles_symlinks() {
 }
 
 #[test]
+#[serial]
 fn test_current_directory_as_repo() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
@@ -256,6 +264,7 @@ fn test_current_directory_as_repo() {
 }
 
 #[test]
+#[serial]
 fn test_alphabetical_sorting() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");

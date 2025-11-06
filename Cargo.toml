@@ -13,6 +13,7 @@ homepage = "https://github.com/goobits/repos"
 
 [dev-dependencies]
 tempfile = "3.0"
+serial_test = "3.0"
 
 [dependencies]
 # Error handling
