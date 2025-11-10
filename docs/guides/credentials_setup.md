@@ -1,8 +1,25 @@
 # Publishing Credentials
 
-`repos publish` uses your existing package manager credentials to authenticate with registries. Configure credentials for each package manager you use.
+## Understanding Publishing Authentication
 
-## NPM
+When you publish packages to registries (npm, crates.io, PyPI), you need to prove you own the package. Modern registries use **token-based authentication** instead of passwords for security and convenience.
+
+**Why tokens over passwords?**
+- Tokens can be scoped to specific operations (publish only, no delete)
+- Easier to rotate if compromised
+- Can be revoked without changing your account password
+- Work better with CI/CD pipelines
+- More secure than storing passwords in plain text
+
+`repos publish` doesn't store credentials - it uses your existing package manager configurations. Configure credentials once using your package manager's standard tools, and `repos` will use them automatically.
+
+**Security model:** Credential files stay on your machine. `repos` never transmits them to third parties - it simply invokes the package manager's publish command, which handles authentication using your configured credentials.
+
+---
+
+## Setup by Package Manager
+
+### NPM
 
 ```bash
 npm login                           # Interactive
@@ -12,17 +29,21 @@ npm config set //registry.npmjs.org/:_authToken npm_YOUR_TOKEN
 npm whoami                          # Verify
 ```
 
-**Tokens:** https://www.npmjs.com/settings/YOUR_USERNAME/tokens
+**Get tokens:** https://www.npmjs.com/settings/YOUR_USERNAME/tokens
 
-## Cargo
+The token is stored in `~/.npmrc` and used automatically by npm and repos.
+
+### Cargo
 
 ```bash
 cargo login YOUR_TOKEN              # Sets ~/.cargo/credentials.toml
 ```
 
-**Tokens:** https://crates.io/settings/tokens
+**Get tokens:** https://crates.io/settings/tokens
 
-## Python (PyPI)
+Credentials are stored in `~/.cargo/credentials.toml`.
+
+### Python (PyPI)
 
 ```bash
 # Edit ~/.pypirc

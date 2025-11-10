@@ -10,6 +10,8 @@
 
 ### Method 1: Install Script (Recommended)
 
+The fastest path to a working installation. Handles Rust installation, binary compilation, and PATH setup automatically. **Choose this unless you have specific requirements.**
+
 ```bash
 git clone https://github.com/goobits/repos.git
 cd repos
@@ -24,15 +26,17 @@ After running the script, you'll have:
 
 ### Method 2: Make
 
+Familiar workflow for users who prefer make commands. Equivalent to Method 1 but uses make.
+
 ```bash
 git clone https://github.com/goobits/repos.git
 cd repos
 make install
 ```
 
-Builds release binary and runs the install script.
-
 ### Method 3: Cargo Direct Install
+
+For users who want full control over installation paths and prefer manual setup.
 
 ```bash
 git clone https://github.com/goobits/repos.git
@@ -42,9 +46,11 @@ mkdir -p ~/.local/bin
 cp target/release/repos ~/.local/bin/
 ```
 
-Manual installation - requires PATH configuration (see below).
+Requires manual PATH configuration (see below).
 
 ### Method 4: From Source (Development)
+
+For contributors working on the codebase. Creates unoptimized debug build for faster compilation during development.
 
 ```bash
 git clone https://github.com/goobits/repos.git
@@ -56,7 +62,7 @@ cargo build
 ## Verify Installation
 
 ```bash
-repos --version      # Should show: repos 1.4.0
+repos --version      # Should show: repos 2.1.0
 which repos          # Should show: /home/user/.local/bin/repos
 repos --help         # Display command help
 ```

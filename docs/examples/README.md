@@ -1,6 +1,6 @@
 # Examples
 
-Practical examples and templates for integrating `repos` into your workflows.
+Practical templates for integrating `repos` into your workflows. Copy these templates as starting points for CI/CD pipelines, git hooks, and automation scripts.
 
 ## CI/CD Integration
 
@@ -110,7 +110,7 @@ repos subrepo status
 
 ```bash
 # 1. Check current configs
-repos config --list
+git config --list
 
 # 2. Preview changes
 repos config --from-global --dry-run

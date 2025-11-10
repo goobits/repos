@@ -1,6 +1,6 @@
 # Getting Started
 
-Batch Git operations across multiple repositories. Stage, commit, push, and manage configs in one command instead of manually visiting each repo.
+Batch Git operations across multiple repositories. Instead of manually visiting each repo to run the same git commands, run one `repos` command and move on with your day.
 
 ## Installation
 

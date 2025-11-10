@@ -119,14 +119,14 @@ repos subrepo update <name>     # Update to origin/main
 ```
 
 Detects nested repositories shared across multiple parents and provides
-smart suggestions to synchronize them. Uses `🎯 SYNC TARGET` to identify
-the latest clean commit for safe syncing.
+smart suggestions to synchronize them. Uses `→` arrow to identify
+the recommended sync target (latest clean commit).
 
 **Key features:**
 - Identifies drift across shared subrepos
 - Smart sync target detection (latest clean commit)
 - `--stash` flag for safe, reversible syncing
-- Visual indicators: ✅ clean, ⚠️ uncommitted, 🎯 SYNC TARGET, ⬆️ LATEST
+- Visual indicators: ✅ clean, ⚠️ uncommitted, → (sync target), ⬆️ LATEST
 - Groups by remote URL to avoid false positives
 
 ## How It Works

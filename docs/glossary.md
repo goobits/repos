@@ -1,6 +1,10 @@
 # Glossary
 
-Comprehensive reference for terms, flags, and concepts used in `repos`.
+Quick reference for all `repos` terminology, flags, and concepts. Use this page to look up unfamiliar terms while reading other documentation, or browse by category to learn what `repos` can do.
+
+Entries link to detailed guides for deeper learning.
+
+---
 
 ## Commands
 

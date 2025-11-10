@@ -18,7 +18,7 @@ Common issues and solutions for the repos tool.
 | `uncommitted changes` or `dirty working directory` | Uncommitted files in repo | Commit or stash changes: `git status` to review |
 | `tag already exists` | Version tag already published | Delete tag locally and remotely, then retry: `git tag -d v1.0.0 && git push origin :refs/tags/v1.0.0` |
 | `not a package` or `no manifest found` | Missing package manifest | Ensure repo has `package.json`, `Cargo.toml`, or `pyproject.toml` |
-| `version mismatch` | package.json version differs from git tag | Update package version to match or use `--skip-version-check` |
+| `version mismatch` | package.json version differs from git tag | Update package version to match git tag |
 
 ## Config Issues
 
@@ -27,7 +27,7 @@ Common issues and solutions for the repos tool.
 | Config conflicts between repos | Different configs in nested repos | Use `repos config --local` for repo-specific settings |
 | Email validation failures | Invalid email format | Use proper format: `user@example.com` |
 | `Permission denied` on `.git/config` | Read-only git config | Check file permissions: `chmod 644 .git/config` |
-| Config not applied | Wrong config scope | Verify scope with `repos config --list --show-scope` |
+| Config not applied | Wrong config scope | Verify with `git config --list --show-scope` |
 
 ## Performance Issues
 
@@ -84,7 +84,6 @@ git tag                    # List all tags
 ### Common Diagnostic Commands
 ```bash
 repos status               # Check status of all repos
-repos config --list        # View all configuration
 git config --list          # View git configuration
 which repos                # Verify binary location
 repos --version            # Check installed version

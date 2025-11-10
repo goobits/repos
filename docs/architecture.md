@@ -53,8 +53,9 @@ Foundational functionality used across all commands:
 - **Concurrency Control** - Managing parallel operations across repositories
 
 **Design principles:**
-- Concurrent operations with bounded parallelism (typically 3 concurrent ops)
-- Timeouts for long-running operations (3-minute default)
+- Concurrent operations with smart parallelism (CPU cores + 2, default cap: 32)
+- User-controllable concurrency via `--jobs N` or `--sequential` flags
+- Timeouts for long-running operations (3-5 minutes depending on operation type)
 - Progress bars and status indicators for user feedback
 
 ### Package Managers (`src/package/`)
@@ -114,21 +115,41 @@ Security scanning and hygiene checking:
 
 ### Parallel Processing
 
-Operations across repositories run concurrently with bounded parallelism:
+Operations across repositories run concurrently with smart parallelism that scales with hardware:
+
+**Git Operations (push, stage, commit, config):**
+- Default: `CPU cores + 2` (no hard cap in v2.1+)
+- Fallback cap: `32` for commands without `--jobs` support
+- User control: `--jobs N` to set explicit limit, `--sequential` for serial execution
+- Two-phase pipeline (v2.0+): Fetch phase uses 2x concurrency, push phase uses standard concurrency
+
+**Specialized Operations:**
 
 | Operation | Concurrency Limit | Reason |
 |-----------|-------------------|--------|
 | TruffleHog scanning | 1 | CPU-intensive, memory-heavy |
 | Hygiene checking | 3 | Balanced I/O and CPU |
-| Publishing | 3 | Network I/O, rate limiting concerns |
-| Standard git operations | 3 | Balance between speed and system load |
+| Publishing | 8 (v2.1+) | Network I/O with rate limit handling |
+| Fetch operations | 24 cap | Network I/O, prevents overwhelming remotes |
+
+**Performance Notes:**
+- v2.0: Removed 12-operation cap to allow scaling on high-core systems
+- v2.1: Increased default cap from 12 to 32 for better multi-core utilization
+- Rate limit protection: Automatic GitHub detection with 2-second retry backoff
 
 ### Timeout Handling
 
-Long-running operations have 3-minute timeouts to prevent hangs. This applies to:
-- Repository scans
-- Publishing operations
-- Git operations (large pushes)
+Different operations have different timeout values to balance responsiveness and reliability:
+
+| Operation Type | Timeout | Files |
+|---------------|---------|-------|
+| Git operations | 180s (3 min) | src/git/operations.rs:13 |
+| npm publishing | 300s (5 min) | src/package/npm.rs:10 |
+| Cargo publishing | 300s (5 min) | src/package/cargo.rs |
+| PyPI publishing | 300s (5 min) | src/package/pypi.rs:11 |
+| GitHub visibility checks | 10s | src/git/operations.rs:571 |
+
+Publishing operations have longer timeouts to accommodate large package uploads and registry processing times.
 
 ## Error Handling
 
@@ -316,5 +337,6 @@ The `install.sh` script:
 
 **Related Documentation:**
 - [Documentation Index](README.md)
-- [Contributing Guide](contributing.md)
+- [Module Boundaries](../MODULE_BOUNDARIES.md)
+- [Contributing Guide](../CONTRIBUTING.md)
 - [Commands Reference](guides/commands.md)
