@@ -108,7 +108,7 @@ git config --list
 # Concurrency control
 repos push --jobs 8             # Explicit limit
 repos push --sequential         # Serial (1 at a time)
-# Default: CPU cores + 2, capped at 32
+# Default: CPU cores + 2 (no cap, scales with hardware)
 
 # Verbose output
 repos push --verbose            # Detailed progress

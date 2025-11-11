@@ -10,7 +10,7 @@
 
 ### Method 1: Install Script (Recommended)
 
-The fastest path to a working installation. Handles Rust installation, binary compilation, and PATH setup automatically. **Choose this unless you have specific requirements.**
+Recommended for most users. Handles Rust installation, binary compilation, and PATH setup automatically. **Choose this unless you have specific requirements.**
 
 ```bash
 git clone https://github.com/goobits/repos.git

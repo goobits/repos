@@ -117,10 +117,10 @@ Security scanning and hygiene checking:
 
 Operations across repositories run concurrently with smart parallelism that scales with hardware:
 
-**Git Operations (push, stage, commit, config):**
-- Default: `CPU cores + 2` (no hard cap in v2.1+)
-- Fallback cap: `32` for commands without `--jobs` support
-- User control: `--jobs N` to set explicit limit, `--sequential` for serial execution
+**Git Operations:**
+- **Push command:** Default `CPU cores + 2` with `--jobs N` support (no cap, scales with hardware)
+- **Other commands (stage, commit, config):** Fixed at `32` concurrent operations
+- User control: `--jobs N` (push only), `--sequential` for serial execution (all commands)
 - Two-phase pipeline (v2.0+): Fetch phase uses 2x concurrency, push phase uses standard concurrency
 
 **Specialized Operations:**

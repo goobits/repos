@@ -1,8 +1,6 @@
 # repos Documentation
 
-**repos** is a CLI tool for batch git operations across multiple repositories.
-
-Batch git operations across multiple repositories. One command instead of dozens of `cd` + `git` loops.
+**repos** is a CLI tool for batch git operations across multiple repositories. One command instead of dozens of `cd` + `git` loops.
 
 **Core capabilities:**
 - Push, commit, and stage across all repositories in one command
