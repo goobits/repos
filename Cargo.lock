@@ -589,6 +589,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "goobits-repos"
+version = "2.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "dashmap",
+ "dirs",
+ "flate2",
+ "futures",
+ "ignore",
+ "indicatif",
+ "num_cpus",
+ "rayon",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml",
+ "zip",
+]
+
+[[package]]
 name = "h2"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1327,31 +1352,6 @@ name = "regex-syntax"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
-
-[[package]]
-name = "repos"
-version = "2.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "dashmap",
- "dirs",
- "flate2",
- "futures",
- "ignore",
- "indicatif",
- "num_cpus",
- "rayon",
- "reqwest",
- "serde",
- "serde_json",
- "tar",
- "tempfile",
- "tokio",
- "toml",
- "zip",
-]
 
 [[package]]
 name = "reqwest"

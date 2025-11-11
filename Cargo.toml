@@ -1,5 +1,5 @@
 [package]
-name = "repos"
+name = "goobits-repos"
 version = "2.1.0"
 edition = "2021"
 authors = ["goobits contributors"]
@@ -55,5 +55,5 @@ path = "src/main.rs"
 doc = false  # Don't include binary in documentation
 
 [lib]
-name = "repos"
+name = "goobits_repos"
 path = "src/lib.rs"

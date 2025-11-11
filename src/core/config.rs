@@ -2,8 +2,8 @@
 //!
 //! **API Stability Note**: Only items re-exported through `core::api` are part of the
 //! stable public API. Other `pub` items in this module are internal implementation details
-//! subject to change. External crates should import through `repos::core::*` rather than
-//! `repos::core::config::*` directly.
+//! subject to change. External crates should import through `goobits_repos::core::*` rather than
+//! `goobits_repos::core::config::*` directly.
 
 // Concurrency Configuration
 //

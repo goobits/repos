@@ -8,7 +8,17 @@
 
 ## Installation Methods
 
-### Method 1: Install Script (Recommended)
+### Method 1: Cargo Install (Recommended)
+
+Install directly from crates.io. Fastest and simplest method.
+
+```bash
+cargo install goobits-repos
+```
+
+This will install the `repos` binary to `~/.cargo/bin/` (make sure it's in your PATH).
+
+### Method 2: Install Script
 
 Recommended for most users. Handles Rust installation, binary compilation, and PATH setup automatically. **Choose this unless you have specific requirements.**
 
@@ -24,7 +34,7 @@ After running the script, you'll have:
 - Installation directory added to your PATH
 - Rust toolchain installed if it was missing
 
-### Method 2: Make
+### Method 3: Make
 
 Familiar workflow for users who prefer make commands. Equivalent to Method 1 but uses make.
 
@@ -34,7 +44,7 @@ cd repos
 make install
 ```
 
-### Method 3: Cargo Direct Install
+### Method 4: Cargo Direct Install
 
 For users who want full control over installation paths and prefer manual setup.
 
@@ -48,7 +58,7 @@ cp target/release/repos ~/.local/bin/
 
 Requires manual PATH configuration (see below).
 
-### Method 4: From Source (Development)
+### Method 5: From Source (Development)
 
 For contributors working on the codebase. Creates unoptimized debug build for faster compilation during development.
 

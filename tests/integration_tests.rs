@@ -1,6 +1,6 @@
 // Tests can use internal paths since we're testing the same crate
-use repos::core::SyncStatistics;
-use repos::git::UserConfig;
+use goobits_repos::core::SyncStatistics;
+use goobits_repos::git::UserConfig;
 
 mod common;
 use common::{TestRepoBuilder, is_git_available};
@@ -31,7 +31,7 @@ fn test_user_config_creation() {
 
 #[tokio::test]
 async fn test_audit_statistics_creation() {
-    use repos::audit::scanner::AuditStatistics;
+    use goobits_repos::audit::scanner::AuditStatistics;
 
     let stats = AuditStatistics::new();
     assert_eq!(stats.truffle_stats.total_secrets, 0);
@@ -39,7 +39,7 @@ async fn test_audit_statistics_creation() {
 
 #[test]
 fn test_staging_status_variants() {
-    use repos::git::Status;
+    use goobits_repos::git::Status;
 
     // Test new staging status variants
     assert_eq!(Status::Staged.symbol(), "🟢");
@@ -59,7 +59,7 @@ fn test_staging_status_variants() {
 
 #[tokio::test]
 async fn test_git_staging_operations() {
-    use repos::git::{stage_files, unstage_files, has_staged_changes, commit_changes};
+    use goobits_repos::git::{stage_files, unstage_files, has_staged_changes, commit_changes};
     use std::fs;
 
     if !is_git_available() {
@@ -152,7 +152,7 @@ async fn test_git_staging_operations() {
 
 #[tokio::test]
 async fn test_staging_with_patterns() {
-    use repos::git::{stage_files, unstage_files};
+    use goobits_repos::git::{stage_files, unstage_files};
     use std::fs;
     use tempfile::TempDir;
 
@@ -260,8 +260,8 @@ async fn test_staging_with_patterns() {
 
 #[test]
 fn test_stats_update_with_staging_statuses() {
-    use repos::core::SyncStatistics;
-    use repos::git::Status;
+    use goobits_repos::core::SyncStatistics;
+    use goobits_repos::git::Status;
 
     let mut stats = SyncStatistics::new();
 
@@ -289,7 +289,7 @@ fn test_stats_update_with_staging_statuses() {
 
 #[tokio::test]
 async fn test_error_scenarios() {
-    use repos::git::{stage_files, unstage_files, commit_changes};
+    use goobits_repos::git::{stage_files, unstage_files, commit_changes};
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -368,7 +368,7 @@ async fn test_error_scenarios() {
 
 #[tokio::test]
 async fn test_get_repo_visibility_non_github() {
-    use repos::git::get_repo_visibility;
+    use goobits_repos::git::get_repo_visibility;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -394,13 +394,13 @@ async fn test_get_repo_visibility_non_github() {
 
     // Should return Unknown for non-GitHub repos
     let visibility = get_repo_visibility(repo_path).await;
-    assert_eq!(visibility, repos::git::RepoVisibility::Unknown,
+    assert_eq!(visibility, goobits_repos::git::RepoVisibility::Unknown,
         "Non-GitHub repos should return Unknown visibility");
 }
 
 #[tokio::test]
 async fn test_get_repo_visibility_no_remote() {
-    use repos::git::get_repo_visibility;
+    use goobits_repos::git::get_repo_visibility;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -419,13 +419,13 @@ async fn test_get_repo_visibility_no_remote() {
 
     // Should return Unknown for repos without remote
     let visibility = get_repo_visibility(repo_path).await;
-    assert_eq!(visibility, repos::git::RepoVisibility::Unknown,
+    assert_eq!(visibility, goobits_repos::git::RepoVisibility::Unknown,
         "Repos without remote should return Unknown visibility");
 }
 
 #[tokio::test]
 async fn test_get_repo_visibility_github_repo() {
-    use repos::git::get_repo_visibility;
+    use goobits_repos::git::get_repo_visibility;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -455,16 +455,16 @@ async fn test_get_repo_visibility_github_repo() {
     // Should return Unknown if gh CLI is not available or repo doesn't exist
     // (We can't guarantee a specific result without mocking gh, but we test it doesn't panic)
     assert!(
-        matches!(visibility, repos::git::RepoVisibility::Public |
-                            repos::git::RepoVisibility::Private |
-                            repos::git::RepoVisibility::Unknown),
+        matches!(visibility, goobits_repos::git::RepoVisibility::Public |
+                            goobits_repos::git::RepoVisibility::Private |
+                            goobits_repos::git::RepoVisibility::Unknown),
         "Should return a valid RepoVisibility variant"
     );
 }
 
 #[tokio::test]
 async fn test_has_uncommitted_changes() {
-    use repos::git::has_uncommitted_changes;
+    use goobits_repos::git::has_uncommitted_changes;
     use std::fs;
     use tempfile::TempDir;
 
@@ -554,7 +554,7 @@ async fn test_has_uncommitted_changes() {
 
 #[tokio::test]
 async fn test_create_and_push_tag() {
-    use repos::git::create_and_push_tag;
+    use goobits_repos::git::create_and_push_tag;
     use std::fs;
     use tempfile::TempDir;
 

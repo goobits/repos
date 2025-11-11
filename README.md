@@ -5,8 +5,15 @@ Batch git operations across multiple repositories. One command instead of dozens
 ## Quick Start
 
 ```bash
-./install.sh                    # Install
+# Install from source
+git clone https://github.com/goobits/repos.git
+cd repos
+./install.sh
 
+# Or install from crates.io
+cargo install goobits-repos
+
+# Usage
 repos stage "*.md"              # Stage files by pattern
 repos commit "Update docs"      # Commit across all repos
 repos push                      # Push all + drift check
