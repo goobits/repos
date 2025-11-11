@@ -1,78 +1,65 @@
-# repos
+# 🔄 repos
 
-Git repository management tool for batch operations across multiple repositories.
+Batch git operations across multiple repositories. One command instead of dozens of `cd` + `git` loops.
 
-## Features
+## ✨ Key Features
 
-- **Batch Operations** - Push, commit, stage across all repos
-- **Subrepo Drift Detection** - Track and sync nested repos across parents
-- **Publishing** - Publish to npm, cargo, PyPI with visibility filtering
-- **Config Management** - Sync git user.name/email across projects
-- **Security Audit** - Scan for secrets and vulnerabilities
-- **Concurrent Processing** - Parallel operations with progress tracking
+- **🚀 Batch Operations** - Push, commit, stage across all repositories simultaneously
+- **🔍 Subrepo Drift Detection** - Track and sync nested repos with automatic conflict detection
+- **📦 Package Publishing** - Publish to npm, Cargo, PyPI with visibility filtering
+- **⚙️ Config Sync** - Synchronize git user.name/email across all projects
+- **🔒 Security Auditing** - Scan for exposed secrets and credential leaks
+- **⚡ Concurrent Processing** - Parallel operations with configurable concurrency (CPU cores + 2)
 
-## Documentation
-
-### Getting Started
-- **[Getting Started](docs/getting_started.md)** - Quick 5-minute tutorial
-- **[Installation](docs/installation.md)** - Detailed setup guide
-
-### Guides
-- **[Commands Reference](docs/guides/commands.md)** - All commands and flags
-- **[Publishing Guide](docs/guides/publishing.md)** - Package publishing workflows
-- **[Security Auditing](docs/guides/security_auditing.md)** - Secret scanning and hygiene
-- **[Subrepo Management](docs/guides/subrepo_management.md)** - Drift detection and sync
-- **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
-
-### Reference
-- **[Glossary](docs/glossary.md)** - Terms, flags, and concepts
-- **[Architecture](docs/architecture.md)** - Technical design and patterns
-- **[Examples](docs/examples/README.md)** - CI/CD integration and scripts
-
-### Developer
-- **[Contributing](CONTRIBUTING.md)** - Development guide
-
-## Quick Install
+## 🚀 Quick Start
 
 ```bash
-chmod +x install.sh && ./install.sh
-```
+# Install
+./install.sh
 
-Or build from source:
-```bash
+# Or build from source
 cargo build --release
+
+# Basic workflow
+repos stage "*.md"           # Stage files by pattern
+repos commit "Update docs"   # Commit across all repos
+repos push                   # Push all + drift check
+
+# Publishing
+repos publish --dry-run      # Preview
+repos publish --tag          # Publish + git tags
 ```
 
-## Commands
+## 📖 Commands
 
-### Push
+### Push Operations
 
 ```bash
-repos push                      # Push all unpushed commits + check drift
-repos push --force              # Auto-push branches with no upstream
-repos push --no-drift-check     # Skip drift check for speed
+repos push                      # Push all + drift check
+repos push --force              # Auto-create upstream branches
+repos push --show-changes       # Display file changes
+repos push --jobs 4             # Limit concurrency
+repos push --sequential         # Serial execution (debug)
+repos push --no-drift-check     # Skip drift check
 ```
-
-**Integrated Health Check**: `repos push` automatically checks for subrepo drift after pushing, giving you a complete repository health report in one command.
 
 ### Staging & Commits
 
 ```bash
-repos status                    # Show staging status across all repos
-repos stage "*.md"              # Stage files matching pattern
-repos unstage "*.md"            # Unstage files
+repos status                    # Staging status across repos
+repos stage "*.md"              # Stage by pattern
+repos unstage "*"               # Unstage all
 repos commit "Message"          # Commit staged changes
-repos commit "Message" --include-empty  # Include repos with no changes
+repos commit "Fix" --include-empty  # Force empty commits
 ```
 
 ### Configuration
 
 ```bash
-repos config --name "Name" --email "you@example.com"
-repos config --from-global      # Copy from global git config
+repos config --name "Alice" --email "alice@example.com"
+repos config --from-global      # Copy from global config
 repos config --from-current     # Copy from current repo
 repos config --dry-run          # Preview changes
-repos config --force            # Skip prompts
 ```
 
 ### Publishing
@@ -81,71 +68,91 @@ repos config --force            # Skip prompts
 repos publish                   # Public repos only (default)
 repos publish my-app my-lib     # Specific repos
 repos publish --dry-run         # Preview
-repos publish --all             # All repos (public + private)
-repos publish --public-only     # Explicit public only
-repos publish --private-only    # Private only
 repos publish --tag             # Create git tags (v1.2.3)
-repos publish --allow-dirty     # Allow uncommitted changes
+repos publish --all             # Include private repos
+repos publish --allow-dirty     # Skip clean check
 ```
 
-See [docs/guides/publishing.md](docs/guides/publishing.md) for details.
-
-See [docs/guides/credentials_setup.md](docs/guides/credentials_setup.md) for credential setup.
+**Setup**: See [credentials_setup.md](docs/guides/credentials_setup.md) for npm/Cargo/PyPI authentication.
 
 ### Security Auditing
 
 ```bash
 repos audit                     # Scan for secrets
 repos audit --install-tools     # Auto-install TruffleHog
-repos audit --verify            # Verify secrets are active
+repos audit --verify            # Verify secrets are active (CI mode)
+repos audit --fix-gitignore     # Safe: add .gitignore entries
+repos audit --fix-secrets       # Destructive: rewrite history
+repos audit --interactive       # Choose fixes manually
 repos audit --json              # JSON output
-repos audit --interactive       # Choose fixes interactively
-repos audit --fix-gitignore     # Add .gitignore entries
-repos audit --fix-large         # Remove large files
-repos audit --fix-secrets       # Remove secrets from history
-repos audit --fix-all           # Apply all fixes
-repos audit --dry-run           # Preview fixes
-repos audit --repos repo1,repo2 # Specific repos only
 ```
 
 ### Subrepo Drift Detection
 
 ```bash
-repos subrepo validate          # Discover all nested repos
+repos subrepo validate          # Discover nested repos
 repos subrepo status            # Show drift (problem-first)
-repos subrepo status --all      # Show all subrepos
-repos subrepo sync <name> --to <commit> --stash  # Safe sync
-repos subrepo update <name>     # Update to origin/main
+repos subrepo status --all      # Include synced repos
+repos subrepo sync lib --to abc1234 --stash  # Safe sync with stash
+repos subrepo update lib        # Update to origin/main
 ```
 
-Detects nested repositories shared across multiple parents and provides
-smart suggestions to synchronize them. Uses `→` arrow to identify
-the recommended sync target (latest clean commit).
+**Features**: Smart sync target detection, safe stashing, visual indicators (✅ clean, ⚠️ uncommitted, → sync target).
 
-**Key features:**
-- Identifies drift across shared subrepos
-- Smart sync target detection (latest clean commit)
-- `--stash` flag for safe, reversible syncing
-- Visual indicators: ✅ clean, ⚠️ uncommitted, → (sync target), ⬆️ LATEST
-- Groups by remote URL to avoid false positives
-
-## How It Works
-
-- Recursively scans for `.git` directories in current tree
-- Excludes: `node_modules/`, `vendor/`, `target/`, `build/`, `dist/`
-- Parallel processing with controlled concurrency
-- 3-minute timeout per repository
-- Real-time progress bars
-
-## Development
+## ⚙️ Configuration
 
 ```bash
-cargo build
-cargo test
-cargo clippy
-cargo fmt
+# View current settings
+git config --list
+
+# Concurrency control
+repos push --jobs 8             # Explicit limit
+repos push --sequential         # Serial (1 at a time)
+# Default: CPU cores + 2, capped at 32
+
+# Verbose output
+repos push --verbose            # Detailed progress
+repos push -v                   # Short form
 ```
 
-## License
+## 📚 Documentation
+
+**Getting Started**
+- **[Installation](docs/installation.md)** - Setup and prerequisites
+- **[Getting Started](docs/getting_started.md)** - 5-minute tutorial with examples
+
+**Guides**
+- **[Commands Reference](docs/guides/commands.md)** - All commands, flags, and workflows
+- **[Publishing](docs/guides/publishing.md)** - Package publishing workflows
+- **[Security Auditing](docs/guides/security_auditing.md)** - Secret scanning and fixes
+- **[Subrepo Management](docs/guides/subrepo_management.md)** - Drift detection and sync
+- **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
+
+**Reference**
+- **[Glossary](docs/glossary.md)** - Terms, flags, and concepts
+- **[Architecture](docs/architecture.md)** - Concurrency model and design patterns
+- **[Examples](docs/examples/README.md)** - CI/CD templates and automation scripts
+
+**Developer**
+- **[Contributing](CONTRIBUTING.md)** - Development setup and guidelines
+
+## 🛠️ How It Works
+
+- Discovers `.git` directories recursively (excludes `node_modules/`, `vendor/`, `target/`, `build/`, `dist/`)
+- Processes repositories concurrently (default: CPU cores + 2, max 32)
+- Operations timeout after 3-5 minutes depending on type
+- Real-time progress bars with operation summaries
+
+## 🧪 Development
+
+```bash
+cargo build                     # Debug build
+cargo build --release           # Release build (optimized)
+cargo test                      # Run tests
+cargo clippy                    # Linting
+cargo fmt                       # Format code
+```
+
+## 📝 License
 
 MIT - see [LICENSE](LICENSE)
