@@ -301,6 +301,28 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
         _ => 0,
     };
 
+    // Check if local is behind remote (to detect diverged branches)
+    let behind_check = run_git(path, &["rev-list", "--count", "@{upstream}", "^HEAD"]).await;
+    let behind_count: u32 = match behind_check {
+        Ok((true, count_str, _)) => count_str.trim().parse().unwrap_or(0),
+        _ => 0,
+    };
+
+    // Branches have diverged - both ahead and behind
+    if ahead_count > 0 && behind_count > 0 {
+        return FetchResult {
+            has_uncommitted,
+            current_branch,
+            ahead_count,
+            upstream_exists: true,
+            status: Status::Error,
+            message: format!(
+                "diverged: {} ahead, {} behind (pull required before push)",
+                ahead_count, behind_count
+            ),
+        };
+    }
+
     if ahead_count == 0 {
         FetchResult {
             has_uncommitted,
@@ -335,12 +357,20 @@ pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push:
     // Handle no upstream case
     if !fetch_result.upstream_exists {
         if force_push {
-            let push_args = vec!["push", "-u", "origin", &fetch_result.current_branch];
+            // Detect the actual remote name instead of assuming "origin"
+            let remote_name = match run_git(path, GIT_REMOTE_ARGS).await {
+                Ok((true, remotes, _)) => {
+                    remotes.lines().next().unwrap_or("origin").to_string()
+                }
+                _ => "origin".to_string(), // Fallback to origin if detection fails
+            };
+
+            let push_args = vec!["push", "-u", &remote_name, &fetch_result.current_branch];
             match run_git(path, &push_args).await {
                 Ok((true, _, _)) => {
                     return (
                         Status::Pushed,
-                        "set upstream & pushed".to_string(),
+                        format!("set upstream ({}) & pushed", remote_name),
                         fetch_result.has_uncommitted,
                     );
                 }

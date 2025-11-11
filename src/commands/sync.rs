@@ -9,6 +9,7 @@ use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
     NO_REPOS_MESSAGE,
 };
+use crate::git::Status;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 
@@ -148,6 +149,21 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
                 Ok(permit) => permit,
                 Err(e) => {
                     eprintln!("Error: Failed to acquire fetch permit for {}: {}", repo_name, e);
+
+                    // Update statistics to track this failure
+                    let stats = acquire_stats_lock(&stats_clone);
+                    stats.update(
+                        &repo_name,
+                        &repo_path.to_string_lossy(),
+                        &Status::Error,
+                        &format!("semaphore error: {}", e),
+                        false,
+                    );
+
+                    // Finish progress bar
+                    if verbose_clone {
+                        progress_bar.finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                    }
                     return;
                 }
             };
@@ -159,6 +175,21 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
                 Ok(permit) => permit,
                 Err(e) => {
                     eprintln!("Error: Failed to acquire push permit for {}: {}", repo_name, e);
+
+                    // Update statistics to track this failure
+                    let stats = acquire_stats_lock(&stats_clone);
+                    stats.update(
+                        &repo_name,
+                        &repo_path.to_string_lossy(),
+                        &Status::Error,
+                        &format!("semaphore error: {}", e),
+                        false,
+                    );
+
+                    // Finish progress bar
+                    if verbose_clone {
+                        progress_bar.finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                    }
                     return;
                 }
             };
@@ -172,8 +203,8 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
 
                 // Check for rate limit error
                 if message.contains("⚠️ RATE LIMIT") {
-                    has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                    rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Release);
+                    rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Release);
 
                     if attempt < max_attempts {
                         // Wait briefly and retry
@@ -246,8 +277,8 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
     while pipeline_futures.next().await.is_some() {}
 
     // Show rate limit warning if detected
-    if has_rate_limit.load(std::sync::atomic::Ordering::Relaxed) {
-        let count = rate_limit_count.load(std::sync::atomic::Ordering::Relaxed);
+    if has_rate_limit.load(std::sync::atomic::Ordering::Acquire) {
+        let count = rate_limit_count.load(std::sync::atomic::Ordering::Acquire);
         eprintln!("\n⚠️  Rate limit detected on {} operation(s).", count);
         eprintln!("💡 Try reducing concurrency: repos push --jobs 3");
     }
@@ -416,6 +447,21 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
                 Ok(permit) => permit,
                 Err(e) => {
                     eprintln!("Error: Failed to acquire fetch permit for {}: {}", repo_name, e);
+
+                    // Update statistics to track this failure
+                    let stats = acquire_stats_lock(&stats_clone);
+                    stats.update(
+                        &repo_name,
+                        &repo_path.to_string_lossy(),
+                        &Status::Error,
+                        &format!("semaphore error: {}", e),
+                        false,
+                    );
+
+                    // Finish progress bar
+                    if verbose_clone {
+                        progress_bar.finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                    }
                     return;
                 }
             };
@@ -427,6 +473,21 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
                 Ok(permit) => permit,
                 Err(e) => {
                     eprintln!("Error: Failed to acquire pull permit for {}: {}", repo_name, e);
+
+                    // Update statistics to track this failure
+                    let stats = acquire_stats_lock(&stats_clone);
+                    stats.update(
+                        &repo_name,
+                        &repo_path.to_string_lossy(),
+                        &Status::Error,
+                        &format!("semaphore error: {}", e),
+                        false,
+                    );
+
+                    // Finish progress bar
+                    if verbose_clone {
+                        progress_bar.finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                    }
                     return;
                 }
             };
@@ -440,8 +501,8 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
 
                 // Check for rate limit error
                 if message.contains("⚠️ RATE LIMIT") {
-                    has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                    rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Release);
+                    rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Release);
 
                     if attempt < max_attempts {
                         // Wait briefly and retry
@@ -504,7 +565,7 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
                 use std::sync::atomic::Ordering;
                 let live_counters = format!(
                     "🔽 {} Pulled  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
-                    stats.total_commits_pushed.load(Ordering::Relaxed),
+                    total_commits_pulled_clone.load(Ordering::Relaxed),
                     stats.synced_repos.load(Ordering::Relaxed),
                     stats.error_repos.load(Ordering::Relaxed),
                     stats.no_upstream_repos.lock().unwrap().len(),
@@ -519,8 +580,8 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
     while pipeline_futures.next().await.is_some() {}
 
     // Show rate limit warning if detected
-    if has_rate_limit.load(std::sync::atomic::Ordering::Relaxed) {
-        let count = rate_limit_count.load(std::sync::atomic::Ordering::Relaxed);
+    if has_rate_limit.load(std::sync::atomic::Ordering::Acquire) {
+        let count = rate_limit_count.load(std::sync::atomic::Ordering::Acquire);
         eprintln!("\n⚠️  Rate limit detected on {} operation(s).", count);
         eprintln!("💡 Try reducing concurrency: repos pull --jobs 3");
     }
