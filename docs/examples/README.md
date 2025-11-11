@@ -2,6 +2,60 @@
 
 Practical templates for integrating `repos` into your workflows. Copy these templates as starting points for CI/CD pipelines, git hooks, and automation scripts.
 
+## Quick Recipes
+
+Common one-liners for everyday tasks:
+
+**Emergency: Found a leaked secret**
+```bash
+repos audit --verify                           # Confirm it's active
+repos audit --fix-secrets --fix-gitignore      # Remove from history
+cd affected-repo && git push --force-with-lease
+# Rotate the secret immediately via your provider
+```
+
+**Bulk documentation update**
+```bash
+repos stage "*.md" "*.txt"
+repos commit "docs: Update README files"
+repos push
+```
+
+**Sync config across all repos**
+```bash
+repos config --from-global --force             # No prompts
+```
+
+**Release and publish**
+```bash
+repos publish --dry-run                        # Preview first
+repos publish --tag --all                      # Publish + create tags
+repos push                                     # Push commits
+```
+
+**Fix diverged subrepo instances**
+```bash
+repos subrepo status                           # Show drift
+repos subrepo sync shared-lib --to abc1234 --stash
+```
+
+**Pre-push security check**
+```bash
+repos audit --verify && repos push             # Block push if secrets found
+```
+
+**Recovery: Undo last commit across repos**
+```bash
+# Manual per-repo operation (no repos command yet)
+for d in */; do (cd "$d" && git reset --soft HEAD~1); done
+```
+
+**Target specific repositories**
+```bash
+repos publish frontend backend --dry-run       # Only these repos
+repos audit --repos "api,web" --verify         # Comma-separated for audit
+```
+
 ## CI/CD Integration
 
 ### GitHub Actions

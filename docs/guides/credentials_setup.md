@@ -1,19 +1,10 @@
 # Publishing Credentials
 
-## Understanding Publishing Authentication
+## Setup
 
-When you publish packages to registries (npm, crates.io, PyPI), you need to prove you own the package. Modern registries use **token-based authentication** instead of passwords for security and convenience.
+Package registries use token-based authentication. `repos publish` uses your existing package manager credentials — configure them once via standard tools (npm login, cargo login, ~/.pypirc), and `repos` invokes the publish command automatically.
 
-**Why tokens over passwords?**
-- Tokens can be scoped to specific operations (publish only, no delete)
-- Easier to rotate if compromised
-- Can be revoked without changing your account password
-- Work better with CI/CD pipelines
-- More secure than storing passwords in plain text
-
-`repos publish` doesn't store credentials - it uses your existing package manager configurations. Configure credentials once using your package manager's standard tools, and `repos` will use them automatically.
-
-**Security model:** Credential files stay on your machine. `repos` never transmits them to third parties - it simply invokes the package manager's publish command, which handles authentication using your configured credentials.
+**Security model:** Credentials stay local. `repos` never transmits them; it delegates to the package manager.
 
 ---
 
