@@ -24,7 +24,7 @@ Common issues and solutions for the repos tool.
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| Config conflicts between repos | Different configs in nested repos | Use `repos config --local` for repo-specific settings |
+| Config conflicts between repos | Different configs in nested repos | Use `git config --local` directly in specific repos to set repo-specific values |
 | Email validation failures | Invalid email format | Use proper format: `user@example.com` |
 | `Permission denied` on `.git/config` | Read-only git config | Check file permissions: `chmod 644 .git/config` |
 | Config not applied | Wrong config scope | Verify with `git config --list --show-scope` |
@@ -69,8 +69,8 @@ Common issues and solutions for the repos tool.
 
 ### Enable Verbose Output
 ```bash
-repos <command> --verbose  # Show detailed operation logs
-repos status -v            # Short form for verbose
+repos push --verbose       # Show detailed operation logs
+repos push -v              # Short form for verbose
 ```
 
 ### Check Git State Manually
