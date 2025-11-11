@@ -1,11 +1,11 @@
 //! Basic git operations and command execution
 
 use anyhow::Result;
+use dashmap::DashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::process::Command;
-use std::collections::HashMap;
-use std::sync::Mutex;
 
 use super::status::Status;
 
@@ -324,12 +324,12 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
 
 /// Phase 2: Push repository if needed (write operation, moderate concurrency)
 /// Returns (status, message, has_uncommitted_changes)
-pub async fn push_if_needed(path: &Path, fetch_result: FetchResult, force_push: bool) -> (Status, String, bool) {
+pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push: bool) -> (Status, String, bool) {
     use crate::core::clean_error_message;
 
     // If already synced or has errors, return immediately
     if fetch_result.status != Status::Synced && fetch_result.status != Status::NoUpstream {
-        return (fetch_result.status, fetch_result.message, fetch_result.has_uncommitted);
+        return (fetch_result.status, fetch_result.message.clone(), fetch_result.has_uncommitted);
     }
 
     // Handle no upstream case
@@ -503,6 +503,223 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
     }
 }
 
+/// Result of the fetch phase for pull operation
+#[derive(Clone)]
+pub struct PullFetchResult {
+    pub has_uncommitted: bool,
+    pub behind_count: u32,
+    pub status: Status,
+    pub message: String,
+}
+
+/// Phase 1: Fetch and analyze repository state for pull (read-only, can be highly concurrent)
+/// Returns PullFetchResult with repository state after fetching
+pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
+    use crate::core::clean_error_message;
+
+    // Refresh the index to ensure accurate diff-index results
+    let _ = run_git(path, &["update-index", "--refresh"]).await;
+
+    // Check if directory has uncommitted changes
+    let has_uncommitted = match run_git(path, GIT_DIFF_INDEX_ARGS).await {
+        Ok((false, _, _)) => true,
+        Ok((true, _, _)) => false,
+        Err(_) => false,
+    };
+
+    // Get list of remotes
+    let remotes = match run_git(path, GIT_REMOTE_ARGS).await {
+        Ok((true, output, _)) => output,
+        Ok((false, _, _)) | Err(_) => {
+            return PullFetchResult {
+                has_uncommitted,
+                behind_count: 0,
+                status: Status::NoRemote,
+                message: STATUS_NO_REMOTE.to_string(),
+            };
+        }
+    };
+
+    if remotes.trim().is_empty() {
+        return PullFetchResult {
+            has_uncommitted,
+            behind_count: 0,
+            status: Status::NoRemote,
+            message: STATUS_NO_REMOTE.to_string(),
+        };
+    }
+
+    // Get current branch
+    let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
+        Ok((true, branch, _)) => branch,
+        Ok((false, _, _)) | Err(_) => {
+            return PullFetchResult {
+                has_uncommitted,
+                behind_count: 0,
+                status: Status::Skip,
+                message: STATUS_DETACHED_HEAD.to_string(),
+            };
+        }
+    };
+
+    // Skip if in detached HEAD state
+    if current_branch == DETACHED_HEAD_BRANCH {
+        return PullFetchResult {
+            has_uncommitted,
+            behind_count: 0,
+            status: Status::Skip,
+            message: STATUS_DETACHED_HEAD.to_string(),
+        };
+    }
+
+    // Fetch latest changes to ensure we have up-to-date refs
+    if let Err(e) = run_git(path, GIT_FETCH_ARGS).await {
+        let error_message = clean_error_message(&e.to_string());
+        let final_message = if is_rate_limit_error(&error_message) {
+            format!("⚠️ RATE LIMIT: {}", error_message)
+        } else {
+            error_message
+        };
+        return PullFetchResult {
+            has_uncommitted,
+            behind_count: 0,
+            status: Status::Error,
+            message: final_message,
+        };
+    }
+
+    // Check if current branch has an upstream
+    let upstream_check = run_git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await;
+    let upstream_exists = upstream_check.as_ref().is_ok_and(|result| result.0);
+
+    if !upstream_exists {
+        return PullFetchResult {
+            has_uncommitted,
+            behind_count: 0,
+            status: Status::NoUpstream,
+            message: STATUS_NO_UPSTREAM.to_string(),
+        };
+    }
+
+    // Check if local is behind remote
+    let behind_check = run_git(path, &["rev-list", "--count", "@{upstream}", "^HEAD"]).await;
+    let behind_count: u32 = match behind_check {
+        Ok((true, count_str, _)) => count_str.trim().parse().unwrap_or(0),
+        _ => 0,
+    };
+
+    // Check if local is ahead of remote (to detect diverged branches)
+    let ahead_check = run_git(path, &["rev-list", "--count", "HEAD", "^@{upstream}"]).await;
+    let ahead_count: u32 = match ahead_check {
+        Ok((true, count_str, _)) => count_str.trim().parse().unwrap_or(0),
+        _ => 0,
+    };
+
+    // Branches have diverged - both ahead and behind
+    if ahead_count > 0 && behind_count > 0 {
+        return PullFetchResult {
+            has_uncommitted,
+            behind_count,
+            status: Status::PullError,
+            message: format!(
+                "diverged: {} ahead, {} behind (manual merge required)",
+                ahead_count, behind_count
+            ),
+        };
+    }
+
+    if behind_count == 0 {
+        PullFetchResult {
+            has_uncommitted,
+            behind_count: 0,
+            status: Status::Synced,
+            message: STATUS_SYNCED.to_string(),
+        }
+    } else {
+        PullFetchResult {
+            has_uncommitted,
+            behind_count,
+            status: Status::Synced, // Will be pulled in phase 2
+            message: format!("{} commits behind", behind_count),
+        }
+    }
+}
+
+/// Phase 2: Pull repository if needed (write operation, moderate concurrency)
+/// Returns (status, message, has_uncommitted_changes)
+pub async fn pull_if_needed(
+    path: &Path,
+    fetch_result: &PullFetchResult,
+    use_rebase: bool,
+) -> (Status, String, bool) {
+    use crate::core::clean_error_message;
+
+    // If already synced or has errors, return immediately
+    if fetch_result.status != Status::Synced {
+        return (
+            fetch_result.status,
+            fetch_result.message.clone(),
+            fetch_result.has_uncommitted,
+        );
+    }
+
+    // If no commits behind, already synced
+    if fetch_result.behind_count == 0 {
+        return (
+            Status::Synced,
+            STATUS_SYNCED.to_string(),
+            fetch_result.has_uncommitted,
+        );
+    }
+
+    // Pull changes with appropriate strategy
+    let pull_args = if use_rebase {
+        // Use --autostash to safely stash uncommitted changes during rebase
+        vec!["pull", "--rebase", "--autostash"]
+    } else {
+        vec!["pull", "--ff-only"]
+    };
+
+    match run_git(path, &pull_args).await {
+        Ok((true, _, _)) => {
+            let commits_word = if fetch_result.behind_count == 1 {
+                "commit"
+            } else {
+                "commits"
+            };
+            (
+                Status::Pulled,
+                format!("{} {} pulled", fetch_result.behind_count, commits_word),
+                fetch_result.has_uncommitted,
+            )
+        }
+        Ok((false, _, stderr)) => {
+            let error_message = clean_error_message(&stderr);
+
+            // Check for common pull errors
+            let final_message = if error_message.to_lowercase().contains("conflict") {
+                format!("merge conflict: {}", error_message)
+            } else if error_message.to_lowercase().contains("would be overwritten") {
+                format!("uncommitted changes conflict: {}", error_message)
+            } else if is_rate_limit_error(&error_message) {
+                format!("⚠️ RATE LIMIT: {}", error_message)
+            } else {
+                error_message
+            };
+            (Status::PullError, final_message, fetch_result.has_uncommitted)
+        }
+        Err(e) => {
+            let error_message = clean_error_message(&e.to_string());
+            let final_message = if is_rate_limit_error(&error_message) {
+                format!("⚠️ RATE LIMIT: {}", error_message)
+            } else {
+                error_message
+            };
+            (Status::PullError, final_message, fetch_result.has_uncommitted)
+        }
+    }
+}
+
 /// Repository visibility status
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RepoVisibility {
@@ -512,43 +729,32 @@ pub enum RepoVisibility {
 }
 
 // In-memory cache for repository visibility to avoid repeated gh CLI calls
+// Using DashMap for lock-free concurrent access
 // Cache is cleared when the program exits
-static VISIBILITY_CACHE: Mutex<Option<HashMap<PathBuf, RepoVisibility>>> = Mutex::new(None);
+static VISIBILITY_CACHE: OnceLock<DashMap<PathBuf, RepoVisibility>> = OnceLock::new();
 
 /// Gets or initializes the visibility cache
-fn get_visibility_cache() -> std::sync::MutexGuard<'static, Option<HashMap<PathBuf, RepoVisibility>>> {
-    VISIBILITY_CACHE.lock().unwrap()
+fn get_visibility_cache() -> &'static DashMap<PathBuf, RepoVisibility> {
+    VISIBILITY_CACHE.get_or_init(|| DashMap::new())
 }
 
 /// Detects repository visibility using gh CLI with in-memory caching
 /// Returns RepoVisibility (defaults to Unknown if gh is not available or repo is not on GitHub)
 /// Results are cached in-memory for the lifetime of the program to avoid repeated gh CLI calls
 pub async fn get_repo_visibility(path: &Path) -> RepoVisibility {
-    // Check cache first
     let path_buf = path.to_path_buf();
-    {
-        let mut cache = get_visibility_cache();
-        if cache.is_none() {
-            *cache = Some(HashMap::new());
-        }
+    let cache = get_visibility_cache();
 
-        if let Some(ref cache_map) = *cache {
-            if let Some(&visibility) = cache_map.get(&path_buf) {
-                return visibility;
-            }
-        }
+    // Check cache first - lock-free read
+    if let Some(visibility) = cache.get(&path_buf) {
+        return *visibility;
     }
 
-    // Not in cache, perform the check
+    // Not in cache, perform the expensive check
     let visibility = get_repo_visibility_uncached(path).await;
 
-    // Store in cache
-    {
-        let mut cache = get_visibility_cache();
-        if let Some(ref mut cache_map) = *cache {
-            cache_map.insert(path_buf, visibility);
-        }
-    }
+    // Store in cache - lock-free insert
+    cache.insert(path_buf, visibility);
 
     visibility
 }

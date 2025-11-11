@@ -229,7 +229,7 @@ async fn process_staging_repositories(
             progress_bar.finish();
 
             // Update statistics based on operation result
-            let mut stats_guard = acquire_stats_lock(&stats_clone);
+            let stats_guard = acquire_stats_lock(&stats_clone);
             let repo_path_str = repo_path.to_string_lossy();
             stats_guard.update(
                 &repo_name,
@@ -471,7 +471,7 @@ async fn process_commit_repositories(
             progress_bar.finish();
 
             // Update statistics based on operation result
-            let mut stats_guard = acquire_stats_lock(&stats_clone);
+            let stats_guard = acquire_stats_lock(&stats_clone);
             let repo_path_str = repo_path.to_string_lossy();
             stats_guard.update(
                 &repo_name,

@@ -1,7 +1,7 @@
 //! Git status enumeration and utilities
 
 /// Status enum representing the result of git operations
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Status {
     /// Repository is already up to date with remote
     Synced,
@@ -35,6 +35,10 @@ pub enum Status {
     Committed,
     /// Commit operation failed
     CommitError,
+    /// Successfully pulled commits from remote
+    Pulled,
+    /// Pull failed due to conflicts or other errors
+    PullError,
 }
 
 impl Status {
@@ -47,10 +51,11 @@ impl Status {
             | Status::ConfigUpdated
             | Status::Staged
             | Status::Unstaged
-            | Status::Committed => "🟢",
+            | Status::Committed
+            | Status::Pulled => "🟢",
             Status::Skip | Status::NoRemote | Status::ConfigSkipped | Status::NoChanges => "🟠",
             Status::NoUpstream => "🟡",
-            Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError => {
+            Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError => {
                 "🔴"
             }
         }
@@ -75,6 +80,8 @@ impl Status {
             Status::NoChanges => "no-changes",
             Status::Committed => "committed",
             Status::CommitError => "failed",
+            Status::Pulled => "pulled",
+            Status::PullError => "pull-failed",
         }
     }
 }

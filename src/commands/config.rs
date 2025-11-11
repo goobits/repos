@@ -369,7 +369,7 @@ async fn process_config_repositories(
             progress_bar.finish();
 
             // Update statistics
-            let mut stats_guard = acquire_stats_lock(&stats_clone);
+            let stats_guard = acquire_stats_lock(&stats_clone);
             let repo_path_str = repo_path.to_string_lossy();
             stats_guard.update(&repo_name, &repo_path_str, &status, &message, false);
 

@@ -28,6 +28,8 @@ pub struct ProcessingContext {
     pub statistics: Arc<Mutex<SyncStatistics>>,
     /// Semaphore for controlling concurrent operations
     pub semaphore: Arc<tokio::sync::Semaphore>,
+    /// Maximum configured concurrency level
+    pub max_concurrency: usize,
     /// Total number of repositories being processed
     pub total_repos: usize,
     /// Start time for duration calculations
@@ -81,6 +83,7 @@ pub fn create_processing_context(
         progress_style,
         statistics,
         semaphore,
+        max_concurrency: concurrent_limit,
         total_repos,
         start_time,
     })

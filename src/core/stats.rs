@@ -5,31 +5,48 @@ use crate::core::config::{
     TIMEOUT_SECONDS_DISPLAY,
 };
 use crate::git::Status;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// Statistics for tracking repository synchronization results
-#[derive(Clone, Default, Debug)]
+///
+/// Uses atomic counters for lock-free reads and writes of simple counters,
+/// while complex data structures (vectors) remain behind a Mutex.
+#[derive(Debug)]
 pub struct SyncStatistics {
-    pub synced_repos: u32,
-    pub total_commits_pushed: u32,
-    pub skipped_repos: u32,
-    pub error_repos: u32,
-    pub uncommitted_count: u32,
-    pub failed_repos: Vec<(String, String, String)>, // (repo_name, repo_path, error_message)
-    pub no_upstream_repos: Vec<(String, String)>,    // (repo_name, repo_path)
-    pub no_remote_repos: Vec<(String, String)>,      // (repo_name, repo_path)
-    pub uncommitted_repos: Vec<(String, String)>,    // (repo_name, repo_path)
+    // Atomic counters for lock-free access
+    pub synced_repos: AtomicU64,
+    pub total_commits_pushed: AtomicU64,
+    pub skipped_repos: AtomicU64,
+    pub error_repos: AtomicU64,
+    pub uncommitted_count: AtomicU64,
+    // Complex data behind mutex
+    pub failed_repos: Mutex<Vec<(String, String, String)>>, // (repo_name, repo_path, error_message)
+    pub no_upstream_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
+    pub no_remote_repos: Mutex<Vec<(String, String)>>,      // (repo_name, repo_path)
+    pub uncommitted_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
 }
 
 impl SyncStatistics {
     /// Creates a new statistics tracker with all counters initialized to zero
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            synced_repos: AtomicU64::new(0),
+            total_commits_pushed: AtomicU64::new(0),
+            skipped_repos: AtomicU64::new(0),
+            error_repos: AtomicU64::new(0),
+            uncommitted_count: AtomicU64::new(0),
+            failed_repos: Mutex::new(Vec::new()),
+            no_upstream_repos: Mutex::new(Vec::new()),
+            no_remote_repos: Mutex::new(Vec::new()),
+            uncommitted_repos: Mutex::new(Vec::new()),
+        }
     }
 
     /// Updates statistics based on the synchronization result
     pub fn update(
-        &mut self,
+        &self,
         repo_name: &str,
         repo_path: &str,
         status: &Status,
@@ -38,15 +55,27 @@ impl SyncStatistics {
     ) {
         match status {
             Status::Pushed => {
-                self.synced_repos += 1;
+                self.synced_repos.fetch_add(1, Ordering::Relaxed);
                 // Extract number of commits from message (e.g., "3 commits pushed")
                 if let Ok(commits) = message
                     .split_whitespace()
                     .next()
                     .unwrap_or("0")
-                    .parse::<u32>()
+                    .parse::<u64>()
                 {
-                    self.total_commits_pushed += commits;
+                    self.total_commits_pushed.fetch_add(commits, Ordering::Relaxed);
+                }
+            }
+            Status::Pulled => {
+                self.synced_repos.fetch_add(1, Ordering::Relaxed);
+                // Extract number of commits from message (e.g., "3 commits pulled")
+                if let Ok(commits) = message
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("0")
+                    .parse::<u64>()
+                {
+                    self.total_commits_pushed.fetch_add(commits, Ordering::Relaxed);
                 }
             }
             Status::Synced
@@ -54,25 +83,36 @@ impl SyncStatistics {
             | Status::ConfigUpdated
             | Status::Staged
             | Status::Unstaged
-            | Status::Committed => self.synced_repos += 1,
-            Status::Skip | Status::ConfigSkipped | Status::NoChanges => self.skipped_repos += 1,
+            | Status::Committed => {
+                self.synced_repos.fetch_add(1, Ordering::Relaxed);
+            }
+            Status::Skip | Status::ConfigSkipped | Status::NoChanges => {
+                self.skipped_repos.fetch_add(1, Ordering::Relaxed);
+            }
             Status::NoUpstream => {
-                self.skipped_repos += 1;
+                self.skipped_repos.fetch_add(1, Ordering::Relaxed);
                 self.no_upstream_repos
+                    .lock()
+                    .unwrap()
                     .push((repo_name.to_string(), repo_path.to_string()));
             }
             Status::NoRemote => {
-                self.skipped_repos += 1;
+                self.skipped_repos.fetch_add(1, Ordering::Relaxed);
                 self.no_remote_repos
+                    .lock()
+                    .unwrap()
                     .push((repo_name.to_string(), repo_path.to_string()));
             }
-            Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError => {
-                self.error_repos += 1;
-                self.failed_repos.push((
-                    repo_name.to_string(),
-                    repo_path.to_string(),
-                    message.to_string(),
-                ));
+            Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError => {
+                self.error_repos.fetch_add(1, Ordering::Relaxed);
+                self.failed_repos
+                    .lock()
+                    .unwrap()
+                    .push((
+                        repo_name.to_string(),
+                        repo_path.to_string(),
+                        message.to_string(),
+                    ));
             }
         }
 
@@ -80,16 +120,14 @@ impl SyncStatistics {
         if has_uncommitted
             && !matches!(
                 status,
-                Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError
+                Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError
             )
-            && !self
-                .uncommitted_repos
-                .iter()
-                .any(|(name, _)| name == repo_name)
         {
-            self.uncommitted_count += 1;
-            self.uncommitted_repos
-                .push((repo_name.to_string(), repo_path.to_string()));
+            let mut uncommitted = self.uncommitted_repos.lock().unwrap();
+            if !uncommitted.iter().any(|(name, _)| name == repo_name) {
+                self.uncommitted_count.fetch_add(1, Ordering::Relaxed);
+                uncommitted.push((repo_name.to_string(), repo_path.to_string()));
+            }
         }
     }
 
@@ -97,18 +135,23 @@ impl SyncStatistics {
     pub fn generate_summary(&self, _total_repos: usize, duration: Duration) -> String {
         let duration_secs = duration.as_secs_f64();
 
+        // Load atomic values
+        let synced = self.synced_repos.load(Ordering::Relaxed);
+        let pushed = self.total_commits_pushed.load(Ordering::Relaxed);
+        let errors = self.error_repos.load(Ordering::Relaxed);
+
         let mut summary = String::new();
 
         // Main summary line
-        if self.error_repos > 0 {
+        if errors > 0 {
             summary.push_str(&format!(
                 "✅ Completed in {:.1}s • {} synced • {} pushed • {} failed",
-                duration_secs, self.synced_repos, self.total_commits_pushed, self.error_repos
+                duration_secs, synced, pushed, errors
             ));
         } else {
             summary.push_str(&format!(
                 "✅ Completed in {:.1}s • {} synced • {} pushed",
-                duration_secs, self.synced_repos, self.total_commits_pushed
+                duration_secs, synced, pushed
             ));
         }
 
@@ -119,11 +162,17 @@ impl SyncStatistics {
     pub fn generate_detailed_summary(&self, show_changes: bool) -> String {
         let mut lines = Vec::new();
 
+        // Lock all vectors once at the beginning
+        let failed_repos = self.failed_repos.lock().unwrap();
+        let no_upstream_repos = self.no_upstream_repos.lock().unwrap();
+        let no_remote_repos = self.no_remote_repos.lock().unwrap();
+        let uncommitted_repos = self.uncommitted_repos.lock().unwrap();
+
         // Failed repos get priority
-        if !self.failed_repos.is_empty() {
-            lines.push(format!("🔴 FAILED REPOS ({})", self.failed_repos.len()));
-            for (i, (repo_name, repo_path, error)) in self.failed_repos.iter().enumerate() {
-                let tree_char = if i == self.failed_repos.len() - 1 {
+        if !failed_repos.is_empty() {
+            lines.push(format!("🔴 FAILED REPOS ({})", failed_repos.len()));
+            for (i, (repo_name, repo_path, error)) in failed_repos.iter().enumerate() {
+                let tree_char = if i == failed_repos.len() - 1 {
                     "└─"
                 } else {
                     "├─"
@@ -138,13 +187,13 @@ impl SyncStatistics {
         }
 
         // No upstream repos
-        if !self.no_upstream_repos.is_empty() {
+        if !no_upstream_repos.is_empty() {
             lines.push(format!(
                 "🟡 NEEDS UPSTREAM ({})",
-                self.no_upstream_repos.len()
+                no_upstream_repos.len()
             ));
-            for (i, (repo_name, repo_path)) in self.no_upstream_repos.iter().enumerate() {
-                let tree_char = if i == self.no_upstream_repos.len() - 1 {
+            for (i, (repo_name, repo_path)) in no_upstream_repos.iter().enumerate() {
+                let tree_char = if i == no_upstream_repos.len() - 1 {
                     "└─"
                 } else {
                     "├─"
@@ -159,13 +208,13 @@ impl SyncStatistics {
         }
 
         // Uncommitted changes
-        if !self.uncommitted_repos.is_empty() {
+        if !uncommitted_repos.is_empty() {
             lines.push(format!(
                 "⚠️  UNCOMMITTED CHANGES ({})",
-                self.uncommitted_repos.len()
+                uncommitted_repos.len()
             ));
-            for (i, (repo_name, repo_path)) in self.uncommitted_repos.iter().enumerate() {
-                let tree_char = if i == self.uncommitted_repos.len() - 1 {
+            for (i, (repo_name, repo_path)) in uncommitted_repos.iter().enumerate() {
+                let tree_char = if i == uncommitted_repos.len() - 1 {
                     "└─"
                 } else {
                     "├─"
@@ -179,7 +228,7 @@ impl SyncStatistics {
                     // Get and display file changes
                     if let Ok(changes) = get_repo_changes(repo_path) {
                         if !changes.is_empty() {
-                            let is_last_repo = i == self.uncommitted_repos.len() - 1;
+                            let is_last_repo = i == uncommitted_repos.len() - 1;
                             for (file_idx, change) in changes.iter().enumerate() {
                                 let is_last_file = file_idx == changes.len() - 1;
                                 let prefix = if is_last_repo {
@@ -197,13 +246,13 @@ impl SyncStatistics {
         }
 
         // No remote repos
-        if !self.no_remote_repos.is_empty() {
+        if !no_remote_repos.is_empty() {
             lines.push(format!(
                 "🔧 MISSING REMOTES ({})",
-                self.no_remote_repos.len()
+                no_remote_repos.len()
             ));
-            for (i, (repo_name, repo_path)) in self.no_remote_repos.iter().enumerate() {
-                let tree_char = if i == self.no_remote_repos.len() - 1 {
+            for (i, (repo_name, repo_path)) in no_remote_repos.iter().enumerate() {
+                let tree_char = if i == no_remote_repos.len() - 1 {
                     "└─"
                 } else {
                     "├─"

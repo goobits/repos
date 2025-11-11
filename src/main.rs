@@ -22,7 +22,7 @@ use commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
     handle_unstage_command,
 };
-use commands::sync::handle_push_command;
+use commands::sync::{handle_pull_command, handle_push_command};
 use git::ConfigArgs;
 
 #[derive(Subcommand, Clone)]
@@ -32,6 +32,27 @@ enum Commands {
         /// Automatically push branches with no upstream tracking
         #[arg(long)]
         force: bool,
+        /// Show detailed progress for all repositories
+        #[arg(long, short)]
+        verbose: bool,
+        /// Show file changes in repos with uncommitted changes
+        #[arg(long, short = 'c')]
+        show_changes: bool,
+        /// Skip subrepo drift check (faster but less complete health check)
+        #[arg(long)]
+        no_drift_check: bool,
+        /// Number of concurrent operations (default: CPU cores + 2, capped at 12)
+        #[arg(long, short = 'j', conflicts_with = "sequential")]
+        jobs: Option<usize>,
+        /// Run one operation at a time (useful for debugging or very slow connections)
+        #[arg(long)]
+        sequential: bool,
+    },
+    /// Pull changes from remotes across all repositories
+    Pull {
+        /// Use rebase instead of merge (git pull --rebase)
+        #[arg(long)]
+        rebase: bool,
         /// Show detailed progress for all repositories
         #[arg(long, short)]
         verbose: bool,
@@ -233,6 +254,9 @@ async fn main() -> Result<()> {
         Some(Commands::Push { force, verbose, show_changes, no_drift_check, jobs, sequential }) => {
             let force_push = *force || cli.force;
             handle_push_command(force_push, *verbose, *show_changes, *no_drift_check, *jobs, *sequential).await
+        }
+        Some(Commands::Pull { rebase, verbose, show_changes, no_drift_check, jobs, sequential }) => {
+            handle_pull_command(*rebase, *verbose, *show_changes, *no_drift_check, *jobs, *sequential).await
         }
         Some(Commands::Stage { pattern }) => handle_stage_command(pattern.clone()).await,
         Some(Commands::Unstage { pattern }) => handle_unstage_command(pattern.clone()).await,
