@@ -1,47 +1,25 @@
-version: "2.0"
+version: '2.0'
 provider: docker
-os: auto
 project:
   hostname: dev.repos.local
   name: repos
   workspace_path: /workspace
 vm:
+  box: '@vibe-base'
   cpus: 6
   gui: false
   memory: 8192
-  port_binding: 0.0.0.0
-  timezone: America/Los_Angeles
+  port_binding: 127.0.0.1
+  swap: 2048
+  swappiness: 60
+  timezone: auto
   user: developer
-versions:
-  node: '22'
-  python: '3.11'
 ports:
-  _range: [3070, 3079]
-apt_packages:
-  - tree
-  - ripgrep
-  - unzip
-  - htop
-pip_packages:
-  - claudeflow
+  _range: [3080, 3089]
 terminal:
   emoji: 🚀
   show_git_branch: true
   show_timestamp: false
   theme: dracula
   username: repos-dev
-aliases:
-  claudeyolo: claude --dangerously-skip-permissions
-  codexyolo: codex --dangerously-bypass-approvals-and-sandbox
-  geminiyolo: GEMINI_API_KEY=${GEMINI_API_KEY:-} gemini --approval-mode=yolo
-host_sync:
-  git_config: true
-  ai_tools: true
-networking:
-  networks:
-  - jules
-  - spacebase
-npm_packages:
-  - '@anthropic-ai/claude-code'
-  - '@google/gemini-cli'
-  - '@openai/codex'
+preset: vibe
