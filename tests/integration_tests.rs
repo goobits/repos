@@ -183,6 +183,13 @@ async fn test_staging_with_patterns() {
         .output()
         .expect("Failed to set git user email");
 
+    // Disable commit signing for tests
+    std::process::Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to disable commit signing");
+
     // Create test files
     fs::write(repo_path.join("test1.md"), "# Test 1").expect("Failed to write test1.md");
     fs::write(repo_path.join("test2.md"), "# Test 2").expect("Failed to write test2.md");
@@ -311,6 +318,13 @@ async fn test_error_scenarios() {
         .current_dir(repo_path)
         .output()
         .expect("Failed to set git user email");
+
+    // Disable commit signing for tests
+    std::process::Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to disable commit signing");
 
     // Test staging non-existent file - should fail gracefully
     let stage_result = stage_files(repo_path, "nonexistent.txt").await;
@@ -481,6 +495,13 @@ async fn test_has_uncommitted_changes() {
         .output()
         .expect("Failed to set git user email");
 
+    // Disable commit signing for tests
+    std::process::Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to disable commit signing");
+
     // Create and commit a file
     let test_file = repo_path.join("test.txt");
     fs::write(&test_file, "initial content").expect("Failed to write test file");
@@ -563,6 +584,13 @@ async fn test_create_and_push_tag() {
         .current_dir(repo_path)
         .output()
         .expect("Failed to set git user email");
+
+    // Disable commit signing for tests
+    std::process::Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to disable commit signing");
 
     // Create and commit a file (need at least one commit to tag)
     let test_file = repo_path.join("test.txt");

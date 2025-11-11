@@ -14,6 +14,8 @@ pub use super::stats::SyncStatistics;
 
 // Discovery
 pub use super::discovery::init_command;
+#[allow(unused_imports)] // Used by integration tests
+pub use super::discovery::find_repos_from_path;
 
 // Configuration
 pub use super::config::GIT_CONCURRENT_CAP;

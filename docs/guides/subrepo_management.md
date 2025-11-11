@@ -22,13 +22,13 @@ Detect and synchronize nested repositories (subrepos) shared across multiple par
 
 Subrepos are nested Git repositories within parent repos - directories containing their own `.git` folders. When the same subrepo (identified by remote URL) appears in multiple parent repos, it can drift to different commits, creating synchronization problems.
 
-**Automatic Drift Detection**: `repos push` automatically checks for subrepo drift after pushing, displaying a concise summary if drift is found. For detailed analysis, use `repos subrepo status`.
+**Built-in drift detection:** `repos push` automatically checks for drift after pushing and displays a concise summary. For detailed analysis and sync tools, use the commands below.
 
 ## Key Concepts
 
 ### Drift Detection
 
-**Drift** occurs when the same subrepo is at different commits across parent repositories. The tool:
+**Drift** occurs when the same subrepo is at different commits across parent repositories. Detection features:
 
 - Groups subrepos by **remote URL** (not name) to avoid false positives
 - Calculates a **sync score** (0-100%) showing synchronization level
@@ -56,7 +56,7 @@ The tool automatically selects a **SYNC TARGET** using this logic:
 1. **Find latest clean commit** - Newest commit without uncommitted changes
 2. **Use commit timestamps** - Compares actual commit dates, not checkout order
 3. **Prefer clean over latest** - A slightly older clean commit beats the newest dirty one
-4. **Mark separately** - Shows both 🎯 SYNC TARGET (recommended) and ⬆️ LATEST (absolute newest)
+4. **Mark separately** - Shows both → (recommended sync target) and ⬆️ LATEST (absolute newest)
 
 This ensures sync suggestions are safe and reversible.
 
@@ -72,7 +72,7 @@ graph TD
     H --> I{Has Uncommitted?}
     I -->|Yes| J[Find Latest Clean Commit]
     I -->|No| K[Mark Latest as Target]
-    J --> L[Mark as 🎯 SYNC TARGET]
+    J --> L[Mark with → arrow]
     K --> L
     L --> M[Suggest Sync Command]
 ```

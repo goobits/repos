@@ -1,8 +1,16 @@
 # Publishing Credentials
 
-`repos publish` uses your existing package manager credentials to authenticate with registries. Configure credentials for each package manager you use.
+## Setup
 
-## NPM
+Package registries use token-based authentication. `repos publish` uses your existing package manager credentials — configure them once via standard tools (npm login, cargo login, ~/.pypirc), and `repos` invokes the publish command automatically.
+
+**Security model:** Credentials stay local. `repos` never transmits them; it delegates to the package manager.
+
+---
+
+## Setup by Package Manager
+
+### NPM
 
 ```bash
 npm login                           # Interactive
@@ -12,17 +20,21 @@ npm config set //registry.npmjs.org/:_authToken npm_YOUR_TOKEN
 npm whoami                          # Verify
 ```
 
-**Tokens:** https://www.npmjs.com/settings/YOUR_USERNAME/tokens
+**Get tokens:** https://www.npmjs.com/settings/YOUR_USERNAME/tokens
 
-## Cargo
+The token is stored in `~/.npmrc` and used automatically by npm and repos.
+
+### Cargo
 
 ```bash
 cargo login YOUR_TOKEN              # Sets ~/.cargo/credentials.toml
 ```
 
-**Tokens:** https://crates.io/settings/tokens
+**Get tokens:** https://crates.io/settings/tokens
 
-## Python (PyPI)
+Credentials are stored in `~/.cargo/credentials.toml`.
+
+### Python (PyPI)
 
 ```bash
 # Edit ~/.pypirc

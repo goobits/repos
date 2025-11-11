@@ -1,6 +1,6 @@
 # Getting Started
 
-Batch Git operations across multiple repositories. Stage, commit, push, and manage configs in one command instead of manually visiting each repo.
+Batch Git operations across multiple repositories. Instead of manually visiting each repo to run the same git commands, run one `repos` command across all repositories simultaneously.
 
 ## Installation
 
@@ -13,7 +13,7 @@ Batch Git operations across multiple repositories. Stage, commit, push, and mana
 Run `repos` in a directory to discover and operate on all Git repositories:
 
 ```bash
-repos
+repos                           # Discover repos
 ```
 
 Output:
@@ -29,7 +29,7 @@ Output:
 ### Push All Repos
 
 ```bash
-repos push
+repos push                      # Push + drift check
 ```
 
 Output:
@@ -48,14 +48,14 @@ auth: 2 instances at different commits
 ### Stage Files Across Repos
 
 ```bash
-repos stage "*.md"      # Stage markdown files
-repos stage "README.md" # Stage specific file
+repos stage "*.md"              # Stage markdown files
+repos stage "README.md"         # Stage specific file
 ```
 
 ### Commit Changes
 
 ```bash
-repos commit "Update docs"
+repos commit "Update docs"      # Commit staged changes
 ```
 
 Output:
@@ -66,8 +66,8 @@ Output:
 ### Sync Git Config
 
 ```bash
-repos config --from-global              # Copy from global config
-repos config --name "Alice" --email "alice@example.com"
+repos config --from-global      # Copy from global config
+repos config --name "Alice" --email "alice@example.com"  # Set directly
 ```
 
 ## Common Workflows
@@ -77,9 +77,9 @@ repos config --name "Alice" --email "alice@example.com"
 Stage, commit, and push across all repos:
 
 ```bash
-repos stage "*"
-repos commit "Bulk update"
-repos push
+repos stage "*"                 # Stage all changes
+repos commit "Bulk update"      # Commit everything
+repos push                      # Push + drift check
 ```
 
 ### Release Workflow
@@ -87,9 +87,11 @@ repos push
 Publish packages with git tags:
 
 ```bash
-repos publish --dry-run    # Preview first
-repos publish --tag        # Publish + create tags (v1.2.3)
+repos publish --dry-run         # Preview first
+repos publish --tag             # Publish + create tags (v1.2.3)
 ```
+
+**Note:** Publishing requires authentication. See [credentials setup](guides/credentials_setup.md) to configure npm, Cargo, or PyPI credentials.
 
 ### Config Sync
 
@@ -113,10 +115,9 @@ Use `repos` when you need to perform the same operation across multiple reposito
 
 Yes. `repos` works with any directory structure containing multiple git repositories. It discovers all repos recursively and operates on them concurrently.
 
-### What's the difference between `--force` and `--stash` in subrepo commands?
+### Does `repos` have a pull command?
 
-- `--stash`: Safely stashes uncommitted changes before syncing. Changes can be recovered with `git stash pop`
-- `--force`: Permanently discards uncommitted changes. Use only when you're certain you don't need them
+Not yet. Use standard `git pull` directly in each repository. `repos` currently focuses on push operations, staging, commits, and publishing.
 
 ### How do I target specific repositories instead of all of them?
 
@@ -126,44 +127,39 @@ repos publish my-app my-lib        # Only these repos
 repos audit --repos my-app,my-lib  # Comma-separated for audit
 ```
 
-### Why does publishing skip some of my repos?
+**More questions?** See [Publishing Guide](guides/publishing.md), [Security Auditing](guides/security_auditing.md), [Subrepo Management](guides/subrepo_management.md), or [Troubleshooting](guides/troubleshooting.md).
 
-By default, `repos publish` only publishes public repositories. Use `--all` to include private repos, or `--private-only` for only private repos.
+## Migrating from Shell Scripts
 
-### Is it safe to use `repos audit --fix-all`?
+Common shell script patterns and their `repos` equivalents:
 
-Only the `--fix-gitignore` operation is completely safe (just adds patterns to `.gitignore`). The `--fix-large` and `--fix-secrets` flags rewrite git history, which requires force-pushing and impacts all collaborators. Always run `--dry-run` first.
+| Task | Shell Script | repos | Advantage |
+|------|--------------|-------|-----------|
+| Push all repos | `for d in */; do (cd "$d" && git push); done` | `repos push` | Concurrent + drift check |
+| Stage files | `for d in */; do (cd "$d" && git add "*.md"); done` | `repos stage "*.md"` | Pattern matching, atomic |
+| Commit all | `find . -name .git -execdir git commit -m "msg" \;` | `repos commit "msg"` | Staged-only, summary |
+| Git config | `for d in */; do (cd "$d" && git config user.name "Alice"); done` | `repos config --name "Alice"` | Sync from global |
 
-### How do I undo a history rewrite from `repos audit --fix-secrets`?
+### Quick Migration Steps
 
-The tool creates backup refs before rewriting:
-```bash
-git reset --hard refs/original/pre-fix-backup-secrets-<timestamp>
-```
+1. **Identify your scripts** - Find all git automation in your workflow
+2. **Map to repos commands** - Use table above for common patterns
+3. **Test with dry-run** - Use `repos publish --dry-run` to preview
+4. **Replace gradually** - One workflow at a time, keep scripts as backup
 
-### Do I need to install TruffleHog manually?
+### Migrating from Other Tools
 
-No. Run `repos audit --install-tools` and it will auto-install TruffleHog for you.
+**From git-multi:**
+- repos adds: concurrent operations, drift detection, publishing support, security scanning
+- Automatic repository discovery (no manual config)
 
-### Why is `repos audit --verify` slower than regular audit?
-
-Verification mode tests whether detected secrets are currently active by making API calls to verify them. This is thorough but slower. Use in CI/CD to fail builds on active secrets.
-
-### What does the arrow → mean in subrepo output?
-
-The arrow points to the commit you should sync to. It marks the latest clean commit (no uncommitted changes), which is the safest sync target. Commits without the arrow are either outdated or have uncommitted changes.
-
-### Can I use `repos` with private package registries?
-
-Yes. Configure your private registry credentials the same way you would for the package manager:
-- npm: `.npmrc` with registry URL
-- Cargo: `~/.cargo/config.toml` with registry index
-- Python: `~/.pypirc` with repository URL
-
-Learn more in [credentials_setup.md](guides/credentials_setup.md).
+**From Google's repo tool:**
+- repos uses auto-discovery instead of manifests
+- No XML configuration needed
+- Cross-language package publishing built-in
 
 ## Next Steps
 
-- [Full command reference](guides/commands.md)
-- [Package publishing guide](guides/publishing.md)
-- [Advanced nested repo features](guides/subrepo_management.md)
+- **[Full command reference](guides/commands.md)** - All commands, flags, and workflows
+- **[Package publishing guide](guides/publishing.md)** - Publishing workflows
+- **[Advanced nested repo features](guides/subrepo_management.md)** - Drift detection and sync
