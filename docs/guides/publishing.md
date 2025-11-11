@@ -83,7 +83,7 @@ graph TD
 - Checks visibility via `gh` CLI (GitHub only; defaults to public otherwise)
 - Uses existing credentials (`~/.npmrc`, `~/.cargo/credentials.toml`, `~/.pypirc`)
 - Creates git tags after successful publish (if `--tag`)
-- Processes 3 packages concurrently
+- Processes 8 packages concurrently (v2.1+, previously 3)
 
 Learn more about [credential configuration](credentials_setup.md).
 

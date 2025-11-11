@@ -2,6 +2,38 @@
 
 Quick reference for all `repos` commands.
 
+## Common Workflows
+
+Typical command combinations for everyday tasks:
+
+**Daily Git Operations**
+```bash
+repos stage "*.md"
+repos commit "Update docs"
+repos push
+```
+
+**Package Release**
+```bash
+repos publish --dry-run      # Preview
+repos publish --tag          # Publish + create git tags
+repos push                   # Push commits and tags
+```
+
+**Security Maintenance**
+```bash
+repos audit --verify         # Scan for active secrets
+repos audit --fix-gitignore  # Fix safe issues
+```
+
+**Concurrent Operations Control**
+```bash
+repos push --jobs 4          # Limit to 4 operations
+repos push --sequential      # Debug with serial execution
+```
+
+---
+
 ## Table of Contents
 
 - [Command Overview](#command-overview)
@@ -45,13 +77,20 @@ Push unpushed commits to remotes across all repositories.
 |------|-------------|
 | `--force` | Auto-push branches with no upstream |
 | `--verbose`, `-v` | Show detailed progress for all repos |
+| `--show-changes`, `-c` | Display file changes in repos with uncommitted changes |
 | `--no-drift-check` | Skip subrepo drift check (faster but less complete) |
+| `--jobs N`, `-j N` | Set number of concurrent operations (default: CPU cores + 2) |
+| `--sequential` | Run one operation at a time (useful for debugging) |
 
 ```bash
-repos push                # Push all unpushed commits + check drift
-repos push --force        # Auto-create upstream for new branches
-repos push --verbose      # Show live progress with tally
-repos push --no-drift-check  # Skip drift check for speed
+repos push                     # Push all unpushed commits + check drift
+repos push --force             # Auto-create upstream for new branches
+repos push --verbose           # Show live progress with tally
+repos push --show-changes      # Show what files changed in dirty repos
+repos push -vc                 # Combine verbose + show changes
+repos push --no-drift-check    # Skip drift check for speed
+repos push --jobs 4            # Limit to 4 concurrent operations
+repos push --sequential        # Run operations one at a time
 ```
 
 **Integrated Health Check**: After pushing, `repos push` automatically checks for subrepo drift and displays a concise summary if any drifted subrepos are found. This gives you a complete picture of your repository health in one command.

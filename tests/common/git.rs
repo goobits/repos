@@ -28,6 +28,12 @@ pub fn setup_git_repo(path: &Path) -> Result<()> {
         .current_dir(path)
         .output()?;
 
+    // Disable commit signing for tests
+    Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(path)
+        .output()?;
+
     Ok(())
 }
 

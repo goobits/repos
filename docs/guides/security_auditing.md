@@ -9,6 +9,7 @@ Comprehensive security scanning and repository hygiene checking with automated f
   - [Installation](#installation)
   - [Secret Detection](#secret-detection)
   - [Output](#output)
+  - [Suppressing False Positives](#suppressing-false-positives)
 - [Hygiene Checking](#hygiene-checking)
   - [Gitignore Violations](#1-gitignore-violations)
   - [Universal Bad Patterns](#2-universal-bad-patterns)
@@ -88,6 +89,29 @@ repos audit --verify           # Verify if secrets are active (exits 1 on findin
 
 ═══════════════════════════════════════════════════════════════════
 ```
+
+### Suppressing False Positives
+
+TruffleHog may flag test data, example code, or revoked credentials as secrets. Use `.trufflehog-ignore` to suppress false positives.
+
+**Create `.trufflehog-ignore` in repository root:**
+
+```
+# Format: one pattern per line
+# Patterns can be file paths, commit hashes, or regex
+path/to/test/file.js
+docs/examples/api-keys.md
+abcd1234  # Commit hash
+```
+
+**Managing false positives:**
+
+1. Review TruffleHog findings carefully
+2. Confirm secrets are truly false positives (test data, examples, revoked keys)
+3. Add patterns to `.trufflehog-ignore`
+4. Re-run `repos audit` to verify suppression
+
+See [TruffleHog documentation](https://github.com/trufflesecurity/trufflehog#ignoring-findings) for advanced ignore patterns.
 
 ---
 
@@ -191,7 +215,7 @@ repos audit --fix-large --fix-secrets
 ```
 
 **Requirements:**
-- `git-filter-repo` must be installed
+- `git-filter-repo` must be installed: `pip install git-filter-repo` or `brew install git-filter-repo`
 - Repository must be clean (no uncommitted changes)
 - All collaborators must re-clone after push
 
