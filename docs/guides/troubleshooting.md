@@ -43,7 +43,7 @@ Common issues and solutions for the repos tool.
 |-------|-------|----------|
 | `TruffleHog not found` | TruffleHog not installed | Run `repos audit --install-tools` to auto-install |
 | Too many false positives | TruffleHog sensitivity | Expected; manually review findings and update `.trufflehog-ignore` |
-| Need to recover from history rewrite | Used `--rewrite-history` option | Use `git reflog` to find previous commit and reset: `git reset --hard HEAD@{N}` |
+| Need to recover from history rewrite | Used history rewriting options (`--fix-large`, `--fix-secrets`, or `--fix-all`) | Use `git reflog` to find previous commit and reset: `git reset --hard HEAD@{N}` |
 | Scan takes too long | Large repository history | Normal for first scan; subsequent scans are faster with verified findings |
 
 ## Subrepo Issues

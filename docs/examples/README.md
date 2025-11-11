@@ -59,9 +59,8 @@ repos publish --dry-run
 # 5. Publish packages and create tags
 repos publish --tag --all
 
-# 6. Push changes and tags
+# 6. Push version bump commits (tags already pushed by --tag)
 repos push
-git push --tags
 ```
 
 ### Security Audit Workflow
@@ -203,7 +202,7 @@ echo ""
 echo "Next steps:"
 echo "  1. Review changes: git log -1"
 echo "  2. Publish: repos publish --tag --all"
-echo "  3. Push: repos push && git push --tags"
+echo "  3. Push: repos push  # Tags already pushed by --tag flag"
 ```
 
 ## JSON Output Processing

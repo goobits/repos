@@ -1,17 +1,17 @@
-# 🔄 repos
+# repos
 
 Batch git operations across multiple repositories. One command instead of dozens of `cd` + `git` loops.
 
-## ✨ Key Features
+## Key Features
 
-- **🚀 Batch Operations** - Push, commit, stage across all repositories simultaneously
-- **🔍 Subrepo Drift Detection** - Track and sync nested repos with automatic conflict detection
-- **📦 Package Publishing** - Publish to npm, Cargo, PyPI with visibility filtering
-- **⚙️ Config Sync** - Synchronize git user.name/email across all projects
-- **🔒 Security Auditing** - Scan for exposed secrets and credential leaks
-- **⚡ Concurrent Processing** - Parallel operations with configurable concurrency (CPU cores + 2)
+- **Batch Operations** - Push, commit, stage across all repositories simultaneously
+- **Subrepo Drift Detection** - Track and sync nested repos with automatic conflict detection
+- **Package Publishing** - Publish to npm, Cargo, PyPI with visibility filtering
+- **Config Sync** - Synchronize git user.name/email across all projects
+- **Security Auditing** - Scan for exposed secrets and credential leaks
+- **Concurrent Processing** - Parallel operations with configurable concurrency (CPU cores + 2)
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # Install
@@ -30,7 +30,7 @@ repos publish --dry-run      # Preview
 repos publish --tag          # Publish + git tags
 ```
 
-## 📖 Commands
+## Commands
 
 ### Push Operations
 
@@ -99,7 +99,7 @@ repos subrepo update lib        # Update to origin/main
 
 **Features**: Smart sync target detection, safe stashing, visual indicators (✅ clean, ⚠️ uncommitted, → sync target).
 
-## ⚙️ Configuration
+## Configuration
 
 ```bash
 # View current settings
@@ -115,7 +115,7 @@ repos push --verbose            # Detailed progress
 repos push -v                   # Short form
 ```
 
-## 📚 Documentation
+## Documentation
 
 **Getting Started**
 - **[Installation](docs/installation.md)** - Setup and prerequisites
@@ -136,14 +136,14 @@ repos push -v                   # Short form
 **Developer**
 - **[Contributing](CONTRIBUTING.md)** - Development setup and guidelines
 
-## 🛠️ How It Works
+## How It Works
 
 - Discovers `.git` directories recursively (excludes `node_modules/`, `vendor/`, `target/`, `build/`, `dist/`)
 - Processes repositories concurrently (default: CPU cores + 2, max 32)
 - Operations timeout after 3-5 minutes depending on type
 - Real-time progress bars with operation summaries
 
-## 🧪 Development
+## Development
 
 ```bash
 cargo build                     # Debug build
@@ -153,6 +153,6 @@ cargo clippy                    # Linting
 cargo fmt                       # Format code
 ```
 
-## 📝 License
+## License
 
 MIT - see [LICENSE](LICENSE)

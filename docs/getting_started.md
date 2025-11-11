@@ -1,14 +1,14 @@
-# 🚀 Getting Started
+# Getting Started
 
-Batch Git operations across multiple repositories. Instead of manually visiting each repo to run the same git commands, run one `repos` command and move on with your day.
+Batch Git operations across multiple repositories. Instead of manually visiting each repo to run the same git commands, run one `repos` command across all repositories simultaneously.
 
-## ⚙️ Installation
+## Installation
 
 ```bash
 ./install.sh  # See installation.md for alternatives
 ```
 
-## 📖 Quick Tour
+## Quick Tour
 
 Run `repos` in a directory to discover and operate on all Git repositories:
 
@@ -70,7 +70,7 @@ repos config --from-global      # Copy from global config
 repos config --name "Alice" --email "alice@example.com"  # Set directly
 ```
 
-## 🔄 Common Workflows
+## Common Workflows
 
 ### Bulk Updates
 
@@ -91,6 +91,8 @@ repos publish --dry-run         # Preview first
 repos publish --tag             # Publish + create tags (v1.2.3)
 ```
 
+**Note:** Publishing requires authentication. See [credentials setup](guides/credentials_setup.md) to configure npm, Cargo, or PyPI credentials.
+
 ### Config Sync
 
 Set name/email across all repos:
@@ -99,7 +101,7 @@ Set name/email across all repos:
 repos config --from-global --force    # No prompts
 ```
 
-## ❓ Frequently Asked Questions
+## Frequently Asked Questions
 
 ### When should I use `repos` instead of manual git commands?
 
@@ -112,6 +114,10 @@ Use `repos` when you need to perform the same operation across multiple reposito
 ### Can I use `repos` in a monorepo?
 
 Yes. `repos` works with any directory structure containing multiple git repositories. It discovers all repos recursively and operates on them concurrently.
+
+### Does `repos` have a pull command?
+
+Not yet. Use standard `git pull` directly in each repository. `repos` currently focuses on push operations, staging, commits, and publishing.
 
 ### What's the difference between `--force` and `--stash` in subrepo commands?
 
@@ -162,7 +168,7 @@ Yes. Configure your private registry credentials the same way you would for the 
 
 Learn more in [credentials_setup.md](guides/credentials_setup.md).
 
-## 🔗 Next Steps
+## Next Steps
 
 - **[Full command reference](guides/commands.md)** - All commands, flags, and workflows
 - **[Package publishing guide](guides/publishing.md)** - Publishing workflows

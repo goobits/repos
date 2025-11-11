@@ -53,7 +53,7 @@ Foundational functionality used across all commands:
 - **Concurrency Control** - Managing parallel operations across repositories
 
 **Design principles:**
-- Concurrent operations with smart parallelism (CPU cores + 2, default cap: 32)
+- Concurrent operations with smart parallelism (default: CPU cores + 2)
 - User-controllable concurrency via `--jobs N` or `--sequential` flags
 - Timeouts for long-running operations (3-5 minutes depending on operation type)
 - Progress bars and status indicators for user feedback
@@ -145,7 +145,7 @@ Different operations have different timeout values to balance responsiveness and
 |---------------|---------|-------|
 | Git operations | 180s (3 min) | src/git/operations.rs:13 |
 | npm publishing | 300s (5 min) | src/package/npm.rs:10 |
-| Cargo publishing | 300s (5 min) | src/package/cargo.rs |
+| Cargo publishing | 600s (10 min) | src/package/cargo.rs:10 |
 | PyPI publishing | 300s (5 min) | src/package/pypi.rs:11 |
 | GitHub visibility checks | 10s | src/git/operations.rs:571 |
 
