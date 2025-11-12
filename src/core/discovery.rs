@@ -202,7 +202,7 @@ mod tests {
 
         // Wait for all threads to complete
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("Test thread panicked during concurrent insert test");
         }
 
         // Verify all 1000 items were inserted (10 threads * 100 items)
@@ -228,11 +228,11 @@ mod tests {
             .collect();
 
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("Test thread panicked during race condition test");
         }
 
         // Should have exactly 10,000 (10 threads * 1,000 increments)
-        assert_eq!(*map.get("counter").unwrap(), 10000, "Counter should be atomic");
+        assert_eq!(*map.get("counter").expect("Key 'counter' should exist in test map"), 10000, "Counter should be atomic");
     }
 
     #[test]
