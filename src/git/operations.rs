@@ -448,11 +448,11 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
     // Create the tag
     let tag_result = run_git(path, &["tag", tag_name]).await;
 
-    if let Err(e) = tag_result {
-        return (false, format!("failed to create tag: {}", e));
-    }
+    let (success, _, stderr) = match tag_result {
+        Ok(result) => result,
+        Err(e) => return (false, format!("failed to create tag: {}", e)),
+    };
 
-    let (success, _, stderr) = tag_result.unwrap();
     if !success {
         // Tag might already exist
         if stderr.contains("already exists") {

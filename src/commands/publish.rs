@@ -328,7 +328,8 @@ async fn process_publish_repositories(
         let footer_clone = footer_pb.clone();
 
         let future = async move {
-            let _permit = semaphore_clone.acquire().await.unwrap();
+            let _permit = semaphore_clone.acquire().await
+                .expect("Semaphore closed unexpectedly - this is a bug");
 
             let (success, message) = publish_package(&repo_path, &manager, false).await;
 
@@ -368,7 +369,8 @@ async fn process_publish_repositories(
 
             // Update statistics
             {
-                let mut stats_guard = stats_clone.lock().unwrap();
+                let mut stats_guard = stats_clone.lock()
+                    .expect("Mutex poisoned - this indicates a panic in another thread");
                 stats_guard.update(&status, &repo_name, &final_message);
 
                 // Update the footer summary
@@ -387,7 +389,8 @@ async fn process_publish_repositories(
     footer_pb.finish();
 
     // Print detailed error summary if there are errors
-    let final_stats = statistics.lock().unwrap();
+    let final_stats = statistics.lock()
+        .expect("Mutex poisoned - this indicates a panic in another thread");
     if !final_stats.errors.is_empty() {
         println!("\n{}", "━".repeat(70));
         println!("❌ Failed to publish:\n");

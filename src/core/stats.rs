@@ -93,21 +93,21 @@ impl SyncStatistics {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
                 self.no_upstream_repos
                     .lock()
-                    .unwrap()
+                    .expect("Mutex poisoned - this indicates a panic in another thread")
                     .push((repo_name.to_string(), repo_path.to_string()));
             }
             Status::NoRemote => {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
                 self.no_remote_repos
                     .lock()
-                    .unwrap()
+                    .expect("Mutex poisoned - this indicates a panic in another thread")
                     .push((repo_name.to_string(), repo_path.to_string()));
             }
             Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError => {
                 self.error_repos.fetch_add(1, Ordering::Relaxed);
                 self.failed_repos
                     .lock()
-                    .unwrap()
+                    .expect("Mutex poisoned - this indicates a panic in another thread")
                     .push((
                         repo_name.to_string(),
                         repo_path.to_string(),
@@ -123,7 +123,8 @@ impl SyncStatistics {
                 Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError
             )
         {
-            let mut uncommitted = self.uncommitted_repos.lock().unwrap();
+            let mut uncommitted = self.uncommitted_repos.lock()
+                .expect("Mutex poisoned - this indicates a panic in another thread");
             if !uncommitted.iter().any(|(name, _)| name == repo_name) {
                 self.uncommitted_count.fetch_add(1, Ordering::Relaxed);
                 uncommitted.push((repo_name.to_string(), repo_path.to_string()));
@@ -163,10 +164,14 @@ impl SyncStatistics {
         let mut lines = Vec::new();
 
         // Lock all vectors once at the beginning
-        let failed_repos = self.failed_repos.lock().unwrap();
-        let no_upstream_repos = self.no_upstream_repos.lock().unwrap();
-        let no_remote_repos = self.no_remote_repos.lock().unwrap();
-        let uncommitted_repos = self.uncommitted_repos.lock().unwrap();
+        let failed_repos = self.failed_repos.lock()
+            .expect("Mutex poisoned - this indicates a panic in another thread");
+        let no_upstream_repos = self.no_upstream_repos.lock()
+            .expect("Mutex poisoned - this indicates a panic in another thread");
+        let no_remote_repos = self.no_remote_repos.lock()
+            .expect("Mutex poisoned - this indicates a panic in another thread");
+        let uncommitted_repos = self.uncommitted_repos.lock()
+            .expect("Mutex poisoned - this indicates a panic in another thread");
 
         // Failed repos get priority
         if !failed_repos.is_empty() {
