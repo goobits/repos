@@ -12,7 +12,7 @@ repository = "https://github.com/goobits/repos"
 homepage = "https://github.com/goobits/repos"
 
 [dev-dependencies]
-tempfile = "3.0"
+tempfile = "3.23"
 
 [dependencies]
 # Error handling
@@ -25,7 +25,7 @@ indicatif = "0.18"
 ignore = "0.4"
 
 # Async runtime and utilities
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.48", features = ["full"] }
 futures = "0.3"
 
 # Parallel processing
@@ -33,19 +33,19 @@ rayon = "1.10"
 dashmap = "6.0"
 
 # Command line argument parsing
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 
 # System information
 num_cpus = "1.16"
 
 # TruffleHog integration dependencies
-reqwest = { version = "0.12", features = ["native-tls"] }
-serde = { version = "1.0", features = ["derive"] }
+reqwest = { version = "0.12.24", features = ["native-tls"] }
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 dirs = "5.0"
 tar = "0.4"
-flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 zip = { version = "1.0", default-features = false, features = ["deflate"] }
 chrono = "0.4"
 
