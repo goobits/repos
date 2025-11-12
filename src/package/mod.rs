@@ -115,13 +115,13 @@ mod tests {
     #[test]
     fn test_detect_npm_package() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         // Create package.json
         std::fs::write(
             temp_dir.path().join("package.json"),
             r#"{"name": "test", "version": "1.0.0"}"#
-        ).unwrap();
+        ).expect("Failed to write package.json test file");
 
         let manager = detect_package_manager(temp_dir.path());
         assert_eq!(manager, Some(PackageManager::Npm));
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn test_detect_cargo_package() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         // Create Cargo.toml
         std::fs::write(
@@ -139,7 +139,7 @@ mod tests {
 name = "test"
 version = "1.0.0"
 "#
-        ).unwrap();
+        ).expect("Failed to write Cargo.toml test file");
 
         let manager = detect_package_manager(temp_dir.path());
         assert_eq!(manager, Some(PackageManager::Cargo));
@@ -148,7 +148,7 @@ version = "1.0.0"
     #[test]
     fn test_detect_pypi_package_pyproject() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         // Create pyproject.toml
         std::fs::write(
@@ -157,7 +157,7 @@ version = "1.0.0"
 name = "test"
 version = "1.0.0"
 "#
-        ).unwrap();
+        ).expect("Failed to write pyproject.toml test file");
 
         let manager = detect_package_manager(temp_dir.path());
         assert_eq!(manager, Some(PackageManager::PyPI));
@@ -166,7 +166,7 @@ version = "1.0.0"
     #[test]
     fn test_detect_pypi_package_setup_py() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         // Create setup.py
         std::fs::write(
@@ -174,7 +174,7 @@ version = "1.0.0"
             r#"from setuptools import setup
 setup(name="test", version="1.0.0")
 "#
-        ).unwrap();
+        ).expect("Failed to write setup.py test file");
 
         let manager = detect_package_manager(temp_dir.path());
         assert_eq!(manager, Some(PackageManager::PyPI));
@@ -183,7 +183,7 @@ setup(name="test", version="1.0.0")
     #[test]
     fn test_detect_no_package() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         // No package files
         let manager = detect_package_manager(temp_dir.path());
@@ -193,20 +193,20 @@ setup(name="test", version="1.0.0")
     #[test]
     fn test_npm_priority_over_others() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
 
         // Create both package.json and Cargo.toml
         std::fs::write(
             temp_dir.path().join("package.json"),
             r#"{"name": "test", "version": "1.0.0"}"#
-        ).unwrap();
+        ).expect("Failed to write package.json test file");
         std::fs::write(
             temp_dir.path().join("Cargo.toml"),
             r#"[package]
 name = "test"
 version = "1.0.0"
 "#
-        ).unwrap();
+        ).expect("Failed to write Cargo.toml test file");
 
         // Should prefer npm (checked first)
         let manager = detect_package_manager(temp_dir.path());
@@ -216,12 +216,12 @@ version = "1.0.0"
     #[tokio::test]
     async fn test_detect_package_manager_async_npm() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for async test");
 
         std::fs::write(
             temp_dir.path().join("package.json"),
             r#"{"name": "test"}"#
-        ).unwrap();
+        ).expect("Failed to write package.json test file");
 
         let manager = detect_package_manager_async(temp_dir.path()).await;
         assert_eq!(manager, Some(PackageManager::Npm));
@@ -230,14 +230,14 @@ version = "1.0.0"
     #[tokio::test]
     async fn test_detect_package_manager_async_cargo() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for async test");
 
         std::fs::write(
             temp_dir.path().join("Cargo.toml"),
             r#"[package]
 name = "test"
 "#
-        ).unwrap();
+        ).expect("Failed to write Cargo.toml test file");
 
         let manager = detect_package_manager_async(temp_dir.path()).await;
         assert_eq!(manager, Some(PackageManager::Cargo));
@@ -246,7 +246,7 @@ name = "test"
     #[tokio::test]
     async fn test_detect_package_manager_async_none() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for async test");
 
         let manager = detect_package_manager_async(temp_dir.path()).await;
         assert_eq!(manager, None);
@@ -255,13 +255,13 @@ name = "test"
     #[tokio::test]
     async fn test_async_vs_sync_consistency() {
         use tempfile::TempDir;
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for async test");
 
         // Test with npm
         std::fs::write(
             temp_dir.path().join("package.json"),
             r#"{"name": "test"}"#
-        ).unwrap();
+        ).expect("Failed to write package.json test file");
 
         let sync_result = detect_package_manager(temp_dir.path());
         let async_result = detect_package_manager_async(temp_dir.path()).await;

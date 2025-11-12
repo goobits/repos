@@ -132,7 +132,9 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                             }
                         };
 
-                        repositories.lock().unwrap().push((repo_name, path_buf));
+                        repositories.lock()
+                            .expect("Mutex poisoned - this indicates a panic in another thread")
+                            .push((repo_name, path_buf));
                     }
                 }
             }
@@ -143,8 +145,11 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 
     // Extract repositories from Arc<Mutex<>>
     let mut repos = Arc::try_unwrap(repositories)
-        .map(|mutex| mutex.into_inner().unwrap())
-        .unwrap_or_else(|arc| arc.lock().unwrap().clone());
+        .map(|mutex| mutex.into_inner()
+            .expect("Mutex poisoned - this indicates a panic in another thread"))
+        .unwrap_or_else(|arc| arc.lock()
+            .expect("Mutex poisoned - this indicates a panic in another thread")
+            .clone());
 
     // Sort repositories alphabetically by name (case-insensitive) using parallel sort
     repos.par_sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
@@ -197,7 +202,7 @@ mod tests {
 
         // Wait for all threads to complete
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("Test thread panicked during concurrent insert test");
         }
 
         // Verify all 1000 items were inserted (10 threads * 100 items)
@@ -223,11 +228,11 @@ mod tests {
             .collect();
 
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("Test thread panicked during race condition test");
         }
 
         // Should have exactly 10,000 (10 threads * 1,000 increments)
-        assert_eq!(*map.get("counter").unwrap(), 10000, "Counter should be atomic");
+        assert_eq!(*map.get("counter").expect("Key 'counter' should exist in test map"), 10000, "Counter should be atomic");
     }
 
     #[test]

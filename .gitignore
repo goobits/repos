@@ -19,3 +19,4 @@ Thumbs.db
 # Cargo.lock
 # Symbolic links directory
 .links
+test_output.txt

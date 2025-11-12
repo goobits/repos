@@ -46,10 +46,16 @@ impl ValidationReport {
     }
 }
 
+/// Convert path to string with proper error handling
+fn path_to_str(path: &Path) -> Result<&str> {
+    path.to_str()
+        .context("Path contains invalid UTF-8 characters")
+}
+
 /// Get current commit hash for a git repository
 fn get_current_commit(path: &Path) -> Result<String> {
     let output = Command::new("git")
-        .args(["-C", path.to_str().unwrap(), "rev-parse", "HEAD"])
+        .args(["-C", path_to_str(path)?, "rev-parse", "HEAD"])
         .output()
         .context("Failed to run git rev-parse")?;
 
@@ -63,7 +69,7 @@ fn get_current_commit(path: &Path) -> Result<String> {
 /// Get remote URL for a git repository
 fn get_remote_url(path: &Path) -> Result<String> {
     let output = Command::new("git")
-        .args(["-C", path.to_str().unwrap(), "remote", "get-url", "origin"])
+        .args(["-C", path_to_str(path)?, "remote", "get-url", "origin"])
         .output()
         .context("Failed to run git remote")?;
 
@@ -90,8 +96,13 @@ fn normalize_remote_url(url: &str) -> String {
 /// sync operations. This only checks tracked files (diff-index vs HEAD).
 /// See subrepo/sync.rs for a more conservative version that includes untracked files.
 fn has_uncommitted_changes(path: &Path) -> bool {
+    let path_str = match path_to_str(path) {
+        Ok(s) => s,
+        Err(_) => return false, // Treat invalid paths as no changes
+    };
+
     let output = Command::new("git")
-        .args(["-C", path.to_str().unwrap(), "diff-index", "--quiet", "HEAD", "--"])
+        .args(["-C", path_str, "diff-index", "--quiet", "HEAD", "--"])
         .output();
 
     match output {
@@ -102,10 +113,15 @@ fn has_uncommitted_changes(path: &Path) -> bool {
 
 /// Get commit timestamp (Unix epoch seconds)
 pub(crate) fn get_commit_timestamp(path: &Path, commit_hash: &str) -> i64 {
+    let path_str = match path_to_str(path) {
+        Ok(s) => s,
+        Err(_) => return 0, // Return epoch 0 for invalid paths
+    };
+
     let output = Command::new("git")
         .args([
             "-C",
-            path.to_str().unwrap(),
+            path_str,
             "show",
             "-s",
             "--format=%ct",
