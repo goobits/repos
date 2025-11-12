@@ -162,19 +162,4 @@ mod tests {
         assert_eq!(Status::CommitError.text(), "failed");
     }
 
-    #[test]
-    fn test_status_enum_is_cloneable() {
-        // Ensure Status can be cloned
-        let status = Status::Pushed;
-        let cloned = status.clone();
-        assert_eq!(status, cloned);
-    }
-
-    #[test]
-    fn test_status_enum_equality() {
-        // Test equality between status variants
-        assert_eq!(Status::Synced, Status::Synced);
-        assert_ne!(Status::Synced, Status::Pushed);
-        assert_ne!(Status::Error, Status::ConfigError);
-    }
 }

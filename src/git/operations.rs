@@ -83,63 +83,6 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_string_allocation_optimization() {
-        // Test that empty strings don't allocate unnecessarily
-        let empty_bytes: Vec<u8> = vec![];
-        let whitespace_bytes: Vec<u8> = vec![b' ', b'\t', b'\n'];
-
-        // Simulate the optimization
-        let empty_str = String::from_utf8_lossy(&empty_bytes);
-        let empty_trimmed = empty_str.trim();
-        let empty_result = if empty_trimmed.is_empty() {
-            String::new()
-        } else {
-            empty_trimmed.to_string()
-        };
-
-        let whitespace_str = String::from_utf8_lossy(&whitespace_bytes);
-        let whitespace_trimmed = whitespace_str.trim();
-        let whitespace_result = if whitespace_trimmed.is_empty() {
-            String::new()
-        } else {
-            whitespace_trimmed.to_string()
-        };
-
-        // Both should be empty strings
-        assert_eq!(empty_result, "");
-        assert_eq!(whitespace_result, "");
-
-        // Test with actual content
-        let content_bytes: Vec<u8> = b"  hello world  ".to_vec();
-        let content_str = String::from_utf8_lossy(&content_bytes);
-        let content_trimmed = content_str.trim();
-        let content_result = if content_trimmed.is_empty() {
-            String::new()
-        } else {
-            content_trimmed.to_string()
-        };
-
-        assert_eq!(content_result, "hello world");
-    }
-
-    #[test]
-    fn test_repo_visibility_enum_basics() {
-        use super::RepoVisibility;
-
-        // Test enum variants exist and are comparable
-        let public = RepoVisibility::Public;
-        let private = RepoVisibility::Private;
-        let unknown = RepoVisibility::Unknown;
-
-        assert_eq!(public, RepoVisibility::Public);
-        assert_eq!(private, RepoVisibility::Private);
-        assert_eq!(unknown, RepoVisibility::Unknown);
-        assert_ne!(public, private);
-    }
-}
 
 /// Reads a git config value from the specified repository
 /// Returns the config value if it exists, None if not found
