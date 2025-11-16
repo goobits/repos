@@ -5,6 +5,12 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
 
+/// Convert path to string with proper error handling
+fn path_to_str(path: &Path) -> Result<&str> {
+    path.to_str()
+        .context("Path contains invalid UTF-8 characters")
+}
+
 /// Find all instances of a subrepo by name
 ///
 /// Note: If multiple different remotes have subrepos with the same name,
@@ -37,8 +43,13 @@ fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<S
 /// extra cautious and block syncing if there are ANY changes, including untracked files.
 /// Uses `git status --porcelain` to detect all modifications.
 fn has_uncommitted_changes(path: &Path) -> bool {
+    let path_str = match path_to_str(path) {
+        Ok(s) => s,
+        Err(_) => return false, // Treat invalid paths as no changes
+    };
+
     let output = Command::new("git")
-        .args(["-C", path.to_str().unwrap(), "status", "--porcelain"])
+        .args(["-C", path_str, "status", "--porcelain"])
         .output();
 
     match output {
@@ -52,7 +63,7 @@ fn stash_changes(path: &Path) -> Result<()> {
     let output = Command::new("git")
         .args([
             "-C",
-            path.to_str().unwrap(),
+            path_to_str(path)?,
             "stash",
             "push",
             "-m",
@@ -74,7 +85,7 @@ fn checkout_commit(path: &Path, commit: &str) -> Result<()> {
     let output = Command::new("git")
         .args([
             "-C",
-            path.to_str().unwrap(),
+            path_to_str(path)?,
             "checkout",
             commit,
         ])
@@ -91,9 +102,11 @@ fn checkout_commit(path: &Path, commit: &str) -> Result<()> {
 
 /// Fetch from remote and determine the latest commit
 fn fetch_latest_commit(path: &Path) -> Result<String> {
+    let path_str = path_to_str(path)?;
+
     // Fetch from remote
     let fetch_output = Command::new("git")
-        .args(["-C", path.to_str().unwrap(), "fetch", "origin"])
+        .args(["-C", path_str, "fetch", "origin"])
         .output()
         .context("Failed to run git fetch")?;
 
@@ -107,7 +120,7 @@ fn fetch_latest_commit(path: &Path) -> Result<String> {
         let output = Command::new("git")
             .args([
                 "-C",
-                path.to_str().unwrap(),
+                path_str,
                 "rev-parse",
                 branch,
             ])

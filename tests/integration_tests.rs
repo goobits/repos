@@ -1,6 +1,7 @@
 // Tests can use internal paths since we're testing the same crate
 use goobits_repos::core::SyncStatistics;
 use goobits_repos::git::UserConfig;
+use std::sync::atomic::Ordering;
 
 mod common;
 use common::{TestRepoBuilder, is_git_available};
@@ -8,10 +9,10 @@ use common::{TestRepoBuilder, is_git_available};
 #[test]
 fn test_sync_stats_initialization() {
     let stats = SyncStatistics::new();
-    assert_eq!(stats.synced_repos, 0);
-    assert_eq!(stats.skipped_repos, 0);
-    assert_eq!(stats.error_repos, 0);
-    assert_eq!(stats.uncommitted_count, 0);
+    assert_eq!(stats.synced_repos.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.skipped_repos.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.error_repos.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.uncommitted_count.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -263,28 +264,28 @@ fn test_stats_update_with_staging_statuses() {
     use goobits_repos::core::SyncStatistics;
     use goobits_repos::git::Status;
 
-    let mut stats = SyncStatistics::new();
+    let stats = SyncStatistics::new();
 
     // Test staging success statuses
     stats.update("test-repo", "/test/path", &Status::Staged, "staged test.txt", false);
-    assert_eq!(stats.synced_repos, 1);
+    assert_eq!(stats.synced_repos.load(Ordering::SeqCst), 1);
 
     stats.update("test-repo2", "/test/path2", &Status::Unstaged, "unstaged test.txt", false);
-    assert_eq!(stats.synced_repos, 2);
+    assert_eq!(stats.synced_repos.load(Ordering::SeqCst), 2);
 
     stats.update("test-repo3", "/test/path3", &Status::Committed, "committed abc1234", false);
-    assert_eq!(stats.synced_repos, 3);
+    assert_eq!(stats.synced_repos.load(Ordering::SeqCst), 3);
 
     // Test skipped statuses
     stats.update("test-repo4", "/test/path4", &Status::NoChanges, "no changes", false);
-    assert_eq!(stats.skipped_repos, 1);
+    assert_eq!(stats.skipped_repos.load(Ordering::SeqCst), 1);
 
     // Test error statuses
     stats.update("test-repo5", "/test/path5", &Status::StagingError, "staging failed", false);
-    assert_eq!(stats.error_repos, 1);
+    assert_eq!(stats.error_repos.load(Ordering::SeqCst), 1);
 
     stats.update("test-repo6", "/test/path6", &Status::CommitError, "commit failed", false);
-    assert_eq!(stats.error_repos, 2);
+    assert_eq!(stats.error_repos.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

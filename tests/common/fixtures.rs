@@ -102,6 +102,7 @@ pub struct TestRepoBuilder {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum PackageType {
     Npm { name: String, version: String },
     Cargo { name: String, version: String },
@@ -118,11 +119,13 @@ impl TestRepoBuilder {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_github_remote(mut self, url: impl Into<String>) -> Self {
         self.with_remote = Some(url.into());
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_npm_package(mut self, name: impl Into<String>, version: impl Into<String>) -> Self {
         self.with_package = Some(PackageType::Npm {
             name: name.into(),
@@ -131,6 +134,7 @@ impl TestRepoBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_cargo_package(mut self, name: impl Into<String>, version: impl Into<String>) -> Self {
         self.with_package = Some(PackageType::Cargo {
             name: name.into(),
@@ -139,6 +143,7 @@ impl TestRepoBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_python_package(mut self, name: impl Into<String>, version: impl Into<String>) -> Self {
         self.with_package = Some(PackageType::PyPI {
             name: name.into(),
@@ -147,6 +152,7 @@ impl TestRepoBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_commits(mut self, count: usize) -> Self {
         self.with_commits = count;
         self
