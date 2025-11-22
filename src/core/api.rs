@@ -20,6 +20,7 @@ pub use super::discovery::find_repos_from_path;
 // Configuration
 pub use super::config::GIT_CONCURRENT_CAP;
 pub use super::config::{TRUFFLE_CONCURRENT_LIMIT, HYGIENE_CONCURRENT_LIMIT};
+pub use super::settings::Settings;
 
 // User-facing messages
 pub use super::config::{NO_REPOS_MESSAGE, CONFIG_SYNCING_MESSAGE};

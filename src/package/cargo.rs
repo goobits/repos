@@ -1,13 +1,36 @@
 //! Cargo package publishing functionality
 
+use anyhow::Result;
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::PackageInfo;
+use super::{PackageInfo, PackageManager};
+use super::traits::PackageProvider;
+use crate::core::Settings;
 
-const CARGO_OPERATION_TIMEOUT_SECS: u64 = 600; // 10 minutes for cargo operations (can be slow)
+pub struct CargoProvider;
+
+#[async_trait]
+impl PackageProvider for CargoProvider {
+    fn manager_type(&self) -> PackageManager {
+        PackageManager::Cargo
+    }
+
+    async fn detect(&self, path: &Path) -> bool {
+        tokio::fs::metadata(path.join("Cargo.toml")).await.is_ok()
+    }
+
+    async fn get_info(&self, path: &Path) -> Option<PackageInfo> {
+        get_package_info(path).await
+    }
+
+    async fn publish(&self, path: &Path, dry_run: bool) -> Result<(bool, String)> {
+        Ok(publish(path, dry_run).await)
+    }
+}
 
 /// Cargo.toml package section (partial)
 #[derive(Deserialize)]
@@ -29,7 +52,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
     let cargo: CargoToml = toml::from_str(&content).ok()?;
 
     Some(PackageInfo {
-        manager: super::PackageManager::Cargo,
+        manager: PackageManager::Cargo,
         name: cargo.package.name,
         version: cargo.package.version,
     })
@@ -44,7 +67,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
         args.push("--dry-run");
     }
 
-    let timeout_duration = Duration::from_secs(CARGO_OPERATION_TIMEOUT_SECS);
+    let timeout_duration = Duration::from_secs(Settings::get().timeouts.cargo_operation);
 
     let result = tokio::time::timeout(
         timeout_duration,

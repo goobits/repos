@@ -87,23 +87,7 @@ pub const GIT_OBJECTS_CHUNK_SIZE: usize = 100;
 #[doc(hidden)] // Internal display limit
 pub const LARGE_FILES_DISPLAY_LIMIT: usize = 10;
 
-// Directories to skip during repository search
-#[doc(hidden)] // Internal discovery configuration
-pub const SKIP_DIRECTORIES: &[&str] = &[
-    "node_modules",
-    "vendor",
-    "target",
-    "build",
-    ".next",
-    "dist",
-    "__pycache__",
-    ".venv",
-    "venv",
-];
-
 // Repository discovery configuration
-#[doc(hidden)] // Internal discovery limit
-pub const MAX_SCAN_DEPTH: usize = 10; // Maximum directory depth to scan
 #[doc(hidden)] // Internal optimization hint
 pub const ESTIMATED_REPO_COUNT: usize = 50; // Pre-allocation hint for collections
 
@@ -151,12 +135,4 @@ mod tests {
     // - MAX_SCAN_DEPTH = 10 (positive, prevents excessive recursion)
     // - ESTIMATED_REPO_COUNT = 50 (positive, reasonable)
 
-    #[test]
-    fn test_skip_directories_contains_common_dirs() {
-        // Verify common problematic directories are skipped
-        assert!(SKIP_DIRECTORIES.contains(&"node_modules"));
-        assert!(SKIP_DIRECTORIES.contains(&"target"));
-        assert!(SKIP_DIRECTORIES.contains(&".venv"));
-        assert!(SKIP_DIRECTORIES.len() > 5, "Should skip multiple common directories");
-    }
 }

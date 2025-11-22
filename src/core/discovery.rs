@@ -8,7 +8,8 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 use dashmap::DashMap;
 
-use super::config::{DEFAULT_REPO_NAME, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME, MAX_SCAN_DEPTH, ESTIMATED_REPO_COUNT};
+use super::config::{DEFAULT_REPO_NAME, UNKNOWN_REPO_NAME, ESTIMATED_REPO_COUNT};
+use super::Settings;
 
 /// Check if a .git file (for submodules/worktrees) contains gitdir reference
 /// Only reads the first 5 lines for efficiency
@@ -42,16 +43,19 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
     let name_counts = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
     let search_path_buf = search_path.to_path_buf();
 
+    let settings = Settings::get();
+
     // Build parallel walker with optimizations
     let walker = WalkBuilder::new(search_path)
         .follow_links(true) // Follow symlinks to find symlinked repos
-        .max_depth(Some(MAX_SCAN_DEPTH)) // Limit depth to avoid deep recursion
+        .max_depth(Some(settings.discovery.max_depth)) // Limit depth to avoid deep recursion
         .threads(num_cpus::get().min(8)) // Use up to 8 threads for directory walking
         .filter_entry(|entry| {
             let file_name = entry.file_name().to_str().unwrap_or("");
+            let settings = Settings::get();
 
             // Skip common build/dependency directories
-            if SKIP_DIRECTORIES.contains(&file_name) {
+            if settings.discovery.skip_directories.contains(file_name) {
                 return false;
             }
 

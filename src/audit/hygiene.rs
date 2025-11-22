@@ -16,36 +16,12 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::core::config::{GIT_OBJECTS_CHUNK_SIZE, LARGE_FILES_DISPLAY_LIMIT, PATH_DISPLAY_WIDTH};
-use crate::core::{create_progress_bar, GenericProcessingContext};
+use crate::core::{create_progress_bar, GenericProcessingContext, Settings};
 use crate::utils::shorten_path;
 
 // =====================================================================================
 // Hygiene checking constants and types
 // =====================================================================================
-
-// Universal patterns that should never be committed to git
-const UNIVERSAL_BAD_PATTERNS: &[&str] = &[
-    "node_modules/",
-    "vendor/",
-    "dist/",
-    "build/",
-    "target/debug/",
-    "target/release/",
-    ".env",
-    "*.log",
-    ".DS_Store",
-    "Thumbs.db",
-    "*.tmp",
-    "*.cache",
-    "__pycache__/",
-    ".venv/",
-    ".idea/",
-    ".vscode/settings.json",
-    "*.key",
-    "*.pem",
-    "*.p12",
-    "*.jks",
-];
 
 // Large file threshold in bytes (1MB)
 const LARGE_FILE_THRESHOLD: u64 = 1_048_576;
@@ -300,11 +276,11 @@ async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolati
         }
 
         // Check against universal bad patterns
-        for pattern in UNIVERSAL_BAD_PATTERNS {
+        for pattern in &Settings::get().patterns.hygiene_bad_patterns {
             let pattern_matches = if pattern.ends_with('/') {
                 line.starts_with(pattern) || line.contains(&format!("/{}", pattern))
-            } else if pattern.starts_with("*.") {
-                let extension = &pattern[1..]; // Remove *
+            } else if let Some(stripped) = pattern.strip_prefix("*.") {
+                let extension = stripped; // Remove *
                 line.ends_with(extension)
             } else {
                 line == *pattern || line.contains(pattern)

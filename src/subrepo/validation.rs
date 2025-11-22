@@ -1,7 +1,7 @@
 //! Validation logic for discovering nested repositories
 
 use super::{SubrepoInstance, ValidationReport, get_current_commit, get_remote_url, has_uncommitted_changes, get_commit_timestamp};
-use crate::core::config::SKIP_DIRECTORIES;
+use crate::core::Settings;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
@@ -52,9 +52,10 @@ fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<Su
         .max_depth(Some(5))  // Don't go too deep
         .filter_entry(|entry| {
             let file_name = entry.file_name().to_str().unwrap_or("");
+            let settings = Settings::get();
 
             // Skip build/dependency directories
-            if SKIP_DIRECTORIES.contains(&file_name) {
+            if settings.discovery.skip_directories.contains(file_name) {
                 return false;
             }
 

@@ -3,8 +3,16 @@
 pub mod cargo;
 pub mod npm;
 pub mod pypi;
+pub mod traits;
 
 use std::path::Path;
+use std::sync::OnceLock;
+use anyhow::Result;
+
+use crate::package::traits::PackageProvider;
+use crate::package::npm::NpmProvider;
+use crate::package::cargo::CargoProvider;
+use crate::package::pypi::PyPiProvider;
 
 /// Supported package managers
 #[derive(Clone, Debug, PartialEq)]
@@ -43,9 +51,68 @@ pub struct PackageInfo {
     pub version: String,
 }
 
+/// Enum dispatch for package providers
+pub enum ProviderEnum {
+    Npm(NpmProvider),
+    Cargo(CargoProvider),
+    PyPi(PyPiProvider),
+}
+
+impl ProviderEnum {
+    pub async fn detect(&self, path: &Path) -> bool {
+        match self {
+            ProviderEnum::Npm(p) => p.detect(path).await,
+            ProviderEnum::Cargo(p) => p.detect(path).await,
+            ProviderEnum::PyPi(p) => p.detect(path).await,
+        }
+    }
+
+    pub async fn get_info(&self, path: &Path) -> Option<PackageInfo> {
+        match self {
+            ProviderEnum::Npm(p) => p.get_info(path).await,
+            ProviderEnum::Cargo(p) => p.get_info(path).await,
+            ProviderEnum::PyPi(p) => p.get_info(path).await,
+        }
+    }
+
+    pub async fn publish(&self, path: &Path, dry_run: bool) -> Result<(bool, String)> {
+        match self {
+            ProviderEnum::Npm(p) => p.publish(path, dry_run).await,
+            ProviderEnum::Cargo(p) => p.publish(path, dry_run).await,
+            ProviderEnum::PyPi(p) => p.publish(path, dry_run).await,
+        }
+    }
+
+    pub fn manager_type(&self) -> PackageManager {
+        match self {
+            ProviderEnum::Npm(p) => p.manager_type(),
+            ProviderEnum::Cargo(p) => p.manager_type(),
+            ProviderEnum::PyPi(p) => p.manager_type(),
+        }
+    }
+}
+
+/// Global registry of package providers
+static PROVIDERS: OnceLock<Vec<ProviderEnum>> = OnceLock::new();
+
+/// Initialize and return the list of package providers
+fn get_providers() -> &'static Vec<ProviderEnum> {
+    PROVIDERS.get_or_init(|| {
+        vec![
+            ProviderEnum::Npm(NpmProvider),
+            ProviderEnum::Cargo(CargoProvider),
+            ProviderEnum::PyPi(PyPiProvider),
+        ]
+    })
+}
+
 /// Detects the package manager for a given repository path (synchronous version)
 /// Returns None if no package manager is detected
+#[allow(dead_code)] // Used in tests and potentially legacy code
 pub fn detect_package_manager(repo_path: &Path) -> Option<PackageManager> {
+    // We can use the async one inside a block_on if needed,
+    // but for now let's just replicate the simple check since traits are async
+    // Or we can just look for the files directly as a fallback
     if repo_path.join("package.json").exists() {
         Some(PackageManager::Npm)
     } else if repo_path.join("Cargo.toml").exists() {
@@ -57,40 +124,29 @@ pub fn detect_package_manager(repo_path: &Path) -> Option<PackageManager> {
     }
 }
 
+
 /// Detects the package manager for a given repository path (async version using tokio::fs)
 /// Returns None if no package manager is detected
 /// This is significantly faster when called in parallel on many repositories
 pub async fn detect_package_manager_async(repo_path: &Path) -> Option<PackageManager> {
-    use tokio::fs;
-
-    // Check for package.json (npm)
-    if fs::metadata(repo_path.join("package.json")).await.is_ok() {
-        return Some(PackageManager::Npm);
+    for provider in get_providers() {
+        if provider.detect(repo_path).await {
+            return Some(provider.manager_type());
+        }
     }
-
-    // Check for Cargo.toml (cargo)
-    if fs::metadata(repo_path.join("Cargo.toml")).await.is_ok() {
-        return Some(PackageManager::Cargo);
-    }
-
-    // Check for pyproject.toml or setup.py (PyPI)
-    if fs::metadata(repo_path.join("pyproject.toml")).await.is_ok()
-        || fs::metadata(repo_path.join("setup.py")).await.is_ok() {
-        return Some(PackageManager::PyPI);
-    }
-
     None
 }
 
 /// Gets package information from a repository
 pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
-    let manager = detect_package_manager(repo_path)?;
+    let manager_type = detect_package_manager_async(repo_path).await?;
 
-    match manager {
-        PackageManager::Npm => npm::get_package_info(repo_path).await,
-        PackageManager::Cargo => cargo::get_package_info(repo_path).await,
-        PackageManager::PyPI => pypi::get_package_info(repo_path).await,
+    for provider in get_providers() {
+        if provider.manager_type() == manager_type {
+            return provider.get_info(repo_path).await;
+        }
     }
+    None
 }
 
 /// Publishes a package using the appropriate package manager
@@ -100,10 +156,49 @@ pub async fn publish_package(
     manager: &PackageManager,
     dry_run: bool,
 ) -> (bool, String) {
-    match manager {
-        PackageManager::Npm => npm::publish(repo_path, dry_run).await,
-        PackageManager::Cargo => cargo::publish(repo_path, dry_run).await,
-        PackageManager::PyPI => pypi::publish(repo_path, dry_run).await,
+    for provider in get_providers() {
+        if provider.manager_type() == *manager {
+            return provider.publish(repo_path, dry_run).await.unwrap_or((false, "Publish failed".to_string()));
+        }
+    }
+    (false, "Package manager not found".to_string())
+}
+
+/// Status of a publish operation
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub enum PublishStatus {
+    /// Package was successfully published
+    Published,
+    /// Package is already published (version exists)
+    AlreadyPublished,
+    /// Package was skipped (no package manager detected)
+    Skipped,
+    /// An error occurred during publishing
+    Error,
+    /// Dry run completed successfully
+    DryRunOk,
+}
+
+impl PublishStatus {
+    /// Returns the emoji symbol for this status
+    pub fn symbol(&self) -> &str {
+        match self {
+            PublishStatus::Published | PublishStatus::DryRunOk => "🟢",
+            PublishStatus::AlreadyPublished | PublishStatus::Skipped => "🟠",
+            PublishStatus::Error => "🔴",
+        }
+    }
+
+    /// Returns the text representation of this status
+    pub fn text(&self) -> &str {
+        match self {
+            PublishStatus::Published => "published",
+            PublishStatus::AlreadyPublished => "already-published",
+            PublishStatus::Skipped => "skipped",
+            PublishStatus::Error => "failed",
+            PublishStatus::DryRunOk => "ok",
+        }
     }
 }
 
@@ -267,43 +362,5 @@ name = "test"
         let async_result = detect_package_manager_async(temp_dir.path()).await;
 
         assert_eq!(sync_result, async_result, "Sync and async should return same result");
-    }
-}
-
-/// Status of a publish operation
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub enum PublishStatus {
-    /// Package was successfully published
-    Published,
-    /// Package is already published (version exists)
-    AlreadyPublished,
-    /// Package was skipped (no package manager detected)
-    Skipped,
-    /// An error occurred during publishing
-    Error,
-    /// Dry run completed successfully
-    DryRunOk,
-}
-
-impl PublishStatus {
-    /// Returns the emoji symbol for this status
-    pub fn symbol(&self) -> &str {
-        match self {
-            PublishStatus::Published | PublishStatus::DryRunOk => "🟢",
-            PublishStatus::AlreadyPublished | PublishStatus::Skipped => "🟠",
-            PublishStatus::Error => "🔴",
-        }
-    }
-
-    /// Returns the text representation of this status
-    pub fn text(&self) -> &str {
-        match self {
-            PublishStatus::Published => "published",
-            PublishStatus::AlreadyPublished => "already-published",
-            PublishStatus::Skipped => "skipped",
-            PublishStatus::Error => "failed",
-            PublishStatus::DryRunOk => "ok",
-        }
     }
 }

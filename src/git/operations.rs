@@ -8,9 +8,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use super::status::Status;
-
-// Timeout constants
-const GIT_OPERATION_TIMEOUT_SECS: u64 = 180; // 3 minutes per repository
+use crate::core::Settings;
 
 // Git command arguments
 const GIT_DIFF_INDEX_ARGS: &[&str] = &["diff-index", "--quiet", "HEAD", "--"];
@@ -43,10 +41,10 @@ const STATUS_SYNCED: &str = "up to date";
 /// - `stdout`: trimmed standard output as String
 /// - `stderr`: trimmed standard error as String
 ///
-/// Includes a 180-second timeout to prevent hanging on network operations.
+/// Includes a configurable timeout to prevent hanging on network operations.
 #[doc(hidden)]
 pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String)> {
-    let timeout_duration = Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS);
+    let timeout_duration = Duration::from_secs(Settings::get().timeouts.git_operation);
 
     let result = tokio::time::timeout(
         timeout_duration,
@@ -78,7 +76,7 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
         Ok(Err(e)) => Err(e.into()),
         Err(_) => Err(anyhow::anyhow!(
             "Git operation timed out after {} seconds",
-            GIT_OPERATION_TIMEOUT_SECS
+            Settings::get().timeouts.git_operation
         )),
     }
 }
@@ -708,7 +706,7 @@ static VISIBILITY_CACHE: OnceLock<DashMap<PathBuf, RepoVisibility>> = OnceLock::
 
 /// Gets or initializes the visibility cache
 fn get_visibility_cache() -> &'static DashMap<PathBuf, RepoVisibility> {
-    VISIBILITY_CACHE.get_or_init(|| DashMap::new())
+    VISIBILITY_CACHE.get_or_init(DashMap::new)
 }
 
 /// Detects repository visibility using gh CLI with in-memory caching

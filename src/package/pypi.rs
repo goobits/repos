@@ -1,14 +1,49 @@
 //! Python package publishing functionality
 
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::PackageInfo;
+use super::{PackageInfo, PackageManager};
+use super::traits::PackageProvider;
+use crate::core::Settings;
 
-const PYTHON_OPERATION_TIMEOUT_SECS: u64 = 300; // 5 minutes for python operations
+pub struct PyPiProvider;
+
+#[async_trait]
+impl PackageProvider for PyPiProvider {
+    fn id(&self) -> &str {
+        "pypi"
+    }
+
+    fn name(&self) -> &str {
+        "python"
+    }
+
+    fn icon(&self) -> &str {
+        "📦"
+    }
+
+    fn manager_type(&self) -> PackageManager {
+        PackageManager::PyPI
+    }
+
+    async fn detect(&self, path: &Path) -> bool {
+        tokio::fs::metadata(path.join("pyproject.toml")).await.is_ok()
+        || tokio::fs::metadata(path.join("setup.py")).await.is_ok()
+    }
+
+    async fn get_info(&self, path: &Path) -> Option<PackageInfo> {
+        get_package_info(path).await
+    }
+
+    async fn publish(&self, path: &Path, dry_run: bool) -> Result<(bool, String)> {
+        Ok(publish(path, dry_run).await)
+    }
+}
 
 /// pyproject.toml structure (partial)
 #[derive(Deserialize)]
@@ -31,7 +66,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
             if let Ok(pyproject) = toml::from_str::<PyProjectToml>(&content) {
                 if let Some(project) = pyproject.project {
                     return Some(PackageInfo {
-                        manager: super::PackageManager::PyPI,
+                        manager: PackageManager::PyPI,
                         name: project.name,
                         version: project.version,
                     });
@@ -40,25 +75,66 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
         }
     }
 
-    // If pyproject.toml doesn't work, try to get info from setup.py by running python
+    // If pyproject.toml doesn't work, try to get info from setup.py
     let setup_py_path = repo_path.join("setup.py");
     if setup_py_path.exists() {
-        if let Ok(output) = Command::new("python")
-            .args(["-c", "import setuptools; print('OK')"])
-            .current_dir(repo_path)
-            .output()
-            .await
-        {
+        // Try to extract name and version using a python script
+        // This is more robust than simple existence check
+        let script = r#"
+import setuptools
+import json
+import sys
+
+def setup(**kwargs):
+    print(json.dumps({
+        "name": kwargs.get("name", "unknown"),
+        "version": kwargs.get("version", "unknown")
+    }))
+
+setuptools.setup = setup
+sys.argv = ["setup.py", "--dry-run"]
+try:
+    # Use utf-8 encoding explicitly to match default expectations
+    with open("setup.py", encoding="utf-8") as f:
+        exec(f.read())
+except Exception:
+    pass
+"#;
+
+        let timeout_duration = Duration::from_secs(Settings::get().timeouts.python_operation);
+
+        if let Ok(Ok(output)) = tokio::time::timeout(
+            timeout_duration,
+            Command::new("python")
+                .args(["-c", script])
+                .current_dir(repo_path)
+                .output()
+        ).await {
             if output.status.success() {
-                // We can't easily extract name/version from setup.py without running it
-                // Return a placeholder
-                return Some(PackageInfo {
-                    manager: super::PackageManager::PyPI,
-                    name: "unknown".to_string(),
-                    version: "unknown".to_string(),
-                });
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(line) = stdout.lines().last() {
+                    if let Ok(info) = serde_json::from_str::<serde_json::Value>(line) {
+                         let name = info["name"].as_str().unwrap_or("unknown").to_string();
+                         let version = info["version"].as_str().unwrap_or("unknown").to_string();
+
+                         if name != "unknown" {
+                             return Some(PackageInfo {
+                                manager: PackageManager::PyPI,
+                                name,
+                                version,
+                            });
+                         }
+                    }
+                }
             }
         }
+
+        // Fallback if script fails but file exists
+        return Some(PackageInfo {
+            manager: PackageManager::PyPI,
+            name: "unknown".to_string(),
+            version: "unknown".to_string(),
+        });
     }
 
     None
@@ -101,7 +177,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
         args.push("dist/*");
     }
 
-    let timeout_duration = Duration::from_secs(PYTHON_OPERATION_TIMEOUT_SECS);
+    let timeout_duration = Duration::from_secs(Settings::get().timeouts.python_operation);
 
     let result = tokio::time::timeout(
         timeout_duration,
@@ -183,5 +259,45 @@ fn clean_python_error(error: &str) -> String {
             .find(|line| !line.trim().is_empty() && !line.contains("Uploading"))
             .map(|line| line.trim().to_string())
             .unwrap_or_else(|| error.trim().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_get_package_info_setup_py() {
+        // Check if python is available
+        if Command::new("python").arg("--version").output().await.is_err() {
+            println!("Python not available, skipping test");
+            return;
+        }
+
+        // Check if setuptools is available
+        if !Command::new("python")
+            .args(["-c", "import setuptools"])
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            println!("setuptools not available, skipping test");
+            return;
+        }
+
+        let temp_dir = TempDir::new().unwrap();
+        let setup_py = r#"
+from setuptools import setup
+setup(name="test-pkg", version="0.1.2")
+"#;
+        tokio::fs::write(temp_dir.path().join("setup.py"), setup_py).await.unwrap();
+
+        let info = get_package_info(temp_dir.path()).await;
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.name, "test-pkg");
+        assert_eq!(info.version, "0.1.2");
     }
 }

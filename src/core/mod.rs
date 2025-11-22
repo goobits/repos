@@ -3,6 +3,7 @@ pub(crate) mod config;
 pub(crate) mod discovery;
 pub(crate) mod progress;
 pub(crate) mod stats;
+pub(crate) mod settings;
 
 // Test modules
 #[cfg(test)]

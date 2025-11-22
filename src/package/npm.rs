@@ -1,13 +1,36 @@
 //! NPM package publishing functionality
 
+use anyhow::Result;
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::PackageInfo;
+use super::{PackageInfo, PackageManager};
+use super::traits::PackageProvider;
+use crate::core::Settings;
 
-const NPM_OPERATION_TIMEOUT_SECS: u64 = 300; // 5 minutes for npm operations
+pub struct NpmProvider;
+
+#[async_trait]
+impl PackageProvider for NpmProvider {
+    fn manager_type(&self) -> PackageManager {
+        PackageManager::Npm
+    }
+
+    async fn detect(&self, path: &Path) -> bool {
+        tokio::fs::metadata(path.join("package.json")).await.is_ok()
+    }
+
+    async fn get_info(&self, path: &Path) -> Option<PackageInfo> {
+        get_package_info(path).await
+    }
+
+    async fn publish(&self, path: &Path, dry_run: bool) -> Result<(bool, String)> {
+        Ok(publish(path, dry_run).await)
+    }
+}
 
 /// npm package.json structure (partial)
 #[derive(Deserialize)]
@@ -24,7 +47,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
     let package: PackageJson = serde_json::from_str(&content).ok()?;
 
     Some(PackageInfo {
-        manager: super::PackageManager::Npm,
+        manager: PackageManager::Npm,
         name: package.name,
         version: package.version,
     })
@@ -39,7 +62,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
         args.push("--dry-run");
     }
 
-    let timeout_duration = Duration::from_secs(NPM_OPERATION_TIMEOUT_SECS);
+    let timeout_duration = Duration::from_secs(Settings::get().timeouts.npm_operation);
 
     let result = tokio::time::timeout(
         timeout_duration,
