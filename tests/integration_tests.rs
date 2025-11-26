@@ -632,3 +632,280 @@ async fn test_create_and_push_tag() {
     assert!(message.contains("already exists"),
         "Should indicate tag already exists: {}", message);
 }
+
+// ============================================================================
+// Git LFS Tests
+// ============================================================================
+
+/// Helper function to check if git-lfs is available
+fn is_git_lfs_available() -> bool {
+    std::process::Command::new("git")
+        .args(["lfs", "version"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[tokio::test]
+async fn test_check_uses_git_lfs_without_lfs() {
+    use goobits_repos::git::check_uses_git_lfs;
+
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    // Create a test repository without LFS
+    let repo = match TestRepoBuilder::new("test-repo-no-lfs").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
+
+    let repo_path = repo.path();
+
+    // Should return false for a regular repo without LFS
+    let uses_lfs = check_uses_git_lfs(repo_path).await;
+    assert!(!uses_lfs, "Regular repo without LFS should return false");
+}
+
+#[tokio::test]
+async fn test_check_uses_git_lfs_with_gitattributes() {
+    use goobits_repos::git::check_uses_git_lfs;
+    use std::fs;
+
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    if !is_git_lfs_available() {
+        eprintln!("Git LFS not available, skipping test");
+        return;
+    }
+
+    // Create a test repository
+    let repo = match TestRepoBuilder::new("test-repo-with-lfs").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
+
+    let repo_path = repo.path();
+
+    // Create a .gitattributes file with LFS configuration
+    let gitattributes_content = "*.bin filter=lfs diff=lfs merge=lfs -text\n*.dat filter=lfs diff=lfs merge=lfs -text\n";
+    fs::write(repo_path.join(".gitattributes"), gitattributes_content)
+        .expect("Failed to write .gitattributes");
+
+    // Should return true when .gitattributes contains "filter=lfs"
+    let uses_lfs = check_uses_git_lfs(repo_path).await;
+    assert!(uses_lfs, "Repo with .gitattributes containing 'filter=lfs' should return true");
+}
+
+#[tokio::test]
+async fn test_check_uses_git_lfs_without_git_lfs_installed() {
+    use goobits_repos::git::check_uses_git_lfs;
+    use std::fs;
+
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    // Create a test repository
+    let repo = match TestRepoBuilder::new("test-repo-no-lfs-cmd").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
+
+    let repo_path = repo.path();
+
+    // Even with .gitattributes, if git-lfs is not installed, should return false
+    let gitattributes_content = "*.bin filter=lfs diff=lfs merge=lfs -text\n";
+    fs::write(repo_path.join(".gitattributes"), gitattributes_content)
+        .expect("Failed to write .gitattributes");
+
+    let uses_lfs = check_uses_git_lfs(repo_path).await;
+
+    // If git-lfs is installed, it should return true
+    // If git-lfs is not installed, it should return false
+    // This test verifies the function handles both cases gracefully
+    if is_git_lfs_available() {
+        assert!(uses_lfs, "With git-lfs installed and .gitattributes, should return true");
+    } else {
+        assert!(!uses_lfs, "Without git-lfs installed, should return false even with .gitattributes");
+    }
+}
+
+#[tokio::test]
+async fn test_has_pending_lfs_objects_without_lfs() {
+    use goobits_repos::git::has_pending_lfs_objects;
+
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    // Create a test repository without LFS
+    let repo = match TestRepoBuilder::new("test-repo-no-lfs-pending").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
+
+    let repo_path = repo.path();
+
+    // Should return false for repos without LFS
+    let has_pending = has_pending_lfs_objects(repo_path).await;
+    assert!(!has_pending, "Repo without LFS should have no pending LFS objects");
+}
+
+#[tokio::test]
+async fn test_has_pending_lfs_objects_with_lfs_but_no_objects() {
+    use goobits_repos::git::has_pending_lfs_objects;
+    use std::fs;
+
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    if !is_git_lfs_available() {
+        eprintln!("Git LFS not available, skipping test");
+        return;
+    }
+
+    // Create a test repository
+    let repo = match TestRepoBuilder::new("test-repo-lfs-no-pending").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
+
+    let repo_path = repo.path();
+
+    // Create a .gitattributes file with LFS configuration
+    let gitattributes_content = "*.bin filter=lfs diff=lfs merge=lfs -text\n";
+    fs::write(repo_path.join(".gitattributes"), gitattributes_content)
+        .expect("Failed to write .gitattributes");
+
+    // Should return false when there are no LFS objects
+    let has_pending = has_pending_lfs_objects(repo_path).await;
+    assert!(!has_pending, "Repo with LFS configured but no objects should have no pending LFS objects");
+}
+
+#[tokio::test]
+async fn test_push_lfs_objects_without_lfs() {
+    use goobits_repos::git::push_lfs_objects;
+
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    // Create a test repository without LFS
+    let repo = match TestRepoBuilder::new("test-repo-push-no-lfs").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
+
+    let repo_path = repo.path();
+
+    // Try to push LFS objects when LFS is not configured
+    let (success, error_msg) = push_lfs_objects(repo_path, "origin", "main").await;
+
+    // Should handle gracefully - either fail with error message or succeed if git-lfs is installed
+    if !success {
+        assert!(!error_msg.is_empty(), "Should return error message when push fails");
+        // Error message should indicate LFS issue
+        assert!(
+            error_msg.to_lowercase().contains("lfs") ||
+            error_msg.to_lowercase().contains("not") ||
+            error_msg.to_lowercase().contains("error"),
+            "Error message should indicate LFS-related issue: {}", error_msg
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_push_lfs_objects_without_remote() {
+    use goobits_repos::git::push_lfs_objects;
+
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    if !is_git_lfs_available() {
+        eprintln!("Git LFS not available, skipping test");
+        return;
+    }
+
+    // Create a test repository
+    let repo = match TestRepoBuilder::new("test-repo-lfs-no-remote").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
+
+    let repo_path = repo.path();
+
+    // Try to push LFS objects to a non-existent remote
+    let (success, error_msg) = push_lfs_objects(repo_path, "origin", "main").await;
+
+    // Should fail gracefully with error message
+    if !success {
+        assert!(!error_msg.is_empty(), "Should return error message when remote doesn't exist");
+    }
+}
+
+#[tokio::test]
+async fn test_push_lfs_objects_invalid_branch() {
+    use goobits_repos::git::push_lfs_objects;
+
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    if !is_git_lfs_available() {
+        eprintln!("Git LFS not available, skipping test");
+        return;
+    }
+
+    // Create a test repository
+    let repo = match TestRepoBuilder::new("test-repo-lfs-invalid-branch").build() {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Failed to create test repo, skipping");
+            return;
+        }
+    };
+
+    let repo_path = repo.path();
+
+    // Try to push LFS objects with an invalid branch name
+    let (success, error_msg) = push_lfs_objects(repo_path, "origin", "nonexistent-branch").await;
+
+    // Should handle gracefully - may succeed or fail depending on git-lfs behavior
+    if !success {
+        assert!(!error_msg.is_empty(), "Should return error message when branch is invalid");
+    }
+}

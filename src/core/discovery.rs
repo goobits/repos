@@ -132,9 +132,11 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                             }
                         };
 
-                        repositories.lock()
-                            .expect("Mutex poisoned - this indicates a panic in another thread")
-                            .push((repo_name, path_buf));
+                        if let Ok(mut repos) = repositories.lock() {
+                            repos.push((repo_name, path_buf));
+                        } else {
+                            eprintln!("Warning: Failed to record repository at {}", path.display());
+                        }
                     }
                 }
             }
@@ -145,11 +147,18 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 
     // Extract repositories from Arc<Mutex<>>
     let mut repos = Arc::try_unwrap(repositories)
-        .map(|mutex| mutex.into_inner()
-            .expect("Mutex poisoned - this indicates a panic in another thread"))
-        .unwrap_or_else(|arc| arc.lock()
-            .expect("Mutex poisoned - this indicates a panic in another thread")
-            .clone());
+        .map(|mutex| mutex.into_inner().unwrap_or_else(|e| {
+            eprintln!("Warning: Mutex poisoned during repository extraction");
+            e.into_inner()
+        }))
+        .unwrap_or_else(|arc| {
+            arc.lock()
+                .map(|guard| guard.clone())
+                .unwrap_or_else(|e| {
+                    eprintln!("Warning: Failed to lock repositories for extraction");
+                    e.into_inner().clone()
+                })
+        });
 
     // Sort repositories alphabetically by name (case-insensitive) using parallel sort
     repos.par_sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
@@ -170,7 +179,8 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
 pub fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, PathBuf)>) {
     println!();
     print!("{}", scanning_msg);
-    std::io::stdout().flush().expect("Failed to flush stdout during repository scanning - this indicates a terminal or I/O issue");
+    // Flush stdout - ignore errors as this is non-critical
+    let _ = std::io::stdout().flush();
 
     let start_time = std::time::Instant::now();
     let repos = find_repos();

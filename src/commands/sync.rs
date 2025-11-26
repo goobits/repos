@@ -101,11 +101,9 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
     } else {
         use indicatif::{ProgressBar, ProgressStyle};
         let single_pb = context.multi_progress.add(ProgressBar::new(context.total_repos as u64));
-        single_pb.set_style(
-            ProgressStyle::default_bar()
-                .template("[{pos}/{len}] {msg}")
-                .expect("Invalid progress bar template - this is a bug")
-        );
+        if let Ok(style) = ProgressStyle::default_bar().template("[{pos}/{len}] {msg}") {
+            single_pb.set_style(style);
+        }
         single_pb.set_message("📤 Processing...");
         vec![single_pb; context.repositories.len()]
     };
@@ -264,14 +262,15 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             } else {
                 // Read atomics without lock
                 use std::sync::atomic::Ordering;
+                let no_upstream_len = stats.no_upstream_repos.lock()
+                    .map(|guard| guard.len())
+                    .unwrap_or(0);
                 let live_counters = format!(
                     "✅ {} Pushed  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
                     stats.total_commits_pushed.load(Ordering::Relaxed),
                     stats.synced_repos.load(Ordering::Relaxed),
                     stats.error_repos.load(Ordering::Relaxed),
-                    stats.no_upstream_repos.lock()
-                        .expect("Mutex poisoned - this indicates a panic in another thread")
-                        .len(),
+                    no_upstream_len,
                     stats.skipped_repos.load(Ordering::Relaxed)
                 );
                 footer_clone.set_message(live_counters);
@@ -401,11 +400,9 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
     } else {
         use indicatif::{ProgressBar, ProgressStyle};
         let single_pb = context.multi_progress.add(ProgressBar::new(context.total_repos as u64));
-        single_pb.set_style(
-            ProgressStyle::default_bar()
-                .template("[{pos}/{len}] {msg}")
-                .expect("Invalid progress bar template - this is a bug")
-        );
+        if let Ok(style) = ProgressStyle::default_bar().template("[{pos}/{len}] {msg}") {
+            single_pb.set_style(style);
+        }
         single_pb.set_message("🔽 Processing...");
         vec![single_pb; context.repositories.len()]
     };
@@ -573,14 +570,15 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
             } else {
                 // Read atomics without lock
                 use std::sync::atomic::Ordering;
+                let no_upstream_len = stats.no_upstream_repos.lock()
+                    .map(|guard| guard.len())
+                    .unwrap_or(0);
                 let live_counters = format!(
                     "🔽 {} Pulled  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
                     total_commits_pulled_clone.load(Ordering::Relaxed),
                     stats.synced_repos.load(Ordering::Relaxed),
                     stats.error_repos.load(Ordering::Relaxed),
-                    stats.no_upstream_repos.lock()
-                        .expect("Mutex poisoned - this indicates a panic in another thread")
-                        .len(),
+                    no_upstream_len,
                     stats.skipped_repos.load(Ordering::Relaxed)
                 );
                 footer_clone.set_message(live_counters);
