@@ -25,7 +25,7 @@ const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 /// IMPORTANT: This should be updated when the install script changes
 /// To get the current checksum, download the script and run: sha256sum install.sh
 /// URL: https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh
-const TRUFFLEHOG_INSTALL_SCRIPT_SHA256: &str = "PLACEHOLDER_UPDATE_WITH_ACTUAL_CHECKSUM";
+const TRUFFLEHOG_INSTALL_SCRIPT_SHA256: &str = "c394defeaea8a7c48f828a2051b608a9b19f43f34b891407b66a386c3e2591e2";
 
 /// Comprehensive statistics for TruffleHog scanning
 #[derive(Clone, Default, Debug)]
