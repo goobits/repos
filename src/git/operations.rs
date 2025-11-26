@@ -369,7 +369,7 @@ pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push:
 
     // Check if repo uses Git LFS and push LFS objects FIRST
     let uses_lfs = check_uses_git_lfs(path).await;
-    if uses_lfs {
+    if uses_lfs && has_pending_lfs_objects(path).await {
         let branch = if fetch_result.current_branch.is_empty() {
             "HEAD".to_string()
         } else {

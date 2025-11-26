@@ -26,5 +26,6 @@ pub use super::config::{
 // Additional operations for command modules and tests
 pub use super::operations::{
     has_uncommitted_changes, create_and_push_tag, get_repo_visibility,
-    stage_files, unstage_files, get_staging_status, has_staged_changes, commit_changes
+    stage_files, unstage_files, get_staging_status, has_staged_changes, commit_changes,
+    check_uses_git_lfs, push_lfs_objects, has_pending_lfs_objects
 };

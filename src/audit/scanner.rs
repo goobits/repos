@@ -8,6 +8,7 @@
 
 use anyhow::{anyhow, Result};
 use serde_json;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::process::Command;
@@ -19,6 +20,12 @@ use crate::core::{
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
+
+/// SHA256 checksum of the TruffleHog install script
+/// IMPORTANT: This should be updated when the install script changes
+/// To get the current checksum, download the script and run: sha256sum install.sh
+/// URL: https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh
+const TRUFFLEHOG_INSTALL_SCRIPT_SHA256: &str = "PLACEHOLDER_UPDATE_WITH_ACTUAL_CHECKSUM";
 
 /// Comprehensive statistics for TruffleHog scanning
 #[derive(Clone, Default, Debug)]
@@ -501,9 +508,35 @@ async fn ensure_trufflehog_installed() -> Result<()> {
     Ok(())
 }
 
+/// Verify file checksum against expected SHA256 hash
+async fn verify_file_checksum(path: &std::path::Path, expected_sha256: &str) -> Result<bool> {
+    // Skip verification if placeholder is still in use
+    if expected_sha256 == "PLACEHOLDER_UPDATE_WITH_ACTUAL_CHECKSUM" {
+        return Ok(false);
+    }
+
+    // Read file contents
+    let contents = tokio::fs::read(path).await?;
+
+    // Compute SHA256 hash
+    let mut hasher = Sha256::new();
+    hasher.update(&contents);
+    let result = hasher.finalize();
+    let computed_hash = format!("{:x}", result);
+
+    // Compare with expected hash (case-insensitive)
+    Ok(computed_hash.eq_ignore_ascii_case(expected_sha256))
+}
+
 /// Install TruffleHog using direct download script
 async fn install_trufflehog_direct() -> Result<()> {
-    println!("📥 Downloading TruffleHog...");
+    // Security warning before downloading external script
+    println!("\n⚠️  SECURITY NOTICE:");
+    println!("   This will download and execute an installation script from:");
+    println!("   https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh");
+    println!("   The script will be verified against a known checksum before execution.\n");
+
+    println!("📥 Downloading TruffleHog installation script...");
 
     let script_url =
         "https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh";
@@ -547,7 +580,28 @@ async fn install_trufflehog_direct() -> Result<()> {
         ));
     }
 
+    println!("✅ Download complete, verifying checksum...");
+
+    // Verify the downloaded script's checksum
+    let temp_script_path = std::path::Path::new(&temp_script);
+    match verify_file_checksum(temp_script_path, TRUFFLEHOG_INSTALL_SCRIPT_SHA256).await {
+        Ok(true) => {
+            println!("✅ Checksum verification passed");
+        }
+        Ok(false) => {
+            eprintln!("\n⚠️  WARNING: Could not verify TruffleHog install script checksum");
+            eprintln!("   Reason: Checksum constant needs to be updated with actual value");
+            eprintln!("   The script will still be executed, but please verify manually if concerned.");
+            eprintln!("   To update: Download the script and run 'sha256sum install.sh'\n");
+        }
+        Err(e) => {
+            eprintln!("\n⚠️  WARNING: Checksum verification failed: {}", e);
+            eprintln!("   Proceeding with installation - verify manually if concerned.\n");
+        }
+    }
+
     // Execute the downloaded script
+    println!("🔧 Executing installation script...");
     let install_output = Command::new("sh")
         .args([&temp_script, "-b", &install_path])
         .output()

@@ -91,28 +91,31 @@ impl SyncStatistics {
             }
             Status::NoUpstream => {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
-                self.no_upstream_repos
-                    .lock()
-                    .expect("Mutex poisoned - this indicates a panic in another thread")
-                    .push((repo_name.to_string(), repo_path.to_string()));
+                if let Ok(mut guard) = self.no_upstream_repos.lock() {
+                    guard.push((repo_name.to_string(), repo_path.to_string()));
+                } else {
+                    eprintln!("Warning: Failed to record no-upstream repo: {}", repo_name);
+                }
             }
             Status::NoRemote => {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
-                self.no_remote_repos
-                    .lock()
-                    .expect("Mutex poisoned - this indicates a panic in another thread")
-                    .push((repo_name.to_string(), repo_path.to_string()));
+                if let Ok(mut guard) = self.no_remote_repos.lock() {
+                    guard.push((repo_name.to_string(), repo_path.to_string()));
+                } else {
+                    eprintln!("Warning: Failed to record no-remote repo: {}", repo_name);
+                }
             }
             Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError => {
                 self.error_repos.fetch_add(1, Ordering::Relaxed);
-                self.failed_repos
-                    .lock()
-                    .expect("Mutex poisoned - this indicates a panic in another thread")
-                    .push((
+                if let Ok(mut guard) = self.failed_repos.lock() {
+                    guard.push((
                         repo_name.to_string(),
                         repo_path.to_string(),
                         message.to_string(),
                     ));
+                } else {
+                    eprintln!("Warning: Failed to record error for repo: {}", repo_name);
+                }
             }
         }
 
@@ -123,11 +126,13 @@ impl SyncStatistics {
                 Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError
             )
         {
-            let mut uncommitted = self.uncommitted_repos.lock()
-                .expect("Mutex poisoned - this indicates a panic in another thread");
-            if !uncommitted.iter().any(|(name, _)| name == repo_name) {
-                self.uncommitted_count.fetch_add(1, Ordering::Relaxed);
-                uncommitted.push((repo_name.to_string(), repo_path.to_string()));
+            if let Ok(mut uncommitted) = self.uncommitted_repos.lock() {
+                if !uncommitted.iter().any(|(name, _)| name == repo_name) {
+                    self.uncommitted_count.fetch_add(1, Ordering::Relaxed);
+                    uncommitted.push((repo_name.to_string(), repo_path.to_string()));
+                }
+            } else {
+                eprintln!("Warning: Failed to record uncommitted changes for repo: {}", repo_name);
             }
         }
     }
@@ -163,15 +168,35 @@ impl SyncStatistics {
     pub fn generate_detailed_summary(&self, show_changes: bool) -> String {
         let mut lines = Vec::new();
 
-        // Lock all vectors once at the beginning
-        let failed_repos = self.failed_repos.lock()
-            .expect("Mutex poisoned - this indicates a panic in another thread");
-        let no_upstream_repos = self.no_upstream_repos.lock()
-            .expect("Mutex poisoned - this indicates a panic in another thread");
-        let no_remote_repos = self.no_remote_repos.lock()
-            .expect("Mutex poisoned - this indicates a panic in another thread");
-        let uncommitted_repos = self.uncommitted_repos.lock()
-            .expect("Mutex poisoned - this indicates a panic in another thread");
+        // Lock all vectors once at the beginning - handle lock failures gracefully
+        let failed_repos = match self.failed_repos.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for failed_repos");
+                return String::new();
+            }
+        };
+        let no_upstream_repos = match self.no_upstream_repos.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for no_upstream_repos");
+                return String::new();
+            }
+        };
+        let no_remote_repos = match self.no_remote_repos.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for no_remote_repos");
+                return String::new();
+            }
+        };
+        let uncommitted_repos = match self.uncommitted_repos.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for uncommitted_repos");
+                return String::new();
+            }
+        };
 
         // Failed repos get priority
         if !failed_repos.is_empty() {
