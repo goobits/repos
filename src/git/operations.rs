@@ -130,13 +130,14 @@ pub async fn check_uses_git_lfs(path: &Path) -> bool {
     // Check if git lfs is available and configured for this repo
     // "git lfs env" returns success if LFS is installed and shows config
     match run_git(path, GIT_LFS_ENV_ARGS).await {
-        Ok((true, stdout, _)) => {
+        Ok((true, _stdout, _)) => {
             // LFS is installed, check if this repo actually uses it
             // by looking for .gitattributes with filter=lfs
+            // Note: We directly try to read without exists() check to avoid TOCTTOU race
             let gitattributes_path = path.join(".gitattributes");
-            if gitattributes_path.exists() {
-                if let Ok(content) = tokio::fs::read_to_string(&gitattributes_path).await {
-                    return content.contains("filter=lfs");
+            if let Ok(content) = tokio::fs::read_to_string(&gitattributes_path).await {
+                if content.contains("filter=lfs") {
+                    return true;
                 }
             }
             // Also check if there are any LFS objects tracked
@@ -144,8 +145,8 @@ pub async fn check_uses_git_lfs(path: &Path) -> bool {
             if let Ok((true, files, _)) = run_git(path, &["lfs", "ls-files"]).await {
                 return !files.trim().is_empty();
             }
-            // LFS is installed but not necessarily used in this repo
-            stdout.contains("git-lfs")
+            // LFS is installed but repo doesn't appear to use it
+            false
         }
         _ => false,
     }
@@ -376,9 +377,14 @@ pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push:
         };
 
         let (lfs_success, lfs_error) = push_lfs_objects(path, &remote_name, &branch).await;
-        if !lfs_success && !lfs_error.is_empty() {
-            // LFS push failed - return error
-            return (Status::Error, lfs_error, fetch_result.has_uncommitted);
+        if !lfs_success {
+            // LFS push failed - return error (use default message if error is empty)
+            let error_msg = if lfs_error.is_empty() {
+                "LFS push failed".to_string()
+            } else {
+                lfs_error
+            };
+            return (Status::Error, error_msg, fetch_result.has_uncommitted);
         }
     }
 
