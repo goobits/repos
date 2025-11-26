@@ -17,7 +17,6 @@ const GIT_DIFF_INDEX_ARGS: &[&str] = &["diff-index", "--quiet", "HEAD", "--"];
 const GIT_REMOTE_ARGS: &[&str] = &["remote"];
 const GIT_REV_PARSE_HEAD_ARGS: &[&str] = &["rev-parse", "--abbrev-ref", "HEAD"];
 const GIT_FETCH_ARGS: &[&str] = &["fetch", "--quiet"];
-const GIT_PUSH_ARGS: &[&str] = &["push"];
 const GIT_CONFIG_GET_ARGS: &[&str] = &["config", "--get"];
 const GIT_ADD_ARGS: &[&str] = &["add"];
 const GIT_RESTORE_STAGED_ARGS: &[&str] = &["restore", "--staged"];
