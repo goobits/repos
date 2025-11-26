@@ -24,6 +24,7 @@ const GIT_RESTORE_STAGED_ARGS: &[&str] = &["restore", "--staged"];
 const GIT_STATUS_PORCELAIN_ARGS: &[&str] = &["status", "--porcelain"];
 const GIT_COMMIT_ARGS: &[&str] = &["commit", "-m"];
 const GIT_DIFF_CACHED_ARGS: &[&str] = &["diff", "--cached", "--quiet"];
+const GIT_LFS_ENV_ARGS: &[&str] = &["lfs", "env"];
 
 // Status messages
 const DETACHED_HEAD_BRANCH: &str = "HEAD";
@@ -121,6 +122,66 @@ fn is_rate_limit_error(error_msg: &str) -> bool {
         || error_lower.contains("too many requests")
         || error_lower.contains("secondary rate limit")
         || (error_lower.contains("403") && error_lower.contains("github"))
+}
+
+/// Checks if a repository uses Git LFS
+/// Returns true if the repo has LFS configured (via git lfs env check)
+pub async fn check_uses_git_lfs(path: &Path) -> bool {
+    // Check if git lfs is available and configured for this repo
+    // "git lfs env" returns success if LFS is installed and shows config
+    match run_git(path, GIT_LFS_ENV_ARGS).await {
+        Ok((true, stdout, _)) => {
+            // LFS is installed, check if this repo actually uses it
+            // by looking for .gitattributes with filter=lfs
+            let gitattributes_path = path.join(".gitattributes");
+            if gitattributes_path.exists() {
+                if let Ok(content) = tokio::fs::read_to_string(&gitattributes_path).await {
+                    return content.contains("filter=lfs");
+                }
+            }
+            // Also check if there are any LFS objects tracked
+            // "git lfs ls-files" lists tracked LFS files
+            if let Ok((true, files, _)) = run_git(path, &["lfs", "ls-files"]).await {
+                return !files.trim().is_empty();
+            }
+            // LFS is installed but not necessarily used in this repo
+            stdout.contains("git-lfs")
+        }
+        _ => false,
+    }
+}
+
+/// Pushes Git LFS objects to the remote
+/// Should be called BEFORE regular git push when LFS is in use
+/// Returns (success, error_message)
+pub async fn push_lfs_objects(path: &Path, remote: &str, branch: &str) -> (bool, String) {
+    // Run "git lfs push --all <remote> <branch>" to upload all LFS objects
+    let args = vec!["lfs", "push", "--all", remote, branch];
+
+    match run_git(path, &args).await {
+        Ok((true, _, _)) => (true, String::new()),
+        Ok((false, _, stderr)) => {
+            let error_msg = if stderr.is_empty() {
+                "LFS push failed".to_string()
+            } else {
+                format!("LFS: {}", stderr.lines().next().unwrap_or("push failed"))
+            };
+            (false, error_msg)
+        }
+        Err(e) => (false, format!("LFS error: {}", e)),
+    }
+}
+
+/// Checks if there are uncommitted LFS objects that need to be pushed
+/// Returns true if there are LFS objects pending upload
+pub async fn has_pending_lfs_objects(path: &Path) -> bool {
+    // "git lfs status" shows files that need to be pushed
+    if let Ok((true, stdout, _)) = run_git(path, &["lfs", "status", "--porcelain"]).await {
+        // If there's any output, there are pending LFS operations
+        !stdout.trim().is_empty()
+    } else {
+        false
+    }
 }
 
 /// Result of the fetch phase for a repository
@@ -297,23 +358,44 @@ pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push:
         return (fetch_result.status, fetch_result.message.clone(), fetch_result.has_uncommitted);
     }
 
+    // Detect remote name for LFS and push operations
+    let remote_name = match run_git(path, GIT_REMOTE_ARGS).await {
+        Ok((true, remotes, _)) => {
+            remotes.lines().next().unwrap_or("origin").to_string()
+        }
+        _ => "origin".to_string(),
+    };
+
+    // Check if repo uses Git LFS and push LFS objects FIRST
+    let uses_lfs = check_uses_git_lfs(path).await;
+    if uses_lfs {
+        let branch = if fetch_result.current_branch.is_empty() {
+            "HEAD".to_string()
+        } else {
+            fetch_result.current_branch.clone()
+        };
+
+        let (lfs_success, lfs_error) = push_lfs_objects(path, &remote_name, &branch).await;
+        if !lfs_success && !lfs_error.is_empty() {
+            // LFS push failed - return error
+            return (Status::Error, lfs_error, fetch_result.has_uncommitted);
+        }
+    }
+
     // Handle no upstream case
     if !fetch_result.upstream_exists {
         if force_push {
-            // Detect the actual remote name instead of assuming "origin"
-            let remote_name = match run_git(path, GIT_REMOTE_ARGS).await {
-                Ok((true, remotes, _)) => {
-                    remotes.lines().next().unwrap_or("origin").to_string()
-                }
-                _ => "origin".to_string(), // Fallback to origin if detection fails
-            };
-
             let push_args = vec!["push", "-u", &remote_name, &fetch_result.current_branch];
             match run_git(path, &push_args).await {
                 Ok((true, _, _)) => {
+                    let msg = if uses_lfs {
+                        format!("set upstream ({}) & pushed (with LFS)", remote_name)
+                    } else {
+                        format!("set upstream ({}) & pushed", remote_name)
+                    };
                     return (
                         Status::Pushed,
-                        format!("set upstream ({}) & pushed", remote_name),
+                        msg,
                         fetch_result.has_uncommitted,
                     );
                 }
@@ -336,17 +418,23 @@ pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push:
         return (Status::Synced, STATUS_SYNCED.to_string(), fetch_result.has_uncommitted);
     }
 
-    // Push changes
-    match run_git(path, GIT_PUSH_ARGS).await {
+    // Push changes - use explicit remote and branch to match LFS push
+    let push_args = vec!["push", &remote_name, &fetch_result.current_branch];
+    match run_git(path, &push_args).await {
         Ok((true, _, _)) => {
             let commits_word = if fetch_result.ahead_count == 1 {
                 "commit"
             } else {
                 "commits"
             };
+            let msg = if uses_lfs {
+                format!("{} {} pushed (with LFS)", fetch_result.ahead_count, commits_word)
+            } else {
+                format!("{} {} pushed", fetch_result.ahead_count, commits_word)
+            };
             (
                 Status::Pushed,
-                format!("{} {} pushed", fetch_result.ahead_count, commits_word),
+                msg,
                 fetch_result.has_uncommitted,
             )
         }
