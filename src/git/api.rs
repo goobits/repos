@@ -28,3 +28,7 @@ pub use super::operations::{
     has_uncommitted_changes, create_and_push_tag, get_repo_visibility,
     stage_files, unstage_files, get_staging_status, has_staged_changes, commit_changes
 };
+
+// LFS functions - used internally by push_if_needed, exported for integration tests
+#[allow(unused_imports)]
+pub use super::operations::{check_uses_git_lfs, push_lfs_objects, has_pending_lfs_objects};

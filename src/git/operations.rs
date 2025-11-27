@@ -738,6 +738,13 @@ pub async fn pull_if_needed(
         );
     }
 
+    // Pre-fetch LFS objects if repo uses LFS (avoids delays during checkout)
+    let uses_lfs = check_uses_git_lfs(path).await;
+    if uses_lfs {
+        // Fetch LFS objects for incoming commits - errors are non-fatal
+        let _ = run_git(path, &["lfs", "fetch"]).await;
+    }
+
     // Pull changes with appropriate strategy
     let pull_args = if use_rebase {
         // Use --autostash to safely stash uncommitted changes during rebase
@@ -755,7 +762,12 @@ pub async fn pull_if_needed(
             };
             (
                 Status::Pulled,
-                format!("{} {} pulled", fetch_result.behind_count, commits_word),
+                format!(
+                    "{} {} pulled{}",
+                    fetch_result.behind_count,
+                    commits_word,
+                    if uses_lfs { " (with LFS)" } else { "" }
+                ),
                 fetch_result.has_uncommitted,
             )
         }
