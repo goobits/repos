@@ -813,7 +813,7 @@ static VISIBILITY_CACHE: OnceLock<DashMap<PathBuf, RepoVisibility>> = OnceLock::
 
 /// Gets or initializes the visibility cache
 fn get_visibility_cache() -> &'static DashMap<PathBuf, RepoVisibility> {
-    VISIBILITY_CACHE.get_or_init(|| DashMap::new())
+    VISIBILITY_CACHE.get_or_init(DashMap::new)
 }
 
 /// Detects repository visibility using gh CLI with in-memory caching

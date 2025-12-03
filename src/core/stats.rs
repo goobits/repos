@@ -28,6 +28,12 @@ pub struct SyncStatistics {
     pub uncommitted_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
 }
 
+impl Default for SyncStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SyncStatistics {
     /// Creates a new statistics tracker with all counters initialized to zero
     pub fn new() -> Self {
