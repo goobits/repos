@@ -7,10 +7,10 @@ pub mod report;
 use std::sync::Arc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use crate::core::{create_progress_bar, GenericProcessingContext};
-use crate::audit::hygiene::scanner::check_repo_hygiene;
 
-// Re-export key types
-pub use report::{HygieneStatistics, HygieneStatus, HygieneViolation, ViolationType};
+// Re-export key types and functions
+pub use report::{HygieneStatistics, HygieneViolation, ViolationType};
+pub use scanner::check_repo_hygiene;
 
 /// Helper function to safely acquire a semaphore permit
 async fn acquire_semaphore_permit(

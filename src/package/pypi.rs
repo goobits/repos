@@ -5,8 +5,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
-use std::pin::Pin;
-use std::future::Future;
+use async_trait::async_trait;
 
 use super::{PackageInfo, PackageManager};
 
@@ -14,6 +13,7 @@ const PYTHON_OPERATION_TIMEOUT_SECS: u64 = 300; // 5 minutes for python operatio
 
 pub struct PyPI;
 
+#[async_trait]
 impl PackageManager for PyPI {
     fn name(&self) -> &str {
         "python"
@@ -23,26 +23,17 @@ impl PackageManager for PyPI {
         "📦"
     }
 
-    fn detect(&self, path: &Path) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
-        let path = path.to_path_buf();
-        Box::pin(async move {
-            tokio::fs::metadata(path.join("pyproject.toml")).await.is_ok()
-                || tokio::fs::metadata(path.join("setup.py")).await.is_ok()
-        })
+    async fn detect(&self, path: &Path) -> bool {
+        tokio::fs::metadata(path.join("pyproject.toml")).await.is_ok()
+            || tokio::fs::metadata(path.join("setup.py")).await.is_ok()
     }
 
-    fn get_info(&self, path: &Path) -> Pin<Box<dyn Future<Output = Option<PackageInfo>> + Send + '_>> {
-        let path = path.to_path_buf();
-        Box::pin(async move {
-            get_package_info_internal(&path).await
-        })
+    async fn get_info(&self, path: &Path) -> Option<PackageInfo> {
+        get_package_info_internal(path).await
     }
 
-    fn publish(&self, path: &Path, dry_run: bool) -> Pin<Box<dyn Future<Output = (bool, String)> + Send + '_>> {
-        let path = path.to_path_buf();
-        Box::pin(async move {
-            publish_internal(&path, dry_run).await
-        })
+    async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String) {
+        publish_internal(path, dry_run).await
     }
 }
 

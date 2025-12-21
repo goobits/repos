@@ -5,10 +5,11 @@ pub mod npm;
 pub mod pypi;
 
 use std::path::Path;
-use std::pin::Pin;
-use std::future::Future;
+use std::sync::Arc;
+use async_trait::async_trait;
 
 /// Trait for package managers to implement
+#[async_trait]
 pub trait PackageManager: Send + Sync {
     /// Returns the display name for this package manager
     fn name(&self) -> &str;
@@ -17,25 +18,23 @@ pub trait PackageManager: Send + Sync {
     fn icon(&self) -> &str;
     
     /// Detects if this package manager manages the given repository
-    fn detect(&self, path: &Path) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
+    async fn detect(&self, path: &Path) -> bool;
     
     /// Gets package information from the repository
-    fn get_info(&self, path: &Path) -> Pin<Box<dyn Future<Output = Option<PackageInfo>> + Send + '_>>;
+    async fn get_info(&self, path: &Path) -> Option<PackageInfo>;
     
     /// Publishes the package
-    fn publish(&self, path: &Path, dry_run: bool) -> Pin<Box<dyn Future<Output = (bool, String)> + Send + '_>>;
+    async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String);
 }
 
 /// Information about a detected package
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct PackageInfo {
     pub manager_name: String,
-    #[allow(dead_code)]
     pub name: String,
     pub version: String,
 }
-
-use std::sync::Arc;
 
 /// Returns a list of all supported package managers
 pub fn get_all_managers() -> Vec<Arc<dyn PackageManager>> {
@@ -47,7 +46,6 @@ pub fn get_all_managers() -> Vec<Arc<dyn PackageManager>> {
 }
 
 /// Helper to detect package manager for a path (returns the first match)
-/// This replaces the old `detect_package_manager` and `detect_package_manager_async`
 pub async fn detect_manager(path: &Path) -> Option<Arc<dyn PackageManager>> {
     // Check in order of priority: Npm, Cargo, PyPI
     // (Npm first because it's common to have package.json alongside others)
@@ -63,18 +61,17 @@ pub async fn detect_manager(path: &Path) -> Option<Arc<dyn PackageManager>> {
 
 /// Status of a publish operation
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum PublishStatus {
     /// Package was successfully published
     Published,
     /// Package is already published (version exists)
     AlreadyPublished,
     /// Package was skipped (no package manager detected)
-    #[allow(dead_code)]
     Skipped,
     /// An error occurred during publishing
     Error,
     /// Dry run completed successfully
-    #[allow(dead_code)]
     DryRunOk,
 }
 

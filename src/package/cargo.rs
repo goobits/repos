@@ -4,8 +4,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
-use std::pin::Pin;
-use std::future::Future;
+use async_trait::async_trait;
 
 use super::{PackageInfo, PackageManager};
 
@@ -13,6 +12,7 @@ const CARGO_OPERATION_TIMEOUT_SECS: u64 = 600; // 10 minutes for cargo operation
 
 pub struct Cargo;
 
+#[async_trait]
 impl PackageManager for Cargo {
     fn name(&self) -> &str {
         "cargo"
@@ -22,25 +22,16 @@ impl PackageManager for Cargo {
         "📦"
     }
 
-    fn detect(&self, path: &Path) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
-        let path = path.to_path_buf();
-        Box::pin(async move {
-            tokio::fs::metadata(path.join("Cargo.toml")).await.is_ok()
-        })
+    async fn detect(&self, path: &Path) -> bool {
+        tokio::fs::metadata(path.join("Cargo.toml")).await.is_ok()
     }
 
-    fn get_info(&self, path: &Path) -> Pin<Box<dyn Future<Output = Option<PackageInfo>> + Send + '_>> {
-        let path = path.to_path_buf();
-        Box::pin(async move {
-            get_package_info_internal(&path).await
-        })
+    async fn get_info(&self, path: &Path) -> Option<PackageInfo> {
+        get_package_info_internal(path).await
     }
 
-    fn publish(&self, path: &Path, dry_run: bool) -> Pin<Box<dyn Future<Output = (bool, String)> + Send + '_>> {
-        let path = path.to_path_buf();
-        Box::pin(async move {
-            publish_internal(&path, dry_run).await
-        })
+    async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String) {
+        publish_internal(path, dry_run).await
     }
 }
 

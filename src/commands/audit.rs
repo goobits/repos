@@ -42,6 +42,7 @@ pub async fn handle_audit_command(
                 fix_secrets,
                 untrack_files: false,
                 dry_run,
+                skip_confirm: false,
                 target_repos: target_repos.clone(),
             }
         };

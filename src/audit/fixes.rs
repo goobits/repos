@@ -30,6 +30,8 @@ pub struct FixOptions {
     pub untrack_files: bool,
     /// Preview changes without applying them
     pub dry_run: bool,
+    /// Skip confirmation prompts (for automation/tests)
+    pub skip_confirm: bool,
     /// Only apply fixes to specific repositories
     pub target_repos: Option<Vec<String>>,
 }
@@ -45,6 +47,7 @@ impl FixOptions {
             fix_secrets: true,
             untrack_files: true,
             dry_run,
+            skip_confirm: false,
             target_repos,
         }
     }
@@ -88,7 +91,7 @@ pub async fn apply_fixes(
     }
 
     // Show summary and get confirmation if interactive
-    if options.interactive || !options.dry_run {
+    if (options.interactive || !options.dry_run) && !options.skip_confirm {
         show_fix_summary(&repos_to_fix, &options).await?;
 
         if !options.dry_run && !confirm_fixes(&options).await? {
