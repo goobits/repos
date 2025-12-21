@@ -23,7 +23,8 @@ repos push                      # Push all + drift check
 
 ## Key Features
 
-- **Batch Operations** - Push, commit, stage across all repositories concurrently (CPU cores + 2)
+- **Batch Operations** - Push, pull, commit, stage across all repositories concurrently (CPU cores + 2)
+- **Git LFS Support** - Automatic detection and handling of Large File Storage in push/pull operations
 - **Subrepo Drift Detection** - Track and sync nested repos at different commits
 - **Package Publishing** - Publish to npm/Cargo/PyPI with visibility filtering
 - **Config Sync** - Synchronize git user.name/email across projects
@@ -34,6 +35,8 @@ repos push                      # Push all + drift check
 ```bash
 # Git Operations
 repos push                      # Push all + drift check
+repos pull                      # Pull all repos
+repos pull --rebase             # Pull with rebase
 repos push --force              # Auto-create upstream branches
 repos push --jobs 4             # Limit concurrency
 
@@ -61,7 +64,7 @@ repos config --from-global      # Copy from global config
 
 ## Commands
 
-`repos push` • `repos stage` • `repos unstage` • `repos status` • `repos commit` • `repos publish` • `repos audit` • `repos subrepo` • `repos config`
+`repos push` • `repos pull` • `repos stage` • `repos unstage` • `repos status` • `repos commit` • `repos publish` • `repos audit` • `repos subrepo` • `repos config`
 
 See [Commands Reference](docs/guides/commands.md) for complete flag documentation.
 
