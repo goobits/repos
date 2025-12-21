@@ -132,7 +132,18 @@ fn fetch_latest_commit(path: &Path) -> Result<String> {
 /// Sync a subrepo to a specific commit across all parent repositories
 pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -> Result<()> {
     let report = super::validation::validate_subrepos()?;
-    let instances = find_instances_by_name(&report, name)?;
+    sync_subrepo_with_report(name, target_commit, stash, force, &report)
+}
+
+/// Sync logic that accepts a report (useful for testing)
+pub fn sync_subrepo_with_report(
+    name: &str,
+    target_commit: &str,
+    stash: bool,
+    force: bool,
+    report: &ValidationReport
+) -> Result<()> {
+    let instances = find_instances_by_name(report, name)?;
 
     let short_commit = target_commit.chars().take(7).collect::<String>();
     println!("\n🔄 Syncing {name} to {short_commit}...\n");
@@ -213,7 +224,16 @@ pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -
 /// Update a subrepo to the latest commit from remote
 pub fn update_subrepo(name: &str, force: bool) -> Result<()> {
     let report = super::validation::validate_subrepos()?;
-    let instances = find_instances_by_name(&report, name)?;
+    update_subrepo_with_report(name, force, &report)
+}
+
+/// Update logic that accepts a report (useful for testing)
+pub fn update_subrepo_with_report(
+    name: &str,
+    force: bool,
+    report: &ValidationReport
+) -> Result<()> {
+    let instances = find_instances_by_name(report, name)?;
 
     // Use first instance to determine latest commit
     println!("\n🔍 Fetching latest commit for {name}...");

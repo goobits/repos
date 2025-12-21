@@ -5,10 +5,46 @@ use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
+use std::pin::Pin;
+use std::future::Future;
 
-use super::PackageInfo;
+use super::{PackageInfo, PackageManager};
 
 const PYTHON_OPERATION_TIMEOUT_SECS: u64 = 300; // 5 minutes for python operations
+
+pub struct PyPI;
+
+impl PackageManager for PyPI {
+    fn name(&self) -> &str {
+        "python"
+    }
+
+    fn icon(&self) -> &str {
+        "📦"
+    }
+
+    fn detect(&self, path: &Path) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            tokio::fs::metadata(path.join("pyproject.toml")).await.is_ok()
+                || tokio::fs::metadata(path.join("setup.py")).await.is_ok()
+        })
+    }
+
+    fn get_info(&self, path: &Path) -> Pin<Box<dyn Future<Output = Option<PackageInfo>> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            get_package_info_internal(&path).await
+        })
+    }
+
+    fn publish(&self, path: &Path, dry_run: bool) -> Pin<Box<dyn Future<Output = (bool, String)> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            publish_internal(&path, dry_run).await
+        })
+    }
+}
 
 /// pyproject.toml structure (partial)
 #[derive(Deserialize)]
@@ -23,7 +59,7 @@ struct PyProject {
 }
 
 /// Gets package information from pyproject.toml or setup.py
-pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
+async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
     // Try pyproject.toml first
     let pyproject_path = repo_path.join("pyproject.toml");
     if pyproject_path.exists() {
@@ -31,7 +67,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
             if let Ok(pyproject) = toml::from_str::<PyProjectToml>(&content) {
                 if let Some(project) = pyproject.project {
                     return Some(PackageInfo {
-                        manager: super::PackageManager::PyPI,
+                        manager_name: "python".to_string(),
                         name: project.name,
                         version: project.version,
                     });
@@ -53,7 +89,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
                 // We can't easily extract name/version from setup.py without running it
                 // Return a placeholder
                 return Some(PackageInfo {
-                    manager: super::PackageManager::PyPI,
+                    manager_name: "python".to_string(),
                     name: "unknown".to_string(),
                     version: "unknown".to_string(),
                 });
@@ -66,7 +102,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
 
 /// Publishes a Python package
 /// Returns (success, message)
-pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
+async fn publish_internal(repo_path: &Path, dry_run: bool) -> (bool, String) {
     // First, check if twine is available
     let twine_check = Command::new("twine").arg("--version").output().await;
 

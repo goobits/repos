@@ -4,10 +4,45 @@ use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
+use std::pin::Pin;
+use std::future::Future;
 
-use super::PackageInfo;
+use super::{PackageInfo, PackageManager};
 
 const CARGO_OPERATION_TIMEOUT_SECS: u64 = 600; // 10 minutes for cargo operations (can be slow)
+
+pub struct Cargo;
+
+impl PackageManager for Cargo {
+    fn name(&self) -> &str {
+        "cargo"
+    }
+
+    fn icon(&self) -> &str {
+        "📦"
+    }
+
+    fn detect(&self, path: &Path) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            tokio::fs::metadata(path.join("Cargo.toml")).await.is_ok()
+        })
+    }
+
+    fn get_info(&self, path: &Path) -> Pin<Box<dyn Future<Output = Option<PackageInfo>> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            get_package_info_internal(&path).await
+        })
+    }
+
+    fn publish(&self, path: &Path, dry_run: bool) -> Pin<Box<dyn Future<Output = (bool, String)> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            publish_internal(&path, dry_run).await
+        })
+    }
+}
 
 /// Cargo.toml package section (partial)
 #[derive(Deserialize)]
@@ -22,14 +57,14 @@ struct CargoPackage {
 }
 
 /// Gets package information from Cargo.toml
-pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
+async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
     let cargo_toml_path = repo_path.join("Cargo.toml");
 
     let content = tokio::fs::read_to_string(&cargo_toml_path).await.ok()?;
     let cargo: CargoToml = toml::from_str(&content).ok()?;
 
     Some(PackageInfo {
-        manager: super::PackageManager::Cargo,
+        manager_name: "cargo".to_string(),
         name: cargo.package.name,
         version: cargo.package.version,
     })
@@ -37,7 +72,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
 
 /// Publishes a cargo package
 /// Returns (success, message)
-pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
+async fn publish_internal(repo_path: &Path, dry_run: bool) -> (bool, String) {
     let mut args = vec!["publish"];
 
     if dry_run {

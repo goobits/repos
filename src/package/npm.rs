@@ -4,10 +4,45 @@ use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
+use std::pin::Pin;
+use std::future::Future;
 
-use super::PackageInfo;
+use super::{PackageInfo, PackageManager};
 
 const NPM_OPERATION_TIMEOUT_SECS: u64 = 300; // 5 minutes for npm operations
+
+pub struct Npm;
+
+impl PackageManager for Npm {
+    fn name(&self) -> &str {
+        "npm"
+    }
+
+    fn icon(&self) -> &str {
+        "📦"
+    }
+
+    fn detect(&self, path: &Path) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            tokio::fs::metadata(path.join("package.json")).await.is_ok()
+        })
+    }
+
+    fn get_info(&self, path: &Path) -> Pin<Box<dyn Future<Output = Option<PackageInfo>> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            get_package_info_internal(&path).await
+        })
+    }
+
+    fn publish(&self, path: &Path, dry_run: bool) -> Pin<Box<dyn Future<Output = (bool, String)> + Send + '_>> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            publish_internal(&path, dry_run).await
+        })
+    }
+}
 
 /// npm package.json structure (partial)
 #[derive(Deserialize)]
@@ -17,14 +52,14 @@ struct PackageJson {
 }
 
 /// Gets package information from package.json
-pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
+async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
     let package_json_path = repo_path.join("package.json");
 
     let content = tokio::fs::read_to_string(&package_json_path).await.ok()?;
     let package: PackageJson = serde_json::from_str(&content).ok()?;
 
     Some(PackageInfo {
-        manager: super::PackageManager::Npm,
+        manager_name: "npm".to_string(),
         name: package.name,
         version: package.version,
     })
@@ -32,7 +67,7 @@ pub async fn get_package_info(repo_path: &Path) -> Option<PackageInfo> {
 
 /// Publishes an npm package
 /// Returns (success, message)
-pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
+async fn publish_internal(repo_path: &Path, dry_run: bool) -> (bool, String) {
     let mut args = vec!["publish"];
 
     if dry_run {
