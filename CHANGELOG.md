@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2025-12-21
+
+### Added
+- **Git LFS support:** Full support for Git Large File Storage in push and pull operations
+  - Automatic LFS detection via `.gitattributes` and `git lfs ls-files`
+  - Pre-push LFS object upload to prevent incomplete operations
+  - Pre-pull LFS object fetch to avoid delays during checkout
+  - Clear indicators in output ("with LFS" suffix on success messages)
+  - Handles LFS-enabled repositories transparently
+- **Subrepo sync testing:** Integration test for subrepo synchronization functionality
+  - Validates sync across multiple parent repositories
+  - Tests commit targeting and verification
+
+### Changed
+- **Modular architecture:** Major refactoring for extensibility and maintainability
+  - Package manager trait system replacing hardcoded enum (easy to add new package managers)
+  - Publish command split into focused modules (planner, executor, orchestrator)
+  - Hygiene audit module reorganized (rules, scanner, report separation)
+  - Net reduction of 710 lines of code while improving structure
+- **Code quality improvements:** Comprehensive clippy pedantic fixes
+  - 471 warnings reduced to 185 (61% improvement)
+  - Modernized format strings (inline variable syntax)
+  - Removed redundant else blocks and improved variable naming
+  - Zero behavioral changes, pure refactoring
+
+### Fixed
+- **Critical LFS issues:** Addressed race conditions and error handling in LFS operations
+- **Security:** Verified SHA256 checksum for TruffleHog installer script
+- **Compiler warnings:** Eliminated all clippy warnings in strict mode
+- **Documentation:** Removed outdated MODULE_BOUNDARIES.md, TESTING.md, and TEST_AUDIT_REPORT.md
+
+### Performance
+- **Package manager detection:** Trait-based system enables compile-time optimization
+- **Parallel analysis:** Improved concurrency in publish command planning phase
+
 ## [3.0.0] - 2025-11-12
 
 ### Breaking Changes
