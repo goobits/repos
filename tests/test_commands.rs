@@ -9,13 +9,13 @@
 //! without requiring actual network operations or real remotes.
 
 mod common;
-use common::{TestRepoBuilder, is_git_available};
+use common::{is_git_available, TestRepoBuilder};
 
-use goobits_repos::commands::sync::{handle_push_command, handle_pull_command};
 use goobits_repos::commands::staging::{
-    handle_stage_command, handle_unstage_command, handle_staging_status_command,
-    handle_commit_command,
+    handle_commit_command, handle_stage_command, handle_staging_status_command,
+    handle_unstage_command,
 };
+use goobits_repos::commands::sync::{handle_pull_command, handle_push_command};
 use std::env;
 use std::fs;
 
@@ -243,11 +243,7 @@ async fn test_stage_command_with_simple_pattern() {
     // Restore original directory before repo cleanup
     let _ = env::set_current_dir(&original_dir);
 
-    assert!(
-        result.is_ok(),
-        "Stage command should succeed: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "Stage command should succeed: {:?}", result);
 
     // Verify file was staged
     let status_output = std::process::Command::new("git")

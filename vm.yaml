@@ -1,5 +1,6 @@
 version: '2.0'
 provider: docker
+os: auto
 project:
   hostname: dev.repos.local
   name: repos
@@ -15,11 +16,16 @@ vm:
   timezone: auto
   user: developer
 ports:
-  _range: [3080, 3089]
+  _range: [3070, 3079]
 terminal:
   emoji: 🚀
   show_git_branch: true
   show_timestamp: false
   theme: dracula
   username: repos-dev
-preset: vibe
+host_sync:
+  git_config: true
+  ai_tools: true
+networking:
+  networks:
+  - spacebase

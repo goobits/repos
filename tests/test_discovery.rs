@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{create_multiple_repos, setup_git_repo, TestRepoBuilder, is_git_available};
+use common::{create_multiple_repos, is_git_available, setup_git_repo, TestRepoBuilder};
 use goobits_repos::core::find_repos_from_path;
 use std::fs;
 use tempfile::TempDir;
@@ -150,7 +150,11 @@ fn test_max_depth_limit() {
     let found_repos = find_repos_from_path(temp_dir.path());
 
     // Should only find the shallow repo, not the deep one
-    assert_eq!(found_repos.len(), 1, "Should not find repo beyond max depth");
+    assert_eq!(
+        found_repos.len(),
+        1,
+        "Should not find repo beyond max depth"
+    );
     assert_eq!(found_repos[0].0, "shallow-repo");
 }
 
@@ -180,7 +184,7 @@ fn test_handles_symlinks() {
             // Should find both the real repo and symlink (with deduplication)
             // Depending on implementation, might find 1 or 2
             assert!(
-                found_repos.len() >= 1 && found_repos.len() <= 2,
+                !found_repos.is_empty() && found_repos.len() <= 2,
                 "Should handle symlinks correctly"
             );
         }
@@ -201,9 +205,16 @@ fn test_current_directory_as_repo() {
     let found_repos = find_repos_from_path(temp_dir.path());
 
     // Should find current directory as a repo with appropriate name
-    assert_eq!(found_repos.len(), 1, "Should find current directory as repo");
+    assert_eq!(
+        found_repos.len(),
+        1,
+        "Should find current directory as repo"
+    );
     // The name will be derived from the temp directory name
-    assert!(!found_repos[0].0.is_empty(), "Repo name should not be empty");
+    assert!(
+        !found_repos[0].0.is_empty(),
+        "Repo name should not be empty"
+    );
 }
 
 #[test]
@@ -230,5 +241,8 @@ fn test_alphabetical_sorting() {
 
     // Verify alphabetical order (case-insensitive)
     let repo_names: Vec<_> = found_repos.iter().map(|(name, _)| name.as_str()).collect();
-    assert_eq!(repo_names, vec!["apple", "Banana", "cherry", "DELTA", "zebra"]);
+    assert_eq!(
+        repo_names,
+        vec!["apple", "Banana", "cherry", "DELTA", "zebra"]
+    );
 }

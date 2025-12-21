@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-use super::git::{setup_git_repo, create_test_commit, add_git_remote};
+use super::git::{add_git_remote, create_test_commit, setup_git_repo};
 
 /// A test repository with automatic cleanup
 #[allow(dead_code)]
@@ -86,7 +86,10 @@ description = "Test package"
             .output()?;
 
         if !result.status.success() {
-            anyhow::bail!("Failed to commit: {}", String::from_utf8_lossy(&result.stderr));
+            anyhow::bail!(
+                "Failed to commit: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
         }
 
         Ok(())
@@ -135,7 +138,11 @@ impl TestRepoBuilder {
     }
 
     #[allow(dead_code)]
-    pub fn with_cargo_package(mut self, name: impl Into<String>, version: impl Into<String>) -> Self {
+    pub fn with_cargo_package(
+        mut self,
+        name: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Self {
         self.with_package = Some(PackageType::Cargo {
             name: name.into(),
             version: version.into(),
@@ -144,7 +151,11 @@ impl TestRepoBuilder {
     }
 
     #[allow(dead_code)]
-    pub fn with_python_package(mut self, name: impl Into<String>, version: impl Into<String>) -> Self {
+    pub fn with_python_package(
+        mut self,
+        name: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Self {
         self.with_package = Some(PackageType::PyPI {
             name: name.into(),
             version: version.into(),
@@ -163,7 +174,12 @@ impl TestRepoBuilder {
         setup_git_repo(temp_dir.path())?;
 
         // Create initial commit
-        create_test_commit(temp_dir.path(), "README.md", "# Test Repo", "Initial commit")?;
+        create_test_commit(
+            temp_dir.path(),
+            "README.md",
+            "# Test Repo",
+            "Initial commit",
+        )?;
 
         // Add remote if specified
         if let Some(remote_url) = self.with_remote {

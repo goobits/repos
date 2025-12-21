@@ -4,7 +4,7 @@ use goobits_repos::git::UserConfig;
 use std::sync::atomic::Ordering;
 
 mod common;
-use common::{TestRepoBuilder, is_git_available};
+use common::{is_git_available, TestRepoBuilder};
 
 #[test]
 fn test_sync_stats_initialization() {
@@ -60,7 +60,7 @@ fn test_staging_status_variants() {
 
 #[tokio::test]
 async fn test_git_staging_operations() {
-    use goobits_repos::git::{stage_files, unstage_files, has_staged_changes, commit_changes};
+    use goobits_repos::git::{commit_changes, has_staged_changes, stage_files, unstage_files};
     use std::fs;
 
     if !is_git_available() {
@@ -101,8 +101,11 @@ async fn test_git_staging_operations() {
         .expect("Failed to check git status");
 
     let status_str = String::from_utf8_lossy(&status_output.stdout);
-    assert!(status_str.contains("A  test.txt") || status_str.contains("M  test.txt"),
-        "File should be staged in git status, got: {}", status_str);
+    assert!(
+        status_str.contains("A  test.txt") || status_str.contains("M  test.txt"),
+        "File should be staged in git status, got: {}",
+        status_str
+    );
 
     // Test has_staged_changes - should be true after staging
     let has_changes = has_staged_changes(repo_path).await;
@@ -117,7 +120,10 @@ async fn test_git_staging_operations() {
 
         // Validate commit hash is returned
         assert!(!stdout.is_empty(), "Commit should return output with hash");
-        assert!(stdout.len() >= 7, "Commit hash should be at least 7 characters");
+        assert!(
+            stdout.len() >= 7,
+            "Commit hash should be at least 7 characters"
+        );
     }
 
     // Test has_staged_changes - should be false after commit
@@ -141,8 +147,11 @@ async fn test_git_staging_operations() {
         .expect("Failed to check git status after unstaging");
 
     let status_str = String::from_utf8_lossy(&status_output.stdout);
-    assert!(!status_str.contains("M  test.txt"),
-        "File should not be staged after unstaging, got: {}", status_str);
+    assert!(
+        !status_str.contains("M  test.txt"),
+        "File should not be staged after unstaging, got: {}",
+        status_str
+    );
 
     // Test has_staged_changes - should be false after unstaging
     let has_changes = has_staged_changes(repo_path).await;
@@ -226,11 +235,19 @@ async fn test_staging_with_patterns() {
         .expect("Failed to check git status after pattern staging");
 
     let status_str = String::from_utf8_lossy(&status_output.stdout);
-    assert!(status_str.contains("test1.md") && status_str.contains("test2.md"),
-        "Both .md files should be staged, got: {}", status_str);
+    assert!(
+        status_str.contains("test1.md") && status_str.contains("test2.md"),
+        "Both .md files should be staged, got: {}",
+        status_str
+    );
     // Note: test.txt should appear as untracked (??) but not staged
-    assert!(!status_str.lines().any(|line| line.starts_with("A  test.txt") || line.starts_with("M  test.txt")),
-        "test.txt should not be staged (may appear as untracked), got: {}", status_str);
+    assert!(
+        !status_str
+            .lines()
+            .any(|line| line.starts_with("A  test.txt") || line.starts_with("M  test.txt")),
+        "test.txt should not be staged (may appear as untracked), got: {}",
+        status_str
+    );
 
     // Test unstaging with wildcard pattern
     let unstage_result = unstage_files(repo_path, "*.md").await;
@@ -245,14 +262,18 @@ async fn test_staging_with_patterns() {
 
     let status_str = String::from_utf8_lossy(&status_output.stdout);
     // Check specifically that .md files are not staged (first character is not A or M)
-    let staged_md_files: Vec<&str> = status_str.lines()
+    let staged_md_files: Vec<&str> = status_str
+        .lines()
         .filter(|line| {
             let first_char = line.chars().next().unwrap_or(' ');
             (first_char == 'A' || first_char == 'M') && line.contains(".md")
         })
         .collect();
-    assert!(staged_md_files.is_empty(),
-        "No .md files should be staged after unstaging, got staged: {:?}", staged_md_files);
+    assert!(
+        staged_md_files.is_empty(),
+        "No .md files should be staged after unstaging, got staged: {:?}",
+        staged_md_files
+    );
 
     // Test staging all files
     let stage_all_result = stage_files(repo_path, ".").await;
@@ -267,30 +288,66 @@ fn test_stats_update_with_staging_statuses() {
     let stats = SyncStatistics::new();
 
     // Test staging success statuses
-    stats.update("test-repo", "/test/path", &Status::Staged, "staged test.txt", false);
+    stats.update(
+        "test-repo",
+        "/test/path",
+        &Status::Staged,
+        "staged test.txt",
+        false,
+    );
     assert_eq!(stats.synced_repos.load(Ordering::SeqCst), 1);
 
-    stats.update("test-repo2", "/test/path2", &Status::Unstaged, "unstaged test.txt", false);
+    stats.update(
+        "test-repo2",
+        "/test/path2",
+        &Status::Unstaged,
+        "unstaged test.txt",
+        false,
+    );
     assert_eq!(stats.synced_repos.load(Ordering::SeqCst), 2);
 
-    stats.update("test-repo3", "/test/path3", &Status::Committed, "committed abc1234", false);
+    stats.update(
+        "test-repo3",
+        "/test/path3",
+        &Status::Committed,
+        "committed abc1234",
+        false,
+    );
     assert_eq!(stats.synced_repos.load(Ordering::SeqCst), 3);
 
     // Test skipped statuses
-    stats.update("test-repo4", "/test/path4", &Status::NoChanges, "no changes", false);
+    stats.update(
+        "test-repo4",
+        "/test/path4",
+        &Status::NoChanges,
+        "no changes",
+        false,
+    );
     assert_eq!(stats.skipped_repos.load(Ordering::SeqCst), 1);
 
     // Test error statuses
-    stats.update("test-repo5", "/test/path5", &Status::StagingError, "staging failed", false);
+    stats.update(
+        "test-repo5",
+        "/test/path5",
+        &Status::StagingError,
+        "staging failed",
+        false,
+    );
     assert_eq!(stats.error_repos.load(Ordering::SeqCst), 1);
 
-    stats.update("test-repo6", "/test/path6", &Status::CommitError, "commit failed", false);
+    stats.update(
+        "test-repo6",
+        "/test/path6",
+        &Status::CommitError,
+        "commit failed",
+        false,
+    );
     assert_eq!(stats.error_repos.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
 async fn test_error_scenarios() {
-    use goobits_repos::git::{stage_files, unstage_files, commit_changes};
+    use goobits_repos::git::{commit_changes, stage_files, unstage_files};
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -332,7 +389,10 @@ async fn test_error_scenarios() {
     if let Ok((success, _stdout, stderr)) = stage_result {
         // Git add with non-existent file should fail
         assert!(!success, "Staging non-existent file should fail");
-        assert!(!stderr.is_empty(), "Should have error message for non-existent file");
+        assert!(
+            !stderr.is_empty(),
+            "Should have error message for non-existent file"
+        );
     }
 
     // Test commit with no staged changes - should fail
@@ -341,8 +401,13 @@ async fn test_error_scenarios() {
         assert!(!success, "Commit with no changes should fail");
         // Note: Some git versions return empty stderr for "nothing to commit"
         if !stderr.is_empty() {
-            assert!(stderr.contains("nothing to commit") || stderr.contains("no changes added") || stderr.contains("working tree clean"),
-                "Should indicate nothing to commit, got: '{}'", stderr);
+            assert!(
+                stderr.contains("nothing to commit")
+                    || stderr.contains("no changes added")
+                    || stderr.contains("working tree clean"),
+                "Should indicate nothing to commit, got: '{}'",
+                stderr
+            );
         }
         // The failure (success = false) itself is the main indicator
     }
@@ -358,7 +423,10 @@ async fn test_error_scenarios() {
     if let Ok((success, _stdout, stderr)) = unstage_result {
         // Unstaging non-existent file might succeed or fail depending on git version
         if !success {
-            assert!(!stderr.is_empty(), "Should have error message for invalid unstage");
+            assert!(
+                !stderr.is_empty(),
+                "Should have error message for invalid unstage"
+            );
         }
     }
 }
@@ -388,15 +456,23 @@ async fn test_get_repo_visibility_non_github() {
 
     // Add a non-GitHub remote (e.g., GitLab)
     std::process::Command::new("git")
-        .args(["remote", "add", "origin", "https://gitlab.com/user/repo.git"])
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://gitlab.com/user/repo.git",
+        ])
         .current_dir(repo_path)
         .output()
         .expect("Failed to add remote");
 
     // Should return Unknown for non-GitHub repos
     let visibility = get_repo_visibility(repo_path).await;
-    assert_eq!(visibility, goobits_repos::git::RepoVisibility::Unknown,
-        "Non-GitHub repos should return Unknown visibility");
+    assert_eq!(
+        visibility,
+        goobits_repos::git::RepoVisibility::Unknown,
+        "Non-GitHub repos should return Unknown visibility"
+    );
 }
 
 #[tokio::test]
@@ -420,8 +496,11 @@ async fn test_get_repo_visibility_no_remote() {
 
     // Should return Unknown for repos without remote
     let visibility = get_repo_visibility(repo_path).await;
-    assert_eq!(visibility, goobits_repos::git::RepoVisibility::Unknown,
-        "Repos without remote should return Unknown visibility");
+    assert_eq!(
+        visibility,
+        goobits_repos::git::RepoVisibility::Unknown,
+        "Repos without remote should return Unknown visibility"
+    );
 }
 
 #[tokio::test]
@@ -445,7 +524,12 @@ async fn test_get_repo_visibility_github_repo() {
 
     // Add a GitHub remote
     std::process::Command::new("git")
-        .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/user/repo.git",
+        ])
         .current_dir(repo_path)
         .output()
         .expect("Failed to add remote");
@@ -456,9 +540,12 @@ async fn test_get_repo_visibility_github_repo() {
     // Should return Unknown if gh CLI is not available or repo doesn't exist
     // (We can't guarantee a specific result without mocking gh, but we test it doesn't panic)
     assert!(
-        matches!(visibility, goobits_repos::git::RepoVisibility::Public |
-                            goobits_repos::git::RepoVisibility::Private |
-                            goobits_repos::git::RepoVisibility::Unknown),
+        matches!(
+            visibility,
+            goobits_repos::git::RepoVisibility::Public
+                | goobits_repos::git::RepoVisibility::Private
+                | goobits_repos::git::RepoVisibility::Unknown
+        ),
         "Should return a valid RepoVisibility variant"
     );
 }
@@ -521,14 +608,20 @@ async fn test_has_uncommitted_changes() {
 
     // Should have no uncommitted changes after commit
     let has_changes = has_uncommitted_changes(repo_path).await;
-    assert!(!has_changes, "Should have no uncommitted changes after clean commit");
+    assert!(
+        !has_changes,
+        "Should have no uncommitted changes after clean commit"
+    );
 
     // Modify the file
     fs::write(&test_file, "modified content").expect("Failed to modify test file");
 
     // Should detect uncommitted changes
     let has_changes = has_uncommitted_changes(repo_path).await;
-    assert!(has_changes, "Should detect uncommitted changes after file modification");
+    assert!(
+        has_changes,
+        "Should detect uncommitted changes after file modification"
+    );
 
     // Stage the changes
     std::process::Command::new("git")
@@ -550,7 +643,10 @@ async fn test_has_uncommitted_changes() {
 
     // Should have no uncommitted changes after commit
     let has_changes = has_uncommitted_changes(repo_path).await;
-    assert!(!has_changes, "Should have no uncommitted changes after committing staged changes");
+    assert!(
+        !has_changes,
+        "Should have no uncommitted changes after committing staged changes"
+    );
 }
 
 #[tokio::test]
@@ -613,8 +709,11 @@ async fn test_create_and_push_tag() {
     let (success, message) = create_and_push_tag(repo_path, "v1.0.0").await;
 
     // Tag creation should succeed even if push fails
-    assert!(success || message.contains("failed to create tag"),
-        "Tag operation should complete (creation succeeds, push may fail): {}", message);
+    assert!(
+        success || message.contains("failed to create tag"),
+        "Tag operation should complete (creation succeeds, push may fail): {}",
+        message
+    );
 
     // Verify tag was created
     let tag_check = std::process::Command::new("git")
@@ -629,8 +728,11 @@ async fn test_create_and_push_tag() {
     // Try to create the same tag again - should indicate it already exists
     let (success, message) = create_and_push_tag(repo_path, "v1.0.0").await;
     assert!(success, "Should handle existing tag gracefully");
-    assert!(message.contains("already exists"),
-        "Should indicate tag already exists: {}", message);
+    assert!(
+        message.contains("already exists"),
+        "Should indicate tag already exists: {}",
+        message
+    );
 }
 
 // ============================================================================
@@ -698,13 +800,17 @@ async fn test_check_uses_git_lfs_with_gitattributes() {
     let repo_path = repo.path();
 
     // Create a .gitattributes file with LFS configuration
-    let gitattributes_content = "*.bin filter=lfs diff=lfs merge=lfs -text\n*.dat filter=lfs diff=lfs merge=lfs -text\n";
+    let gitattributes_content =
+        "*.bin filter=lfs diff=lfs merge=lfs -text\n*.dat filter=lfs diff=lfs merge=lfs -text\n";
     fs::write(repo_path.join(".gitattributes"), gitattributes_content)
         .expect("Failed to write .gitattributes");
 
     // Should return true when .gitattributes contains "filter=lfs"
     let uses_lfs = check_uses_git_lfs(repo_path).await;
-    assert!(uses_lfs, "Repo with .gitattributes containing 'filter=lfs' should return true");
+    assert!(
+        uses_lfs,
+        "Repo with .gitattributes containing 'filter=lfs' should return true"
+    );
 }
 
 #[tokio::test]
@@ -739,9 +845,15 @@ async fn test_check_uses_git_lfs_without_git_lfs_installed() {
     // If git-lfs is not installed, it should return false
     // This test verifies the function handles both cases gracefully
     if is_git_lfs_available() {
-        assert!(uses_lfs, "With git-lfs installed and .gitattributes, should return true");
+        assert!(
+            uses_lfs,
+            "With git-lfs installed and .gitattributes, should return true"
+        );
     } else {
-        assert!(!uses_lfs, "Without git-lfs installed, should return false even with .gitattributes");
+        assert!(
+            !uses_lfs,
+            "Without git-lfs installed, should return false even with .gitattributes"
+        );
     }
 }
 
@@ -767,7 +879,10 @@ async fn test_has_pending_lfs_objects_without_lfs() {
 
     // Should return false for repos without LFS
     let has_pending = has_pending_lfs_objects(repo_path).await;
-    assert!(!has_pending, "Repo without LFS should have no pending LFS objects");
+    assert!(
+        !has_pending,
+        "Repo without LFS should have no pending LFS objects"
+    );
 }
 
 #[tokio::test]
@@ -803,7 +918,10 @@ async fn test_has_pending_lfs_objects_with_lfs_but_no_objects() {
 
     // Should return false when there are no LFS objects
     let has_pending = has_pending_lfs_objects(repo_path).await;
-    assert!(!has_pending, "Repo with LFS configured but no objects should have no pending LFS objects");
+    assert!(
+        !has_pending,
+        "Repo with LFS configured but no objects should have no pending LFS objects"
+    );
 }
 
 #[tokio::test]
@@ -831,13 +949,17 @@ async fn test_push_lfs_objects_without_lfs() {
 
     // Should handle gracefully - either fail with error message or succeed if git-lfs is installed
     if !success {
-        assert!(!error_msg.is_empty(), "Should return error message when push fails");
+        assert!(
+            !error_msg.is_empty(),
+            "Should return error message when push fails"
+        );
         // Error message should indicate LFS issue
         assert!(
-            error_msg.to_lowercase().contains("lfs") ||
-            error_msg.to_lowercase().contains("not") ||
-            error_msg.to_lowercase().contains("error"),
-            "Error message should indicate LFS-related issue: {}", error_msg
+            error_msg.to_lowercase().contains("lfs")
+                || error_msg.to_lowercase().contains("not")
+                || error_msg.to_lowercase().contains("error"),
+            "Error message should indicate LFS-related issue: {}",
+            error_msg
         );
     }
 }
@@ -872,7 +994,10 @@ async fn test_push_lfs_objects_without_remote() {
 
     // Should fail gracefully with error message
     if !success {
-        assert!(!error_msg.is_empty(), "Should return error message when remote doesn't exist");
+        assert!(
+            !error_msg.is_empty(),
+            "Should return error message when remote doesn't exist"
+        );
     }
 }
 
@@ -906,6 +1031,9 @@ async fn test_push_lfs_objects_invalid_branch() {
 
     // Should handle gracefully - may succeed or fail depending on git-lfs behavior
     if !success {
-        assert!(!error_msg.is_empty(), "Should return error message when branch is invalid");
+        assert!(
+            !error_msg.is_empty(),
+            "Should return error message when branch is invalid"
+        );
     }
 }

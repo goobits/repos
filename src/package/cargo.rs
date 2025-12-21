@@ -68,7 +68,9 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
                 let error_message = clean_cargo_error(&stderr);
 
                 // Check if it's an "already published" error
-                if stderr.contains("already uploaded") || stderr.contains("crate version") && stderr.contains("already exists") {
+                if stderr.contains("already uploaded")
+                    || stderr.contains("crate version") && stderr.contains("already exists")
+                {
                     (true, "already published".to_string())
                 } else {
                     (false, error_message)

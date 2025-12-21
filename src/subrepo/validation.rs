@@ -1,18 +1,24 @@
 //! Validation logic for discovering nested repositories
 
-use super::{SubrepoInstance, ValidationReport, get_current_commit, get_remote_url, has_uncommitted_changes, get_commit_timestamp};
+use super::{
+    get_commit_timestamp, get_current_commit, get_remote_url, has_uncommitted_changes,
+    SubrepoInstance, ValidationReport,
+};
 use crate::core::config::SKIP_DIRECTORIES;
 use anyhow::Result;
+use ignore::WalkBuilder;
 use std::collections::HashMap;
 use std::path::Path;
-use ignore::WalkBuilder;
 
 /// Discover all nested repositories and generate a validation report
 pub fn validate_subrepos() -> Result<ValidationReport> {
     let parent_repos = crate::core::discovery::find_repos();
     let mut all_nested = Vec::new();
 
-    println!("🔍 Scanning {} parent repositories for nested repos...\n", parent_repos.len());
+    println!(
+        "🔍 Scanning {} parent repositories for nested repos...\n",
+        parent_repos.len()
+    );
 
     for (parent_name, parent_path) in parent_repos {
         let nested = find_nested_in_parent(&parent_name, &parent_path)?;
@@ -25,9 +31,7 @@ pub fn validate_subrepos() -> Result<ValidationReport> {
 
     for instance in all_nested {
         if let Some(ref remote) = instance.remote_url {
-            by_remote.entry(remote.clone())
-                .or_default()
-                .push(instance);
+            by_remote.entry(remote.clone()).or_default().push(instance);
         } else {
             no_remote.push(instance);
         }
@@ -49,7 +53,7 @@ fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<Su
     // Walk the parent looking for nested .git directories
     let walker = WalkBuilder::new(parent_path)
         .follow_links(false)
-        .max_depth(Some(5))  // Don't go too deep
+        .max_depth(Some(5)) // Don't go too deep
         .filter_entry(|entry| {
             let file_name = entry.file_name().to_str().unwrap_or("");
 
@@ -87,12 +91,14 @@ fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<Su
         }
 
         // This is a nested repo! Get its info
-        let subrepo_name = path.file_name()
+        let subrepo_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
 
-        let relative_path = path.strip_prefix(parent_path)
+        let relative_path = path
+            .strip_prefix(parent_path)
             .unwrap_or(path)
             .to_string_lossy()
             .to_string();
@@ -132,7 +138,10 @@ pub fn display_report(report: &ValidationReport) {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Total nested repos found: {}", report.total_nested);
     println!("Unique remote URLs: {}", report.unique_remotes());
-    println!("Shared subrepos (same remote): {}", report.shared_subrepos_count());
+    println!(
+        "Shared subrepos (same remote): {}",
+        report.shared_subrepos_count()
+    );
     println!();
 
     if report.total_nested == 0 {
@@ -158,11 +167,14 @@ pub fn display_report(report: &ValidationReport) {
             println!("   Remote: {}", remote);
 
             for instance in instances {
-                let uncommitted = if instance.has_uncommitted { " (uncommitted)" } else { "" };
-                println!("     • {} @ {}{}",
-                    instance.parent_repo,
-                    instance.short_hash,
-                    uncommitted
+                let uncommitted = if instance.has_uncommitted {
+                    " (uncommitted)"
+                } else {
+                    ""
+                };
+                println!(
+                    "     • {} @ {}{}",
+                    instance.parent_repo, instance.short_hash, uncommitted
                 );
             }
             println!();
@@ -171,7 +183,10 @@ pub fn display_report(report: &ValidationReport) {
 
     // Show repos without remotes
     if !report.no_remote.is_empty() {
-        println!("⚠️  Nested repos without remotes ({}):", report.no_remote.len());
+        println!(
+            "⚠️  Nested repos without remotes ({}):",
+            report.no_remote.len()
+        );
         for instance in &report.no_remote {
             println!("   • {}/{}", instance.parent_repo, instance.subrepo_name);
         }
@@ -184,7 +199,10 @@ pub fn display_report(report: &ValidationReport) {
     let shared_count = report.shared_subrepos_count();
 
     if shared_count >= 3 {
-        println!("   ✅ BUILD IT - You have {} subrepos shared across multiple parents", shared_count);
+        println!(
+            "   ✅ BUILD IT - You have {} subrepos shared across multiple parents",
+            shared_count
+        );
         println!("      This feature would help track drift between them.");
     } else if shared_count > 0 {
         println!("   ⚠️  MAYBE - You have {} shared subrepos", shared_count);

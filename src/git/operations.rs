@@ -83,7 +83,6 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
     }
 }
 
-
 /// Reads a git config value from the specified repository
 /// Returns the config value if it exists, None if not found
 pub(crate) async fn get_git_config(path: &Path, key: &str) -> Result<Option<String>> {
@@ -350,19 +349,25 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
 
 /// Phase 2: Push repository if needed (write operation, moderate concurrency)
 /// Returns (status, message, has_uncommitted_changes)
-pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push: bool) -> (Status, String, bool) {
+pub async fn push_if_needed(
+    path: &Path,
+    fetch_result: &FetchResult,
+    force_push: bool,
+) -> (Status, String, bool) {
     use crate::core::clean_error_message;
 
     // If already synced or has errors, return immediately
     if fetch_result.status != Status::Synced && fetch_result.status != Status::NoUpstream {
-        return (fetch_result.status, fetch_result.message.clone(), fetch_result.has_uncommitted);
+        return (
+            fetch_result.status,
+            fetch_result.message.clone(),
+            fetch_result.has_uncommitted,
+        );
     }
 
     // Detect remote name for LFS and push operations
     let remote_name = match run_git(path, GIT_REMOTE_ARGS).await {
-        Ok((true, remotes, _)) => {
-            remotes.lines().next().unwrap_or("origin").to_string()
-        }
+        Ok((true, remotes, _)) => remotes.lines().next().unwrap_or("origin").to_string(),
         _ => "origin".to_string(),
     };
 
@@ -398,11 +403,7 @@ pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push:
                     } else {
                         format!("set upstream ({}) & pushed", remote_name)
                     };
-                    return (
-                        Status::Pushed,
-                        msg,
-                        fetch_result.has_uncommitted,
-                    );
+                    return (Status::Pushed, msg, fetch_result.has_uncommitted);
                 }
                 Ok((false, _, stderr)) => {
                     let error_message = clean_error_message(&stderr);
@@ -414,13 +415,21 @@ pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push:
                 }
             }
         } else {
-            return (Status::NoUpstream, STATUS_NO_UPSTREAM.to_string(), fetch_result.has_uncommitted);
+            return (
+                Status::NoUpstream,
+                STATUS_NO_UPSTREAM.to_string(),
+                fetch_result.has_uncommitted,
+            );
         }
     }
 
     // If no commits ahead, already synced
     if fetch_result.ahead_count == 0 {
-        return (Status::Synced, STATUS_SYNCED.to_string(), fetch_result.has_uncommitted);
+        return (
+            Status::Synced,
+            STATUS_SYNCED.to_string(),
+            fetch_result.has_uncommitted,
+        );
     }
 
     // Push changes - use explicit remote and branch to match LFS push
@@ -433,15 +442,14 @@ pub async fn push_if_needed(path: &Path, fetch_result: &FetchResult, force_push:
                 "commits"
             };
             let msg = if uses_lfs {
-                format!("{} {} pushed (with LFS)", fetch_result.ahead_count, commits_word)
+                format!(
+                    "{} {} pushed (with LFS)",
+                    fetch_result.ahead_count, commits_word
+                )
             } else {
                 format!("{} {} pushed", fetch_result.ahead_count, commits_word)
             };
-            (
-                Status::Pushed,
-                msg,
-                fetch_result.has_uncommitted,
-            )
+            (Status::Pushed, msg, fetch_result.has_uncommitted)
         }
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
@@ -561,11 +569,16 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
         Ok((true, _, _)) => (true, format!("tagged & pushed {}", tag_name)),
         Ok((false, _, stderr)) => {
             // Tag was created but push failed - that's okay, we'll leave the local tag
-            (true, format!("tagged {} (push failed: {})", tag_name, stderr.lines().next().unwrap_or("unknown error")))
+            (
+                true,
+                format!(
+                    "tagged {} (push failed: {})",
+                    tag_name,
+                    stderr.lines().next().unwrap_or("unknown error")
+                ),
+            )
         }
-        Err(e) => {
-            (true, format!("tagged {} (push failed: {})", tag_name, e))
-        }
+        Err(e) => (true, format!("tagged {} (push failed: {})", tag_name, e)),
     }
 }
 
@@ -777,14 +790,21 @@ pub async fn pull_if_needed(
             // Check for common pull errors
             let final_message = if error_message.to_lowercase().contains("conflict") {
                 format!("merge conflict: {}", error_message)
-            } else if error_message.to_lowercase().contains("would be overwritten") {
+            } else if error_message
+                .to_lowercase()
+                .contains("would be overwritten")
+            {
                 format!("uncommitted changes conflict: {}", error_message)
             } else if is_rate_limit_error(&error_message) {
                 format!("⚠️ RATE LIMIT: {}", error_message)
             } else {
                 error_message
             };
-            (Status::PullError, final_message, fetch_result.has_uncommitted)
+            (
+                Status::PullError,
+                final_message,
+                fetch_result.has_uncommitted,
+            )
         }
         Err(e) => {
             let error_message = clean_error_message(&e.to_string());
@@ -793,7 +813,11 @@ pub async fn pull_if_needed(
             } else {
                 error_message
             };
-            (Status::PullError, final_message, fetch_result.has_uncommitted)
+            (
+                Status::PullError,
+                final_message,
+                fetch_result.has_uncommitted,
+            )
         }
     }
 }

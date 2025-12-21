@@ -69,7 +69,8 @@ impl SyncStatistics {
                     .unwrap_or("0")
                     .parse::<u64>()
                 {
-                    self.total_commits_pushed.fetch_add(commits, Ordering::Relaxed);
+                    self.total_commits_pushed
+                        .fetch_add(commits, Ordering::Relaxed);
                 }
             }
             Status::Pulled => {
@@ -81,7 +82,8 @@ impl SyncStatistics {
                     .unwrap_or("0")
                     .parse::<u64>()
                 {
-                    self.total_commits_pushed.fetch_add(commits, Ordering::Relaxed);
+                    self.total_commits_pushed
+                        .fetch_add(commits, Ordering::Relaxed);
                 }
             }
             Status::Synced
@@ -111,7 +113,11 @@ impl SyncStatistics {
                     eprintln!("Warning: Failed to record no-remote repo: {}", repo_name);
                 }
             }
-            Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError => {
+            Status::Error
+            | Status::ConfigError
+            | Status::StagingError
+            | Status::CommitError
+            | Status::PullError => {
                 self.error_repos.fetch_add(1, Ordering::Relaxed);
                 if let Ok(mut guard) = self.failed_repos.lock() {
                     guard.push((
@@ -129,7 +135,11 @@ impl SyncStatistics {
         if has_uncommitted
             && !matches!(
                 status,
-                Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError
+                Status::Error
+                    | Status::ConfigError
+                    | Status::StagingError
+                    | Status::CommitError
+                    | Status::PullError
             )
         {
             if let Ok(mut uncommitted) = self.uncommitted_repos.lock() {
@@ -138,7 +148,10 @@ impl SyncStatistics {
                     uncommitted.push((repo_name.to_string(), repo_path.to_string()));
                 }
             } else {
-                eprintln!("Warning: Failed to record uncommitted changes for repo: {}", repo_name);
+                eprintln!(
+                    "Warning: Failed to record uncommitted changes for repo: {}",
+                    repo_name
+                );
             }
         }
     }
@@ -224,10 +237,7 @@ impl SyncStatistics {
 
         // No upstream repos
         if !no_upstream_repos.is_empty() {
-            lines.push(format!(
-                "🟡 NEEDS UPSTREAM ({})",
-                no_upstream_repos.len()
-            ));
+            lines.push(format!("🟡 NEEDS UPSTREAM ({})", no_upstream_repos.len()));
             for (i, (repo_name, repo_path)) in no_upstream_repos.iter().enumerate() {
                 let tree_char = if i == no_upstream_repos.len() - 1 {
                     "└─"
@@ -268,8 +278,16 @@ impl SyncStatistics {
                             for (file_idx, change) in changes.iter().enumerate() {
                                 let is_last_file = file_idx == changes.len() - 1;
                                 let prefix = if is_last_repo {
-                                    if is_last_file { "      └─" } else { "      ├─" }
-                                } else if is_last_file { "   │  └─" } else { "   │  ├─" };
+                                    if is_last_file {
+                                        "      └─"
+                                    } else {
+                                        "      ├─"
+                                    }
+                                } else if is_last_file {
+                                    "   │  └─"
+                                } else {
+                                    "   │  ├─"
+                                };
                                 lines.push(format!("{}  {}", prefix, change));
                             }
                         }
@@ -283,10 +301,7 @@ impl SyncStatistics {
 
         // No remote repos
         if !no_remote_repos.is_empty() {
-            lines.push(format!(
-                "🔧 MISSING REMOTES ({})",
-                no_remote_repos.len()
-            ));
+            lines.push(format!("🔧 MISSING REMOTES ({})", no_remote_repos.len()));
             for (i, (repo_name, repo_path)) in no_remote_repos.iter().enumerate() {
                 let tree_char = if i == no_remote_repos.len() - 1 {
                     "└─"

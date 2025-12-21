@@ -44,9 +44,8 @@ impl SubrepoStatus {
             return (100.0, unique_commits);
         }
 
-        let score = ((instances.len() - unique_commits) as f32)
-            / ((instances.len() - 1) as f32)
-            * 100.0;
+        let score =
+            ((instances.len() - unique_commits) as f32) / ((instances.len() - 1) as f32) * 100.0;
         (score, unique_commits)
     }
 
@@ -115,21 +114,27 @@ pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
 
 /// Display a single drifted subrepo in concise format
 fn display_drift_summary_item(status: &SubrepoStatus) {
-    println!("{}: {} instances at different commits", status.name, status.instances.len());
+    println!(
+        "{}: {} instances at different commits",
+        status.name,
+        status.instances.len()
+    );
 
     // Find the latest clean commit (sync target)
-    let latest_clean = status.instances.iter()
+    let latest_clean = status
+        .instances
+        .iter()
         .filter(|i| !i.has_uncommitted)
         .max_by_key(|i| i.commit_timestamp);
 
     // Find absolute latest - instances is guaranteed non-empty by caller
-    let Some(latest) = status.instances.iter()
-        .max_by_key(|i| i.commit_timestamp) else {
+    let Some(latest) = status.instances.iter().max_by_key(|i| i.commit_timestamp) else {
         return; // Defensive: skip if somehow empty
     };
 
     // Group by commit for display
-    let mut by_commit: std::collections::HashMap<String, Vec<&SubrepoInstance>> = std::collections::HashMap::new();
+    let mut by_commit: std::collections::HashMap<String, Vec<&SubrepoInstance>> =
+        std::collections::HashMap::new();
     for instance in &status.instances {
         by_commit
             .entry(instance.commit_hash.clone())
@@ -148,7 +153,8 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
     // Display commits with arrow notation
     for (_commit, instances) in &commits {
         for instance in instances {
-            let is_sync_target = latest_clean.is_some_and(|t| t.commit_hash == instance.commit_hash);
+            let is_sync_target =
+                latest_clean.is_some_and(|t| t.commit_hash == instance.commit_hash);
             let is_latest = latest.commit_hash == instance.commit_hash;
 
             let prefix = if is_sync_target { "→" } else { " " };
@@ -165,19 +171,21 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
                 suffix.push_str("  (outdated)");
             }
 
-            println!("  {} {}  {:30}  {}{}",
-                prefix,
-                instance.short_hash,
-                instance.parent_repo,
-                status_indicator,
-                suffix
+            println!(
+                "  {} {}  {:30}  {}{}",
+                prefix, instance.short_hash, instance.parent_repo, status_indicator, suffix
             );
         }
     }
 
     // Show sync command
-    let target_commit = latest_clean.map(|t| &t.short_hash).unwrap_or(&latest.short_hash);
-    println!("    Sync: repos subrepo sync {} --to {}", status.name, target_commit);
+    let target_commit = latest_clean
+        .map(|t| &t.short_hash)
+        .unwrap_or(&latest.short_hash);
+    println!(
+        "    Sync: repos subrepo sync {} --to {}",
+        status.name, target_commit
+    );
     println!();
 }
 
@@ -233,9 +241,7 @@ pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
 
 /// Analyze the uncommitted state across instances
 fn analyze_uncommitted_state(instances: &[SubrepoInstance]) -> UncommittedState {
-    let uncommitted_count = instances.iter()
-        .filter(|i| i.has_uncommitted)
-        .count();
+    let uncommitted_count = instances.iter().filter(|i| i.has_uncommitted).count();
 
     if uncommitted_count == 0 {
         UncommittedState::AllClean
@@ -259,13 +265,17 @@ fn display_drift_status(status: &SubrepoStatus) {
     println!();
 
     // Find the latest timestamp (absolute latest)
-    let latest_timestamp = status.instances.iter()
+    let latest_timestamp = status
+        .instances
+        .iter()
         .map(|i| i.commit_timestamp)
         .max()
         .unwrap_or(0);
 
     // Find the latest CLEAN commit timestamp (sync target)
-    let latest_clean_timestamp = status.instances.iter()
+    let latest_clean_timestamp = status
+        .instances
+        .iter()
         .filter(|i| !i.has_uncommitted)
         .map(|i| i.commit_timestamp)
         .max();
@@ -296,9 +306,8 @@ fn display_drift_status(status: &SubrepoStatus) {
     // Display commits and their instances with arrow notation
     for (_commit, instances) in &commits {
         for instance in instances {
-            let is_sync_target = latest_clean_timestamp.is_some_and(|t|
-                instance.commit_timestamp == t && !instance.has_uncommitted
-            );
+            let is_sync_target = latest_clean_timestamp
+                .is_some_and(|t| instance.commit_timestamp == t && !instance.has_uncommitted);
             let is_latest = instance.commit_timestamp == latest_timestamp;
 
             let prefix = if is_sync_target { "→" } else { " " };
@@ -316,7 +325,8 @@ fn display_drift_status(status: &SubrepoStatus) {
             }
 
             // Align the repo name and status
-            println!("  {} {}  {:width$}  {}{}",
+            println!(
+                "  {} {}  {:width$}  {}{}",
                 prefix,
                 instance.short_hash,
                 instance.parent_repo,
@@ -337,13 +347,15 @@ fn display_drift_status(status: &SubrepoStatus) {
             println!();
 
             // No clean target - use the latest commit (guaranteed non-empty by caller)
-            let Some(target_instance) = status.instances.iter()
-                .max_by_key(|i| i.commit_timestamp) else {
+            let Some(target_instance) = status.instances.iter().max_by_key(|i| i.commit_timestamp)
+            else {
                 return; // Defensive: skip if somehow empty
             };
             let target_commit = &target_instance.short_hash;
 
-            let dirty_repos: Vec<&str> = status.instances.iter()
+            let dirty_repos: Vec<&str> = status
+                .instances
+                .iter()
                 .map(|i| i.parent_repo.as_str())
                 .collect();
             let repos_desc = if dirty_repos.len() == 1 {
@@ -353,25 +365,36 @@ fn display_drift_status(status: &SubrepoStatus) {
             };
 
             println!("  💡 EASY FIX (Recommended):");
-            println!("     repos subrepo sync {} --to {} --stash", status.name, target_commit);
+            println!(
+                "     repos subrepo sync {} --to {} --stash",
+                status.name, target_commit
+            );
             println!("     (Stashes uncommitted changes in {})", repos_desc);
             println!();
             println!("  🔥 FORCE FIX (Discards all local changes):");
-            println!("     repos subrepo sync {} --to {} --force", status.name, target_commit);
+            println!(
+                "     repos subrepo sync {} --to {} --force",
+                status.name, target_commit
+            );
         }
 
         UncommittedState::Mixed => {
             // Find the latest CLEAN commit (the sync target)
-            let Some(target_instance) = status.instances.iter()
+            let Some(target_instance) = status
+                .instances
+                .iter()
                 .filter(|i| !i.has_uncommitted)
-                .max_by_key(|i| i.commit_timestamp) else {
+                .max_by_key(|i| i.commit_timestamp)
+            else {
                 return; // Defensive: skip if no clean instances
             };
             let target_commit = &target_instance.short_hash;
             let target_repo = &target_instance.parent_repo;
 
             // Collect dirty repo names
-            let dirty_repos: Vec<&str> = status.instances.iter()
+            let dirty_repos: Vec<&str> = status
+                .instances
+                .iter()
                 .filter(|i| i.has_uncommitted)
                 .map(|i| i.parent_repo.as_str())
                 .collect();
@@ -379,31 +402,44 @@ fn display_drift_status(status: &SubrepoStatus) {
             let dirty_list = if dirty_repos.len() == 1 {
                 format!("'{}'", dirty_repos[0])
             } else {
-                dirty_repos.iter()
+                dirty_repos
+                    .iter()
                     .map(|r| format!("'{}'", r))
                     .collect::<Vec<_>>()
                     .join(", ")
             };
 
             println!("  💡 EASY FIX (Recommended):");
-            println!("     repos subrepo sync {} --to {} --stash", status.name, target_commit);
-            println!("     (Syncs {} to the clean commit from '{}')", dirty_list, target_repo);
+            println!(
+                "     repos subrepo sync {} --to {} --stash",
+                status.name, target_commit
+            );
+            println!(
+                "     (Syncs {} to the clean commit from '{}')",
+                dirty_list, target_repo
+            );
             println!();
 
             println!("  🔥 FORCE FIX (Discards changes in {}):", dirty_list);
-            println!("     repos subrepo sync {} --to {} --force", status.name, target_commit);
+            println!(
+                "     repos subrepo sync {} --to {} --force",
+                status.name, target_commit
+            );
         }
 
         UncommittedState::AllClean => {
             // All clean - normal sync suggestions work
             // Find the latest commit (guaranteed non-empty by caller)
-            let Some(latest_commit) = status.instances.iter()
-                .max_by_key(|i| i.commit_timestamp) else {
+            let Some(latest_commit) = status.instances.iter().max_by_key(|i| i.commit_timestamp)
+            else {
                 return; // Defensive: skip if somehow empty
             };
 
             println!("  🔧 SYNC to latest commit:");
-            println!("     repos subrepo sync {} --to {}", status.name, latest_commit.short_hash);
+            println!(
+                "     repos subrepo sync {} --to {}",
+                status.name, latest_commit.short_hash
+            );
         }
     }
 
@@ -431,7 +467,8 @@ fn display_synced_status(status: &SubrepoStatus) {
             } else {
                 "✅ clean"
             };
-            println!("    {:width$}  {}",
+            println!(
+                "    {:width$}  {}",
                 instance.parent_repo,
                 status_indicator,
                 width = 30

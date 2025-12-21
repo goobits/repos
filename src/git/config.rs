@@ -1,8 +1,8 @@
 //! Git user configuration management
 
 use anyhow::Result;
-use std::path::{Path, PathBuf};
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use super::operations::{get_git_config, run_git, set_git_config};
@@ -10,7 +10,11 @@ use super::status::Status;
 
 /// Type alias for the interactive prompt function
 /// Takes (repo_name, current_config, target_config) and returns whether to apply changes
-pub type PromptFn = Box<dyn Fn(&str, &UserConfig, &UserConfig) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>> + Send + Sync>;
+pub type PromptFn = Box<
+    dyn Fn(&str, &UserConfig, &UserConfig) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Represents user configuration (name and email) to sync across repositories
 #[derive(Clone, Debug)]

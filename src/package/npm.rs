@@ -59,7 +59,8 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
                     // Check if it was actually published or already exists
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     if stderr.contains("You cannot publish over the previously published versions")
-                        || stderr.contains("cannot publish over existing version") {
+                        || stderr.contains("cannot publish over existing version")
+                    {
                         (true, "already published".to_string())
                     } else {
                         (true, "published".to_string())

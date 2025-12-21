@@ -157,6 +157,9 @@ mod tests {
         assert!(SKIP_DIRECTORIES.contains(&"node_modules"));
         assert!(SKIP_DIRECTORIES.contains(&"target"));
         assert!(SKIP_DIRECTORIES.contains(&".venv"));
-        assert!(SKIP_DIRECTORIES.len() > 5, "Should skip multiple common directories");
+        assert!(
+            SKIP_DIRECTORIES.len() > 5,
+            "Should skip multiple common directories"
+        );
     }
 }

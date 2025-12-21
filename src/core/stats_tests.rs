@@ -16,15 +16,33 @@ mod tests {
         assert_eq!(stats.error_repos.load(Ordering::Relaxed), 0);
         assert_eq!(stats.uncommitted_count.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 0);
-        assert!(stats.no_upstream_repos.lock().expect("Failed to lock no_upstream_repos mutex in test").is_empty());
-        assert!(stats.no_remote_repos.lock().expect("Failed to lock no_remote_repos mutex in test").is_empty());
-        assert!(stats.failed_repos.lock().expect("Failed to lock failed_repos mutex in test").is_empty());
+        assert!(stats
+            .no_upstream_repos
+            .lock()
+            .expect("Failed to lock no_upstream_repos mutex in test")
+            .is_empty());
+        assert!(stats
+            .no_remote_repos
+            .lock()
+            .expect("Failed to lock no_remote_repos mutex in test")
+            .is_empty());
+        assert!(stats
+            .failed_repos
+            .lock()
+            .expect("Failed to lock failed_repos mutex in test")
+            .is_empty());
     }
 
     #[test]
     fn test_update_with_pushed_status() {
         let stats = SyncStatistics::new();
-        stats.update("repo1", "/path/1", &Status::Pushed, "3 commits pushed", false);
+        stats.update(
+            "repo1",
+            "/path/1",
+            &Status::Pushed,
+            "3 commits pushed",
+            false,
+        );
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 3);
         assert_eq!(stats.synced_repos.load(Ordering::Relaxed), 1); // Pushed also increments synced_repos
     }
@@ -48,8 +66,17 @@ mod tests {
     #[test]
     fn test_update_with_no_upstream() {
         let stats = SyncStatistics::new();
-        stats.update("repo1", "/path/1", &Status::NoUpstream, "no tracking", false);
-        let no_upstream = stats.no_upstream_repos.lock().expect("Failed to lock no_upstream_repos mutex in test");
+        stats.update(
+            "repo1",
+            "/path/1",
+            &Status::NoUpstream,
+            "no tracking",
+            false,
+        );
+        let no_upstream = stats
+            .no_upstream_repos
+            .lock()
+            .expect("Failed to lock no_upstream_repos mutex in test");
         assert_eq!(no_upstream.len(), 1);
         assert_eq!(no_upstream[0].0, "repo1");
     }
@@ -58,7 +85,14 @@ mod tests {
     fn test_update_with_no_remote() {
         let stats = SyncStatistics::new();
         stats.update("repo1", "/path/1", &Status::NoRemote, "no remote", false);
-        assert_eq!(stats.no_remote_repos.lock().expect("Failed to lock no_remote_repos mutex in test").len(), 1);
+        assert_eq!(
+            stats
+                .no_remote_repos
+                .lock()
+                .expect("Failed to lock no_remote_repos mutex in test")
+                .len(),
+            1
+        );
         assert_eq!(stats.skipped_repos.load(Ordering::Relaxed), 1);
     }
 
@@ -66,7 +100,14 @@ mod tests {
     fn test_update_with_error() {
         let stats = SyncStatistics::new();
         stats.update("repo1", "/path/1", &Status::Error, "push failed", false);
-        assert_eq!(stats.failed_repos.lock().expect("Failed to lock failed_repos mutex in test").len(), 1);
+        assert_eq!(
+            stats
+                .failed_repos
+                .lock()
+                .expect("Failed to lock failed_repos mutex in test")
+                .len(),
+            1
+        );
         assert_eq!(stats.error_repos.load(Ordering::Relaxed), 1);
     }
 
@@ -90,9 +131,18 @@ mod tests {
     #[test]
     fn test_error_message_stored() {
         let stats = SyncStatistics::new();
-        stats.update("repo1", "/path/1", &Status::Error, "push failed: permission denied", false);
+        stats.update(
+            "repo1",
+            "/path/1",
+            &Status::Error,
+            "push failed: permission denied",
+            false,
+        );
 
-        let failed = stats.failed_repos.lock().expect("Failed to lock failed_repos mutex in test");
+        let failed = stats
+            .failed_repos
+            .lock()
+            .expect("Failed to lock failed_repos mutex in test");
         assert_eq!(failed.len(), 1);
         let (name, path, msg) = &failed[0];
         assert_eq!(name, "repo1");

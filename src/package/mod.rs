@@ -75,7 +75,8 @@ pub async fn detect_package_manager_async(repo_path: &Path) -> Option<PackageMan
 
     // Check for pyproject.toml or setup.py (PyPI)
     if fs::metadata(repo_path.join("pyproject.toml")).await.is_ok()
-        || fs::metadata(repo_path.join("setup.py")).await.is_ok() {
+        || fs::metadata(repo_path.join("setup.py")).await.is_ok()
+    {
         return Some(PackageManager::PyPI);
     }
 
@@ -110,7 +111,6 @@ pub async fn publish_package(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn test_detect_npm_package() {
@@ -120,8 +120,9 @@ mod tests {
         // Create package.json
         std::fs::write(
             temp_dir.path().join("package.json"),
-            r#"{"name": "test", "version": "1.0.0"}"#
-        ).expect("Failed to write package.json test file");
+            r#"{"name": "test", "version": "1.0.0"}"#,
+        )
+        .expect("Failed to write package.json test file");
 
         let manager = detect_package_manager(temp_dir.path());
         assert_eq!(manager, Some(PackageManager::Npm));
@@ -138,8 +139,9 @@ mod tests {
             r#"[package]
 name = "test"
 version = "1.0.0"
-"#
-        ).expect("Failed to write Cargo.toml test file");
+"#,
+        )
+        .expect("Failed to write Cargo.toml test file");
 
         let manager = detect_package_manager(temp_dir.path());
         assert_eq!(manager, Some(PackageManager::Cargo));
@@ -156,8 +158,9 @@ version = "1.0.0"
             r#"[project]
 name = "test"
 version = "1.0.0"
-"#
-        ).expect("Failed to write pyproject.toml test file");
+"#,
+        )
+        .expect("Failed to write pyproject.toml test file");
 
         let manager = detect_package_manager(temp_dir.path());
         assert_eq!(manager, Some(PackageManager::PyPI));
@@ -173,8 +176,9 @@ version = "1.0.0"
             temp_dir.path().join("setup.py"),
             r#"from setuptools import setup
 setup(name="test", version="1.0.0")
-"#
-        ).expect("Failed to write setup.py test file");
+"#,
+        )
+        .expect("Failed to write setup.py test file");
 
         let manager = detect_package_manager(temp_dir.path());
         assert_eq!(manager, Some(PackageManager::PyPI));
@@ -198,15 +202,17 @@ setup(name="test", version="1.0.0")
         // Create both package.json and Cargo.toml
         std::fs::write(
             temp_dir.path().join("package.json"),
-            r#"{"name": "test", "version": "1.0.0"}"#
-        ).expect("Failed to write package.json test file");
+            r#"{"name": "test", "version": "1.0.0"}"#,
+        )
+        .expect("Failed to write package.json test file");
         std::fs::write(
             temp_dir.path().join("Cargo.toml"),
             r#"[package]
 name = "test"
 version = "1.0.0"
-"#
-        ).expect("Failed to write Cargo.toml test file");
+"#,
+        )
+        .expect("Failed to write Cargo.toml test file");
 
         // Should prefer npm (checked first)
         let manager = detect_package_manager(temp_dir.path());
@@ -218,10 +224,8 @@ version = "1.0.0"
         use tempfile::TempDir;
         let temp_dir = TempDir::new().expect("Failed to create temp directory for async test");
 
-        std::fs::write(
-            temp_dir.path().join("package.json"),
-            r#"{"name": "test"}"#
-        ).expect("Failed to write package.json test file");
+        std::fs::write(temp_dir.path().join("package.json"), r#"{"name": "test"}"#)
+            .expect("Failed to write package.json test file");
 
         let manager = detect_package_manager_async(temp_dir.path()).await;
         assert_eq!(manager, Some(PackageManager::Npm));
@@ -236,8 +240,9 @@ version = "1.0.0"
             temp_dir.path().join("Cargo.toml"),
             r#"[package]
 name = "test"
-"#
-        ).expect("Failed to write Cargo.toml test file");
+"#,
+        )
+        .expect("Failed to write Cargo.toml test file");
 
         let manager = detect_package_manager_async(temp_dir.path()).await;
         assert_eq!(manager, Some(PackageManager::Cargo));
@@ -258,15 +263,16 @@ name = "test"
         let temp_dir = TempDir::new().expect("Failed to create temp directory for async test");
 
         // Test with npm
-        std::fs::write(
-            temp_dir.path().join("package.json"),
-            r#"{"name": "test"}"#
-        ).expect("Failed to write package.json test file");
+        std::fs::write(temp_dir.path().join("package.json"), r#"{"name": "test"}"#)
+            .expect("Failed to write package.json test file");
 
         let sync_result = detect_package_manager(temp_dir.path());
         let async_result = detect_package_manager_async(temp_dir.path()).await;
 
-        assert_eq!(sync_result, async_result, "Sync and async should return same result");
+        assert_eq!(
+            sync_result, async_result,
+            "Sync and async should return same result"
+        );
     }
 }
 

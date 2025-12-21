@@ -236,12 +236,13 @@ fn handle_subrepo_command(subcommand: SubrepoCommand) -> Result<()> {
             subrepo::status::display_status(&statuses, all);
             Ok(())
         }
-        SubrepoCommand::Sync { name, to, stash, force } => {
-            subrepo::sync::sync_subrepo(&name, &to, stash, force)
-        }
-        SubrepoCommand::Update { name, force } => {
-            subrepo::sync::update_subrepo(&name, force)
-        }
+        SubrepoCommand::Sync {
+            name,
+            to,
+            stash,
+            force,
+        } => subrepo::sync::sync_subrepo(&name, &to, stash, force),
+        SubrepoCommand::Update { name, force } => subrepo::sync::update_subrepo(&name, force),
     }
 }
 
@@ -251,12 +252,42 @@ async fn main() -> Result<()> {
 
     // Determine the operation mode and handle commands
     match &cli.command {
-        Some(Commands::Push { force, verbose, show_changes, no_drift_check, jobs, sequential }) => {
+        Some(Commands::Push {
+            force,
+            verbose,
+            show_changes,
+            no_drift_check,
+            jobs,
+            sequential,
+        }) => {
             let force_push = *force || cli.force;
-            handle_push_command(force_push, *verbose, *show_changes, *no_drift_check, *jobs, *sequential).await
+            handle_push_command(
+                force_push,
+                *verbose,
+                *show_changes,
+                *no_drift_check,
+                *jobs,
+                *sequential,
+            )
+            .await
         }
-        Some(Commands::Pull { rebase, verbose, show_changes, no_drift_check, jobs, sequential }) => {
-            handle_pull_command(*rebase, *verbose, *show_changes, *no_drift_check, *jobs, *sequential).await
+        Some(Commands::Pull {
+            rebase,
+            verbose,
+            show_changes,
+            no_drift_check,
+            jobs,
+            sequential,
+        }) => {
+            handle_pull_command(
+                *rebase,
+                *verbose,
+                *show_changes,
+                *no_drift_check,
+                *jobs,
+                *sequential,
+            )
+            .await
         }
         Some(Commands::Stage { pattern }) => handle_stage_command(pattern.clone()).await,
         Some(Commands::Unstage { pattern }) => handle_unstage_command(pattern.clone()).await,
@@ -265,8 +296,25 @@ async fn main() -> Result<()> {
             message,
             include_empty,
         }) => handle_commit_command(message.clone(), *include_empty).await,
-        Some(Commands::Publish { repos, dry_run, tag, allow_dirty, all, public_only, private_only }) => {
-            handle_publish_command(repos.clone(), *dry_run, *tag, *allow_dirty, *all, *public_only, *private_only).await
+        Some(Commands::Publish {
+            repos,
+            dry_run,
+            tag,
+            allow_dirty,
+            all,
+            public_only,
+            private_only,
+        }) => {
+            handle_publish_command(
+                repos.clone(),
+                *dry_run,
+                *tag,
+                *allow_dirty,
+                *all,
+                *public_only,
+                *private_only,
+            )
+            .await
         }
         Some(Commands::Config {
             name,
@@ -314,9 +362,7 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Some(Commands::Subrepo { subcommand }) => {
-            handle_subrepo_command(subcommand.clone())
-        }
+        Some(Commands::Subrepo { subcommand }) => handle_subrepo_command(subcommand.clone()),
         None => {
             // Default behavior - show help
             use clap::CommandFactory;

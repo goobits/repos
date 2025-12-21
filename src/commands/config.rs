@@ -9,11 +9,11 @@ use std::path::PathBuf;
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    ProcessingContext, CONFIG_SYNCING_MESSAGE, NO_REPOS_MESSAGE, GIT_CONCURRENT_CAP,
+    ProcessingContext, CONFIG_SYNCING_MESSAGE, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
 use crate::git::{
     check_repo_config, get_current_user_config, get_global_user_config, validate_user_config,
-    ConfigArgs, ConfigCommand, ConfigSource, UserConfig, PromptFn,
+    ConfigArgs, ConfigCommand, ConfigSource, PromptFn, UserConfig,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -336,9 +336,7 @@ async fn process_config_repositories(
         let repo_name = repo_name.to_string();
         let current = current.clone();
         let target = target.clone();
-        Box::pin(async move {
-            prompt_for_config_resolution(&repo_name, &current, &target).await
-        })
+        Box::pin(async move { prompt_for_config_resolution(&repo_name, &current, &target).await })
     });
     let prompt_fn = std::sync::Arc::new(prompt_fn);
 
@@ -355,9 +353,14 @@ async fn process_config_repositories(
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let (status, message) =
-                check_repo_config(&repo_path, &repo_name, &target_config_clone, &command_clone, Some(&*prompt_clone))
-                    .await;
+            let (status, message) = check_repo_config(
+                &repo_path,
+                &repo_name,
+                &target_config_clone,
+                &command_clone,
+                Some(&*prompt_clone),
+            )
+            .await;
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",

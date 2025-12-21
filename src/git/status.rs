@@ -55,9 +55,11 @@ impl Status {
             | Status::Pulled => "🟢",
             Status::Skip | Status::NoRemote | Status::ConfigSkipped | Status::NoChanges => "🟠",
             Status::NoUpstream => "🟡",
-            Status::Error | Status::ConfigError | Status::StagingError | Status::CommitError | Status::PullError => {
-                "🔴"
-            }
+            Status::Error
+            | Status::ConfigError
+            | Status::StagingError
+            | Status::CommitError
+            | Status::PullError => "🔴",
         }
     }
 
@@ -161,5 +163,4 @@ mod tests {
         assert_eq!(Status::Committed.text(), "committed");
         assert_eq!(Status::CommitError.text(), "failed");
     }
-
 }

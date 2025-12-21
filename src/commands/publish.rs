@@ -7,9 +7,11 @@ use anyhow::Result;
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    NO_REPOS_MESSAGE, GIT_CONCURRENT_CAP,
+    GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
-use crate::git::{has_uncommitted_changes, create_and_push_tag, get_repo_visibility, RepoVisibility};
+use crate::git::{
+    create_and_push_tag, get_repo_visibility, has_uncommitted_changes, RepoVisibility,
+};
 use crate::package::{get_package_info, publish_package, PublishStatus};
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for packages...";
@@ -38,9 +40,7 @@ pub async fn handle_publish_command(
 
     // Filter repositories if specific targets were requested
     if !target_repos.is_empty() {
-        repos.retain(|(name, _)| {
-            target_repos.iter().any(|target| name.contains(target))
-        });
+        repos.retain(|(name, _)| target_repos.iter().any(|target| name.contains(target)));
     }
 
     // Determine visibility filter
@@ -61,8 +61,8 @@ pub async fn handle_publish_command(
     // 3. Check for dirty state (async, parallelized)
     //
     // This provides 50-100x speedup on large repository sets
-    use futures::stream::{FuturesUnordered, StreamExt};
     use crate::package::detect_package_manager_async;
+    use futures::stream::{FuturesUnordered, StreamExt};
 
     let analysis_futures: FuturesUnordered<_> = repos
         .into_iter()
@@ -124,7 +124,10 @@ pub async fn handle_publish_command(
             );
 
             if unknown_count > 0 {
-                skip_msg.push_str(&format!(" [{} unknown visibility treated as private]", unknown_count));
+                skip_msg.push_str(&format!(
+                    " [{} unknown visibility treated as private]",
+                    unknown_count
+                ));
             }
 
             println!("{}\n", skip_msg);
@@ -146,9 +149,14 @@ pub async fn handle_publish_command(
 
     // If there are dirty repos and we're not allowing dirty, stop
     if !dirty_repos.is_empty() && !allow_dirty && !dry_run {
-        println!("\r❌ Cannot publish: {} {} uncommitted changes\n",
+        println!(
+            "\r❌ Cannot publish: {} {} uncommitted changes\n",
             dirty_repos.len(),
-            if dirty_repos.len() == 1 { "repository has" } else { "repositories have" }
+            if dirty_repos.len() == 1 {
+                "repository has"
+            } else {
+                "repositories have"
+            }
         );
         println!("Repositories with uncommitted changes:");
         for repo in &dirty_repos {
@@ -163,7 +171,10 @@ pub async fn handle_publish_command(
         if target_repos.is_empty() {
             println!("\r📦 No packages found in any repository\n");
         } else {
-            println!("\r📦 No packages found matching: {}\n", target_repos.join(", "));
+            println!(
+                "\r📦 No packages found matching: {}\n",
+                target_repos.join(", ")
+            );
         }
         set_terminal_title_and_flush("✅ repos");
         return Ok(());
@@ -171,7 +182,10 @@ pub async fn handle_publish_command(
 
     // If dry run, show what would be published
     if dry_run {
-        println!("\r📦 Found {} packages (dry-run mode)\n", packages_to_publish.len());
+        println!(
+            "\r📦 Found {} packages (dry-run mode)\n",
+            packages_to_publish.len()
+        );
 
         for (name, path, manager) in &packages_to_publish {
             if let Some(info) = get_package_info(path).await {
@@ -192,7 +206,10 @@ pub async fn handle_publish_command(
             }
         }
 
-        println!("\nWould publish {} packages (dry-run - nothing published)\n", packages_to_publish.len());
+        println!(
+            "\nWould publish {} packages (dry-run - nothing published)\n",
+            packages_to_publish.len()
+        );
         set_terminal_title_and_flush("✅ repos");
         return Ok(());
     }
@@ -217,7 +234,8 @@ pub async fn handle_publish_command(
         .map(|(name, path, _)| (name.clone(), path.clone()))
         .collect();
 
-    let context = match create_processing_context(repos_for_context, start_time, GIT_CONCURRENT_CAP) {
+    let context = match create_processing_context(repos_for_context, start_time, GIT_CONCURRENT_CAP)
+    {
         Ok(context) => context,
         Err(e) => {
             set_terminal_title_and_flush("✅ repos");
@@ -247,7 +265,9 @@ impl PublishStatistics {
         match status {
             PublishStatus::Published => self.published += 1,
             PublishStatus::AlreadyPublished => self.already_published += 1,
-            PublishStatus::Error => self.errors.push((repo_name.to_string(), message.to_string())),
+            PublishStatus::Error => self
+                .errors
+                .push((repo_name.to_string(), message.to_string())),
             _ => {}
         }
     }
@@ -281,7 +301,7 @@ async fn process_publish_repositories(
     packages: Vec<(String, std::path::PathBuf, crate::package::PackageManager)>,
     tag: bool,
 ) {
-    use crate::core::{create_progress_bar};
+    use crate::core::create_progress_bar;
     use futures::stream::{FuturesUnordered, StreamExt};
     use std::sync::{Arc, Mutex};
 
@@ -320,15 +340,19 @@ async fn process_publish_repositories(
     // Users experiencing rate limits should use a future --jobs flag to limit concurrency
     let publish_semaphore = Arc::new(tokio::sync::Semaphore::new(8));
 
-    for (((repo_name, repo_path, manager), progress_bar), _) in
-        packages.into_iter().zip(repo_progress_bars).zip(context.repositories)
+    for (((repo_name, repo_path, manager), progress_bar), _) in packages
+        .into_iter()
+        .zip(repo_progress_bars)
+        .zip(context.repositories)
     {
         let stats_clone = Arc::clone(&statistics);
         let semaphore_clone = Arc::clone(&publish_semaphore);
         let footer_clone = footer_pb.clone();
 
         let future = async move {
-            let _permit = semaphore_clone.acquire().await
+            let _permit = semaphore_clone
+                .acquire()
+                .await
                 .expect("Semaphore closed unexpectedly - this is a bug");
 
             let (success, message) = publish_package(&repo_path, &manager, false).await;
@@ -349,7 +373,8 @@ async fn process_publish_repositories(
                 // Get package info to determine version
                 if let Some(info) = get_package_info(&repo_path).await {
                     let tag_name = format!("v{}", info.version);
-                    let (tag_success, tag_message) = create_and_push_tag(&repo_path, &tag_name).await;
+                    let (tag_success, tag_message) =
+                        create_and_push_tag(&repo_path, &tag_name).await;
                     if tag_success {
                         final_message = format!("{}, {}", message, tag_message);
                     } else {
@@ -369,7 +394,8 @@ async fn process_publish_repositories(
 
             // Update statistics
             {
-                let mut stats_guard = stats_clone.lock()
+                let mut stats_guard = stats_clone
+                    .lock()
                     .expect("Mutex poisoned - this indicates a panic in another thread");
                 stats_guard.update(&status, &repo_name, &final_message);
 
@@ -389,7 +415,8 @@ async fn process_publish_repositories(
     footer_pb.finish();
 
     // Print detailed error summary if there are errors
-    let final_stats = statistics.lock()
+    let final_stats = statistics
+        .lock()
         .expect("Mutex poisoned - this indicates a panic in another thread");
     if !final_stats.errors.is_empty() {
         println!("\n{}", "━".repeat(70));

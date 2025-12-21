@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    NO_REPOS_MESSAGE, GIT_CONCURRENT_CAP,
+    GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
 use crate::git::{
     commit_changes, get_staging_status, has_staged_changes, stage_files, unstage_files, Status,

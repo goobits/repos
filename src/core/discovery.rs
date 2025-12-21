@@ -1,14 +1,16 @@
 //! Repository discovery and initialization utilities
 
+use dashmap::DashMap;
+use ignore::WalkBuilder;
+use rayon::prelude::*;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use ignore::WalkBuilder;
-use rayon::prelude::*;
-use dashmap::DashMap;
 
-use super::config::{DEFAULT_REPO_NAME, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME, MAX_SCAN_DEPTH, ESTIMATED_REPO_COUNT};
+use super::config::{
+    DEFAULT_REPO_NAME, ESTIMATED_REPO_COUNT, MAX_SCAN_DEPTH, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME,
+};
 
 /// Check if a .git file (for submodules/worktrees) contains gitdir reference
 /// Only reads the first 5 lines for efficiency
@@ -147,17 +149,17 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 
     // Extract repositories from Arc<Mutex<>>
     let mut repos = Arc::try_unwrap(repositories)
-        .map(|mutex| mutex.into_inner().unwrap_or_else(|e| {
-            eprintln!("Warning: Mutex poisoned during repository extraction");
-            e.into_inner()
-        }))
+        .map(|mutex| {
+            mutex.into_inner().unwrap_or_else(|e| {
+                eprintln!("Warning: Mutex poisoned during repository extraction");
+                e.into_inner()
+            })
+        })
         .unwrap_or_else(|arc| {
-            arc.lock()
-                .map(|guard| guard.clone())
-                .unwrap_or_else(|e| {
-                    eprintln!("Warning: Failed to lock repositories for extraction");
-                    e.into_inner().clone()
-                })
+            arc.lock().map(|guard| guard.clone()).unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to lock repositories for extraction");
+                e.into_inner().clone()
+            })
         });
 
     // Sort repositories alphabetically by name (case-insensitive) using parallel sort
@@ -212,7 +214,9 @@ mod tests {
 
         // Wait for all threads to complete
         for handle in handles {
-            handle.join().expect("Test thread panicked during concurrent insert test");
+            handle
+                .join()
+                .expect("Test thread panicked during concurrent insert test");
         }
 
         // Verify all 1000 items were inserted (10 threads * 100 items)
@@ -238,11 +242,18 @@ mod tests {
             .collect();
 
         for handle in handles {
-            handle.join().expect("Test thread panicked during race condition test");
+            handle
+                .join()
+                .expect("Test thread panicked during race condition test");
         }
 
         // Should have exactly 10,000 (10 threads * 1,000 increments)
-        assert_eq!(*map.get("counter").expect("Key 'counter' should exist in test map"), 10000, "Counter should be atomic");
+        assert_eq!(
+            *map.get("counter")
+                .expect("Key 'counter' should exist in test map"),
+            10000,
+            "Counter should be atomic"
+        );
     }
 
     #[test]

@@ -1,13 +1,13 @@
 //! Subrepo detection and analysis module
 
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use anyhow::{Result, Context};
 
-pub mod validation;
 pub mod status;
 pub mod sync;
+pub mod validation;
 
 /// Represents a single instance of a nested repository
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ pub struct SubrepoInstance {
     pub short_hash: String,
     pub remote_url: Option<String>,
     pub has_uncommitted: bool,
-    pub commit_timestamp: i64,  // Unix timestamp for sorting by date
+    pub commit_timestamp: i64, // Unix timestamp for sorting by date
 }
 
 /// Summary of discovered subrepos grouped by remote URL
@@ -36,7 +36,8 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     pub fn shared_subrepos_count(&self) -> usize {
-        self.by_remote.iter()
+        self.by_remote
+            .iter()
             .filter(|(_, instances)| instances.len() > 1)
             .count()
     }
@@ -119,23 +120,14 @@ pub(crate) fn get_commit_timestamp(path: &Path, commit_hash: &str) -> i64 {
     };
 
     let output = Command::new("git")
-        .args([
-            "-C",
-            path_str,
-            "show",
-            "-s",
-            "--format=%ct",
-            commit_hash,
-        ])
+        .args(["-C", path_str, "show", "-s", "--format=%ct", commit_hash])
         .output();
 
     match output {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .parse()
-                .unwrap_or(0)
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0),
         _ => 0,
     }
 }

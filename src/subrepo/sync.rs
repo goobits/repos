@@ -30,7 +30,10 @@ fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<S
     }
 
     if instances.is_empty() {
-        anyhow::bail!("Subrepo '{}' not found or not shared across multiple repos", name);
+        anyhow::bail!(
+            "Subrepo '{}' not found or not shared across multiple repos",
+            name
+        );
     }
 
     Ok(instances)
@@ -83,12 +86,7 @@ fn stash_changes(path: &Path) -> Result<()> {
 /// Checkout a specific commit in a git repository
 fn checkout_commit(path: &Path, commit: &str) -> Result<()> {
     let output = Command::new("git")
-        .args([
-            "-C",
-            path_to_str(path)?,
-            "checkout",
-            commit,
-        ])
+        .args(["-C", path_to_str(path)?, "checkout", commit])
         .output()
         .context("Failed to run git checkout")?;
 
@@ -118,19 +116,12 @@ fn fetch_latest_commit(path: &Path) -> Result<String> {
     // Try to get latest commit from origin/HEAD, then origin/main, then origin/master
     for branch in &["origin/HEAD", "origin/main", "origin/master"] {
         let output = Command::new("git")
-            .args([
-                "-C",
-                path_str,
-                "rev-parse",
-                branch,
-            ])
+            .args(["-C", path_str, "rev-parse", branch])
             .output();
 
         if let Ok(out) = output {
             if out.status.success() {
-                let commit = String::from_utf8(out.stdout)?
-                    .trim()
-                    .to_string();
+                let commit = String::from_utf8(out.stdout)?.trim().to_string();
                 return Ok(commit);
             }
         }
@@ -171,7 +162,10 @@ pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -
                 }
             } else if !force {
                 // No stash, no force - skip
-                println!("  ⚠️  {} (uncommitted changes, use --stash or --force)", instance.parent_repo);
+                println!(
+                    "  ⚠️  {} (uncommitted changes, use --stash or --force)",
+                    instance.parent_repo
+                );
                 skip_count += 1;
                 continue;
             }
@@ -197,7 +191,10 @@ pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -
     println!("📊 Sync Summary");
     println!("   ✅ {} synced", success_count);
     if stashed_count > 0 {
-        println!("   📦 {} stashed (changes saved, run 'git stash pop' to restore)", stashed_count);
+        println!(
+            "   📦 {} stashed (changes saved, run 'git stash pop' to restore)",
+            stashed_count
+        );
     }
     if skip_count > 0 {
         println!("   ⚠️  {} skipped (uncommitted changes)", skip_count);
@@ -242,26 +239,30 @@ pub fn update_subrepo(name: &str, force: bool) -> Result<()> {
 
         // Check for uncommitted changes
         if !force && has_uncommitted_changes(&instance.subrepo_path) {
-            println!("  ⚠️  {} (uncommitted changes, use --force)", instance.parent_repo);
+            println!(
+                "  ⚠️  {} (uncommitted changes, use --force)",
+                instance.parent_repo
+            );
             skip_count += 1;
             continue;
         }
 
         // Fetch and checkout
         match fetch_latest_commit(&instance.subrepo_path) {
-            Ok(commit) => {
-                match checkout_commit(&instance.subrepo_path, &commit) {
-                    Ok(_) => {
-                        let old_short = instance.short_hash.clone();
-                        println!("  ✅ {} ({} → {})", instance.parent_repo, old_short, short_latest);
-                        success_count += 1;
-                    }
-                    Err(e) => {
-                        println!("  ❌ {} ({})", instance.parent_repo, e);
-                        error_count += 1;
-                    }
+            Ok(commit) => match checkout_commit(&instance.subrepo_path, &commit) {
+                Ok(_) => {
+                    let old_short = instance.short_hash.clone();
+                    println!(
+                        "  ✅ {} ({} → {})",
+                        instance.parent_repo, old_short, short_latest
+                    );
+                    success_count += 1;
                 }
-            }
+                Err(e) => {
+                    println!("  ❌ {} ({})", instance.parent_repo, e);
+                    error_count += 1;
+                }
+            },
             Err(e) => {
                 println!("  ❌ {} (fetch failed: {})", instance.parent_repo, e);
                 error_count += 1;

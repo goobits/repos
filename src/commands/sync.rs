@@ -84,23 +84,36 @@ pub async fn handle_push_command(
 ///
 /// Each repository flows through: fetch → immediately push (no waiting for all fetches)
 /// Fetch uses high concurrency (2x), push uses standard concurrency with rate limit protection
-async fn process_push_repositories(context: crate::core::ProcessingContext, force_push: bool, verbose: bool, show_changes: bool) {
+async fn process_push_repositories(
+    context: crate::core::ProcessingContext,
+    force_push: bool,
+    verbose: bool,
+    show_changes: bool,
+) {
     use crate::core::{acquire_stats_lock, create_progress_bar};
     use crate::git::{fetch_and_analyze, push_if_needed};
     use futures::stream::{FuturesUnordered, StreamExt};
 
     // Setup progress bars and statistics
     let repo_progress_bars: Vec<_> = if verbose {
-        context.repositories.iter()
+        context
+            .repositories
+            .iter()
             .map(|(repo_name, _)| {
-                let pb = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
+                let pb = create_progress_bar(
+                    &context.multi_progress,
+                    &context.progress_style,
+                    repo_name,
+                );
                 pb.set_message("processing...");
                 pb
             })
             .collect()
     } else {
         use indicatif::{ProgressBar, ProgressStyle};
-        let single_pb = context.multi_progress.add(ProgressBar::new(context.total_repos as u64));
+        let single_pb = context
+            .multi_progress
+            .add(ProgressBar::new(context.total_repos as u64));
         if let Ok(style) = ProgressStyle::default_bar().template("[{pos}/{len}] {msg}") {
             single_pb.set_style(style);
         }
@@ -110,7 +123,9 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
 
     let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
     let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
-    footer_pb.set_message("✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string());
+    footer_pb.set_message(
+        "✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+    );
     let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
 
     let max_name_length = context.max_name_length;
@@ -128,7 +143,9 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
 
     // Create pipelined futures: each does fetch → immediately push
     let mut pipeline_futures = FuturesUnordered::new();
-    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+    for ((repo_name, repo_path), progress_bar) in
+        context.repositories.into_iter().zip(repo_progress_bars)
+    {
         let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
         let push_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let stats_clone = std::sync::Arc::clone(&context.statistics);
@@ -150,7 +167,10 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             let _fetch_permit = match fetch_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    eprintln!("Error: Failed to acquire fetch permit for {}: {}", repo_name, e);
+                    eprintln!(
+                        "Error: Failed to acquire fetch permit for {}: {}",
+                        repo_name, e
+                    );
 
                     // Update statistics to track this failure
                     let stats = acquire_stats_lock(&stats_clone);
@@ -164,7 +184,8 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
 
                     // Finish progress bar
                     if verbose_clone {
-                        progress_bar.finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                        progress_bar
+                            .finish_with_message(format!("🔴 {}  semaphore error", repo_name));
                     }
                     return;
                 }
@@ -176,7 +197,10 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             let _push_permit = match push_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    eprintln!("Error: Failed to acquire push permit for {}: {}", repo_name, e);
+                    eprintln!(
+                        "Error: Failed to acquire push permit for {}: {}",
+                        repo_name, e
+                    );
 
                     // Update statistics to track this failure
                     let stats = acquire_stats_lock(&stats_clone);
@@ -190,7 +214,8 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
 
                     // Finish progress bar
                     if verbose_clone {
-                        progress_bar.finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                        progress_bar
+                            .finish_with_message(format!("🔴 {}  semaphore error", repo_name));
                     }
                     return;
                 }
@@ -201,7 +226,8 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             let max_attempts = 2;
             let result = loop {
                 attempt += 1;
-                let (status, message, has_uncommitted) = push_if_needed(&repo_path, &fetch_result, force_push).await;
+                let (status, message, has_uncommitted) =
+                    push_if_needed(&repo_path, &fetch_result, force_push).await;
 
                 // Check for rate limit error
                 if message.contains("⚠️ RATE LIMIT") {
@@ -231,11 +257,12 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             let repo_elapsed = repo_start_time.elapsed();
             let repo_elapsed_secs = repo_elapsed.as_secs_f32();
 
-            let display_message = if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
-                format!("{} (uncommitted changes)", message)
-            } else {
-                message.clone()
-            };
+            let display_message =
+                if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
+                    format!("{} (uncommitted changes)", message)
+                } else {
+                    message.clone()
+                };
 
             // Add elapsed time warning if repo took longer than threshold
             let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
@@ -245,16 +272,32 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             };
 
             if verbose_clone {
-                progress_bar.set_prefix(format!("{} {:width$}", status.symbol(), repo_name, width = max_name_length_clone));
+                progress_bar.set_prefix(format!(
+                    "{} {:width$}",
+                    status.symbol(),
+                    repo_name,
+                    width = max_name_length_clone
+                ));
                 progress_bar.set_message(format!("{:<10}   {}", status.text(), display_message));
                 progress_bar.finish();
             } else {
-                progress_bar.set_message(format!("{} {} ({})", status.symbol(), repo_name, status.text()));
+                progress_bar.set_message(format!(
+                    "{} {} ({})",
+                    status.symbol(),
+                    repo_name,
+                    status.text()
+                ));
                 progress_bar.inc(1);
             }
 
             let stats = acquire_stats_lock(&stats_clone);
-            stats.update(&repo_name, &repo_path.to_string_lossy(), &status, &message, has_uncommitted_changes);
+            stats.update(
+                &repo_name,
+                &repo_path.to_string_lossy(),
+                &status,
+                &message,
+                has_uncommitted_changes,
+            );
 
             let duration = start_time_clone.elapsed();
             if verbose_clone {
@@ -262,7 +305,9 @@ async fn process_push_repositories(context: crate::core::ProcessingContext, forc
             } else {
                 // Read atomics without lock
                 use std::sync::atomic::Ordering;
-                let no_upstream_len = stats.no_upstream_repos.lock()
+                let no_upstream_len = stats
+                    .no_upstream_repos
+                    .lock()
                     .map(|guard| guard.len())
                     .unwrap_or(0);
                 let live_counters = format!(
@@ -383,23 +428,36 @@ pub async fn handle_pull_command(
 ///
 /// Each repository flows through: fetch → immediately pull (no waiting for all fetches)
 /// Fetch uses high concurrency (2x), pull uses standard concurrency with rate limit protection
-async fn process_pull_repositories(context: crate::core::ProcessingContext, use_rebase: bool, verbose: bool, show_changes: bool) {
+async fn process_pull_repositories(
+    context: crate::core::ProcessingContext,
+    use_rebase: bool,
+    verbose: bool,
+    show_changes: bool,
+) {
     use crate::core::{acquire_stats_lock, create_progress_bar};
     use crate::git::{fetch_and_analyze_for_pull, pull_if_needed};
     use futures::stream::{FuturesUnordered, StreamExt};
 
     // Setup progress bars and statistics
     let repo_progress_bars: Vec<_> = if verbose {
-        context.repositories.iter()
+        context
+            .repositories
+            .iter()
             .map(|(repo_name, _)| {
-                let pb = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
+                let pb = create_progress_bar(
+                    &context.multi_progress,
+                    &context.progress_style,
+                    repo_name,
+                );
                 pb.set_message("processing...");
                 pb
             })
             .collect()
     } else {
         use indicatif::{ProgressBar, ProgressStyle};
-        let single_pb = context.multi_progress.add(ProgressBar::new(context.total_repos as u64));
+        let single_pb = context
+            .multi_progress
+            .add(ProgressBar::new(context.total_repos as u64));
         if let Ok(style) = ProgressStyle::default_bar().template("[{pos}/{len}] {msg}") {
             single_pb.set_style(style);
         }
@@ -409,7 +467,9 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
 
     let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
     let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
-    footer_pb.set_message("🔽 0 Pulled  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string());
+    footer_pb.set_message(
+        "🔽 0 Pulled  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+    );
     let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
 
     let max_name_length = context.max_name_length;
@@ -430,7 +490,9 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
 
     // Create pipelined futures: each does fetch → immediately pull
     let mut pipeline_futures = FuturesUnordered::new();
-    for ((repo_name, repo_path), progress_bar) in context.repositories.into_iter().zip(repo_progress_bars) {
+    for ((repo_name, repo_path), progress_bar) in
+        context.repositories.into_iter().zip(repo_progress_bars)
+    {
         let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
         let pull_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let stats_clone = std::sync::Arc::clone(&context.statistics);
@@ -453,7 +515,10 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
             let _fetch_permit = match fetch_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    eprintln!("Error: Failed to acquire fetch permit for {}: {}", repo_name, e);
+                    eprintln!(
+                        "Error: Failed to acquire fetch permit for {}: {}",
+                        repo_name, e
+                    );
 
                     // Update statistics to track this failure
                     let stats = acquire_stats_lock(&stats_clone);
@@ -467,7 +532,8 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
 
                     // Finish progress bar
                     if verbose_clone {
-                        progress_bar.finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                        progress_bar
+                            .finish_with_message(format!("🔴 {}  semaphore error", repo_name));
                     }
                     return;
                 }
@@ -479,7 +545,10 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
             let _pull_permit = match pull_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    eprintln!("Error: Failed to acquire pull permit for {}: {}", repo_name, e);
+                    eprintln!(
+                        "Error: Failed to acquire pull permit for {}: {}",
+                        repo_name, e
+                    );
 
                     // Update statistics to track this failure
                     let stats = acquire_stats_lock(&stats_clone);
@@ -493,7 +562,8 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
 
                     // Finish progress bar
                     if verbose_clone {
-                        progress_bar.finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                        progress_bar
+                            .finish_with_message(format!("🔴 {}  semaphore error", repo_name));
                     }
                     return;
                 }
@@ -504,7 +574,8 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
             let max_attempts = 2;
             let result = loop {
                 attempt += 1;
-                let (status, message, has_uncommitted) = pull_if_needed(&repo_path, &fetch_result, use_rebase).await;
+                let (status, message, has_uncommitted) =
+                    pull_if_needed(&repo_path, &fetch_result, use_rebase).await;
 
                 // Check for rate limit error
                 if message.contains("⚠️ RATE LIMIT") {
@@ -532,18 +603,22 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
 
             // Track total commits pulled
             if matches!(status, crate::git::Status::Pulled) {
-                total_commits_pulled_clone.fetch_add(fetch_result.behind_count as usize, std::sync::atomic::Ordering::Relaxed);
+                total_commits_pulled_clone.fetch_add(
+                    fetch_result.behind_count as usize,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
             }
 
             // Calculate elapsed time for this repo
             let repo_elapsed = repo_start_time.elapsed();
             let repo_elapsed_secs = repo_elapsed.as_secs_f32();
 
-            let display_message = if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
-                format!("{} (uncommitted changes)", message)
-            } else {
-                message.clone()
-            };
+            let display_message =
+                if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
+                    format!("{} (uncommitted changes)", message)
+                } else {
+                    message.clone()
+                };
 
             // Add elapsed time warning if repo took longer than threshold
             let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
@@ -553,16 +628,32 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
             };
 
             if verbose_clone {
-                progress_bar.set_prefix(format!("{} {:width$}", status.symbol(), repo_name, width = max_name_length_clone));
+                progress_bar.set_prefix(format!(
+                    "{} {:width$}",
+                    status.symbol(),
+                    repo_name,
+                    width = max_name_length_clone
+                ));
                 progress_bar.set_message(format!("{:<10}   {}", status.text(), display_message));
                 progress_bar.finish();
             } else {
-                progress_bar.set_message(format!("{} {} ({})", status.symbol(), repo_name, status.text()));
+                progress_bar.set_message(format!(
+                    "{} {} ({})",
+                    status.symbol(),
+                    repo_name,
+                    status.text()
+                ));
                 progress_bar.inc(1);
             }
 
             let stats = acquire_stats_lock(&stats_clone);
-            stats.update(&repo_name, &repo_path.to_string_lossy(), &status, &message, has_uncommitted_changes);
+            stats.update(
+                &repo_name,
+                &repo_path.to_string_lossy(),
+                &status,
+                &message,
+                has_uncommitted_changes,
+            );
 
             let duration = start_time_clone.elapsed();
             if verbose_clone {
@@ -570,7 +661,9 @@ async fn process_pull_repositories(context: crate::core::ProcessingContext, use_
             } else {
                 // Read atomics without lock
                 use std::sync::atomic::Ordering;
-                let no_upstream_len = stats.no_upstream_repos.lock()
+                let no_upstream_len = stats
+                    .no_upstream_repos
+                    .lock()
                     .map(|guard| guard.len())
                     .unwrap_or(0);
                 let live_counters = format!(

@@ -5,9 +5,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::config::{
-    DEFAULT_PROGRESS_BAR_LENGTH, PROGRESS_CHARS, PROGRESS_TEMPLATE,
-};
+use super::config::{DEFAULT_PROGRESS_BAR_LENGTH, PROGRESS_CHARS, PROGRESS_TEMPLATE};
 use super::stats::SyncStatistics;
 
 /// Processing context that encapsulates all parameters needed for repository processing

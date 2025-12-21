@@ -25,7 +25,8 @@ const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 /// IMPORTANT: This should be updated when the install script changes
 /// To get the current checksum, download the script and run: sha256sum install.sh
 /// URL: https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh
-const TRUFFLEHOG_INSTALL_SCRIPT_SHA256: &str = "c394defeaea8a7c48f828a2051b608a9b19f43f34b891407b66a386c3e2591e2";
+const TRUFFLEHOG_INSTALL_SCRIPT_SHA256: &str =
+    "c394defeaea8a7c48f828a2051b608a9b19f43f34b891407b66a386c3e2591e2";
 
 /// Comprehensive statistics for TruffleHog scanning
 #[derive(Clone, Default, Debug)]
@@ -533,7 +534,9 @@ async fn install_trufflehog_direct() -> Result<()> {
     // Security warning before downloading external script
     println!("\n⚠️  SECURITY NOTICE:");
     println!("   This will download and execute an installation script from:");
-    println!("   https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh");
+    println!(
+        "   https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh"
+    );
     println!("   The script will be verified against a known checksum before execution.\n");
 
     println!("📥 Downloading TruffleHog installation script...");
@@ -563,12 +566,7 @@ async fn install_trufflehog_direct() -> Result<()> {
 
     // Download the installation script
     let download_output = Command::new("curl")
-        .args([
-            "-sSfL",
-            "-o",
-            &temp_script,
-            script_url,
-        ])
+        .args(["-sSfL", "-o", &temp_script, script_url])
         .output()
         .await?;
 
@@ -591,7 +589,9 @@ async fn install_trufflehog_direct() -> Result<()> {
         Ok(false) => {
             eprintln!("\n⚠️  WARNING: Could not verify TruffleHog install script checksum");
             eprintln!("   Reason: Checksum constant needs to be updated with actual value");
-            eprintln!("   The script will still be executed, but please verify manually if concerned.");
+            eprintln!(
+                "   The script will still be executed, but please verify manually if concerned."
+            );
             eprintln!("   To update: Download the script and run 'sha256sum install.sh'\n");
         }
         Err(e) => {
@@ -612,10 +612,7 @@ async fn install_trufflehog_direct() -> Result<()> {
 
     if !install_output.status.success() {
         let stderr = String::from_utf8_lossy(&install_output.stderr);
-        return Err(anyhow!(
-            "Failed to install TruffleHog: {}",
-            stderr
-        ));
+        return Err(anyhow!("Failed to install TruffleHog: {}", stderr));
     }
 
     Ok(())
