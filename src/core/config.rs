@@ -30,7 +30,7 @@ pub const GIT_CONCURRENT_CAP: usize = 32;
 /// Priority order:
 /// 1. --sequential flag → 1
 /// 2. --jobs N flag → N
-/// 3. Smart default → CPU_CORES + 2 (scales with hardware)
+/// 3. Smart default → `CPU_CORES` + 2 (scales with hardware)
 ///
 /// Note: Removed the previous hard cap of 12 to allow scaling on high-core systems.
 /// Users experiencing rate limits can use --jobs N to limit concurrency.

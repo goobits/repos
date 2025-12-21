@@ -27,7 +27,7 @@ pub struct SubrepoStatus {
 }
 
 impl SubrepoStatus {
-    /// Calculate sync score: (total_instances - unique_commits) / (total_instances - 1) × 100
+    /// Calculate sync score: (`total_instances` - `unique_commits`) / (`total_instances` - 1) × 100
     ///
     /// Examples:
     /// - 2 instances, same commit   → (2-1)/(2-1) = 100%
@@ -49,7 +49,8 @@ impl SubrepoStatus {
         (score, unique_commits)
     }
 
-    /// Create a new SubrepoStatus from instances
+    /// Create a new `SubrepoStatus` from instances
+    #[must_use] 
     pub fn new(name: String, remote_url: String, instances: Vec<SubrepoInstance>) -> Self {
         let (sync_score, unique_commits) = Self::calculate_sync_score(&instances);
         let has_drift = sync_score < 100.0;
@@ -180,8 +181,7 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
 
     // Show sync command
     let target_commit = latest_clean
-        .map(|t| &t.short_hash)
-        .unwrap_or(&latest.short_hash);
+        .map_or(&latest.short_hash, |t| &t.short_hash);
     println!(
         "    Sync: repos subrepo sync {} --to {}",
         status.name, target_commit
@@ -369,7 +369,7 @@ fn display_drift_status(status: &SubrepoStatus) {
                 "     repos subrepo sync {} --to {} --stash",
                 status.name, target_commit
             );
-            println!("     (Stashes uncommitted changes in {})", repos_desc);
+            println!("     (Stashes uncommitted changes in {repos_desc})");
             println!();
             println!("  🔥 FORCE FIX (Discards all local changes):");
             println!(
@@ -404,7 +404,7 @@ fn display_drift_status(status: &SubrepoStatus) {
             } else {
                 dirty_repos
                     .iter()
-                    .map(|r| format!("'{}'", r))
+                    .map(|r| format!("'{r}'"))
                     .collect::<Vec<_>>()
                     .join(", ")
             };
@@ -415,12 +415,11 @@ fn display_drift_status(status: &SubrepoStatus) {
                 status.name, target_commit
             );
             println!(
-                "     (Syncs {} to the clean commit from '{}')",
-                dirty_list, target_repo
+                "     (Syncs {dirty_list} to the clean commit from '{target_repo}')"
             );
             println!();
 
-            println!("  🔥 FORCE FIX (Discards changes in {}):", dirty_list);
+            println!("  🔥 FORCE FIX (Discards changes in {dirty_list}):");
             println!(
                 "     repos subrepo sync {} --to {} --force",
                 status.name, target_commit

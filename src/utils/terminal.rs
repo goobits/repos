@@ -5,7 +5,7 @@ use std::io::Write;
 /// Sets the terminal title to the specified text
 pub fn set_terminal_title(title: &str) {
     // ANSI escape sequence to set terminal title
-    print!("\x1b]0;{}\x07", title);
+    print!("\x1b]0;{title}\x07");
 }
 
 /// Sets the terminal title and ensures it's flushed to the terminal

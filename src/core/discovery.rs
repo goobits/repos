@@ -30,11 +30,11 @@ fn is_git_file(path: &Path) -> bool {
 }
 
 /// Recursively searches for git repositories from a specific path
-/// Returns a vector of (repository_name, path) tuples with deduplication
+/// Returns a vector of (`repository_name`, path) tuples with deduplication
 ///
 /// This function uses parallel directory walking for significantly better performance
 /// with large directory trees (5-10x faster than sequential walking).
-/// Uses DashMap for lock-free concurrent access, eliminating mutex contention.
+/// Uses `DashMap` for lock-free concurrent access, eliminating mutex contention.
 pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathBuf)> {
     let search_path = search_path.as_ref();
 
@@ -128,7 +128,7 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                             *entry += 1;
                             let count = *entry;
                             if count > 1 {
-                                format!("{}-{}", base_name, count)
+                                format!("{base_name}-{count}")
                             } else {
                                 base_name
                             }
@@ -169,18 +169,19 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 }
 
 /// Recursively searches for git repositories in the current directory
-/// Returns a vector of (repository_name, path) tuples with deduplication
+/// Returns a vector of (`repository_name`, path) tuples with deduplication
 ///
-/// This is a convenience wrapper around find_repos_from_path() that searches
+/// This is a convenience wrapper around `find_repos_from_path()` that searches
 /// from the current working directory.
 pub fn find_repos() -> Vec<(String, PathBuf)> {
     find_repos_from_path(".")
 }
 
 /// Common initialization for commands that scan repositories
+#[must_use] 
 pub fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, PathBuf)>) {
     println!();
-    print!("{}", scanning_msg);
+    print!("{scanning_msg}");
     // Flush stdout - ignore errors as this is non-critical
     let _ = std::io::stdout().flush();
 

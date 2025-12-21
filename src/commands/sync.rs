@@ -30,7 +30,7 @@ pub async fn handle_push_command(
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         // Set terminal title to green checkbox to indicate completion
         set_terminal_title_and_flush("✅ repos");
         return Ok(());
@@ -46,13 +46,12 @@ pub async fn handle_push_command(
         "repositories"
     };
     let concurrency_info = if verbose {
-        format!(" ({} concurrent)", concurrent_limit)
+        format!(" ({concurrent_limit} concurrent)")
     } else {
         String::new()
     };
     print!(
-        "\r🚀 Pushing {} {}{}                    \n",
-        total_repos, repo_word, concurrency_info
+        "\r🚀 Pushing {total_repos} {repo_word}{concurrency_info}                    \n"
     );
     println!();
 
@@ -168,24 +167,23 @@ async fn process_push_repositories(
                 Ok(permit) => permit,
                 Err(e) => {
                     eprintln!(
-                        "Error: Failed to acquire fetch permit for {}: {}",
-                        repo_name, e
+                        "Error: Failed to acquire fetch permit for {repo_name}: {e}"
                     );
 
                     // Update statistics to track this failure
-                    let stats = acquire_stats_lock(&stats_clone);
-                    stats.update(
+                    let stats_guard = acquire_stats_lock(&stats_clone);
+                    stats_guard.update(
                         &repo_name,
                         &repo_path.to_string_lossy(),
                         &Status::Error,
-                        &format!("semaphore error: {}", e),
+                        &format!("semaphore error: {e}"),
                         false,
                     );
 
                     // Finish progress bar
                     if verbose_clone {
                         progress_bar
-                            .finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                            .finish_with_message(format!("🔴 {repo_name}  semaphore error"));
                     }
                     return;
                 }
@@ -198,24 +196,23 @@ async fn process_push_repositories(
                 Ok(permit) => permit,
                 Err(e) => {
                     eprintln!(
-                        "Error: Failed to acquire push permit for {}: {}",
-                        repo_name, e
+                        "Error: Failed to acquire push permit for {repo_name}: {e}"
                     );
 
                     // Update statistics to track this failure
-                    let stats = acquire_stats_lock(&stats_clone);
-                    stats.update(
+                    let stats_guard = acquire_stats_lock(&stats_clone);
+                    stats_guard.update(
                         &repo_name,
                         &repo_path.to_string_lossy(),
                         &Status::Error,
-                        &format!("semaphore error: {}", e),
+                        &format!("semaphore error: {e}"),
                         false,
                     );
 
                     // Finish progress bar
                     if verbose_clone {
                         progress_bar
-                            .finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                            .finish_with_message(format!("🔴 {repo_name}  semaphore error"));
                     }
                     return;
                 }
@@ -238,14 +235,13 @@ async fn process_push_repositories(
                         // Wait briefly and retry
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         continue;
-                    } else {
-                        // Max attempts reached, return with suggestion
-                        let suggestion = format!(
-                            "{} (try reducing concurrency with --jobs N or --sequential)",
-                            message.replace("⚠️ RATE LIMIT: ", "")
-                        );
-                        break (status, suggestion, has_uncommitted);
                     }
+                    // Max attempts reached, return with suggestion
+                    let suggestion = format!(
+                        "{} (try reducing concurrency with --jobs N or --sequential)",
+                        message.replace("⚠️ RATE LIMIT: ", "")
+                    );
+                    break (status, suggestion, has_uncommitted);
                 }
 
                 break (status, message, has_uncommitted);
@@ -259,14 +255,14 @@ async fn process_push_repositories(
 
             let display_message =
                 if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
-                    format!("{} (uncommitted changes)", message)
+                    format!("{message} (uncommitted changes)")
                 } else {
                     message.clone()
                 };
 
             // Add elapsed time warning if repo took longer than threshold
             let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
-                format!("{} ({:.1}s)", display_message, repo_elapsed_secs)
+                format!("{display_message} ({repo_elapsed_secs:.1}s)")
             } else {
                 display_message
             };
@@ -290,8 +286,8 @@ async fn process_push_repositories(
                 progress_bar.inc(1);
             }
 
-            let stats = acquire_stats_lock(&stats_clone);
-            stats.update(
+            let stats_guard = acquire_stats_lock(&stats_clone);
+            stats_guard.update(
                 &repo_name,
                 &repo_path.to_string_lossy(),
                 &status,
@@ -301,22 +297,22 @@ async fn process_push_repositories(
 
             let duration = start_time_clone.elapsed();
             if verbose_clone {
-                footer_clone.set_message(stats.generate_summary(total_repos_clone, duration));
-            } else {
+                footer_clone.set_message(stats_guard.generate_summary(total_repos_clone, duration));
+            }
+            drop(stats_guard);
+
+            if !verbose_clone {
                 // Read atomics without lock
                 use std::sync::atomic::Ordering;
-                let no_upstream_len = stats
-                    .no_upstream_repos
-                    .lock()
-                    .map(|guard| guard.len())
-                    .unwrap_or(0);
+                let stats_locked = stats_clone.lock().unwrap();
+                let no_upstream_len = stats_locked.no_upstream_repos.lock().unwrap().len();
                 let live_counters = format!(
                     "✅ {} Pushed  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
-                    stats.total_commits_pushed.load(Ordering::Relaxed),
-                    stats.synced_repos.load(Ordering::Relaxed),
-                    stats.error_repos.load(Ordering::Relaxed),
+                    stats_locked.total_commits_pushed.load(Ordering::Relaxed),
+                    stats_locked.synced_repos.load(Ordering::Relaxed),
+                    stats_locked.error_repos.load(Ordering::Relaxed),
                     no_upstream_len,
-                    stats.skipped_repos.load(Ordering::Relaxed)
+                    stats_locked.skipped_repos.load(Ordering::Relaxed)
                 );
                 footer_clone.set_message(live_counters);
             }
@@ -329,7 +325,7 @@ async fn process_push_repositories(
     // Show rate limit warning if detected
     if has_rate_limit.load(std::sync::atomic::Ordering::Acquire) {
         let count = rate_limit_count.load(std::sync::atomic::Ordering::Acquire);
-        eprintln!("\n⚠️  Rate limit detected on {} operation(s).", count);
+        eprintln!("\n⚠️  Rate limit detected on {count} operation(s).");
         eprintln!("💡 Try reducing concurrency: repos push --jobs 3");
     }
 
@@ -339,7 +335,7 @@ async fn process_push_repositories(
     let detailed_summary = final_stats.generate_detailed_summary(show_changes);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
-        println!("{}", detailed_summary);
+        println!("{detailed_summary}");
         println!("{}", "━".repeat(70));
     }
     println!();
@@ -373,7 +369,7 @@ pub async fn handle_pull_command(
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         // Set terminal title to green checkbox to indicate completion
         set_terminal_title_and_flush("✅ repos");
         return Ok(());
@@ -389,14 +385,13 @@ pub async fn handle_pull_command(
         "repositories"
     };
     let concurrency_info = if verbose {
-        format!(" ({} concurrent)", concurrent_limit)
+        format!(" ({concurrent_limit} concurrent)")
     } else {
         String::new()
     };
     let pull_strategy = if use_rebase { " with rebase" } else { "" };
     print!(
-        "\r🔽 Pulling {} {}{}{}                    \n",
-        total_repos, repo_word, pull_strategy, concurrency_info
+        "\r🔽 Pulling {total_repos} {repo_word}{pull_strategy}{concurrency_info}                    \n"
     );
     println!();
 
@@ -516,24 +511,23 @@ async fn process_pull_repositories(
                 Ok(permit) => permit,
                 Err(e) => {
                     eprintln!(
-                        "Error: Failed to acquire fetch permit for {}: {}",
-                        repo_name, e
+                        "Error: Failed to acquire fetch permit for {repo_name}: {e}"
                     );
 
                     // Update statistics to track this failure
-                    let stats = acquire_stats_lock(&stats_clone);
-                    stats.update(
+                    let stats_guard = acquire_stats_lock(&stats_clone);
+                    stats_guard.update(
                         &repo_name,
                         &repo_path.to_string_lossy(),
                         &Status::Error,
-                        &format!("semaphore error: {}", e),
+                        &format!("semaphore error: {e}"),
                         false,
                     );
 
                     // Finish progress bar
                     if verbose_clone {
                         progress_bar
-                            .finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                            .finish_with_message(format!("🔴 {repo_name}  semaphore error"));
                     }
                     return;
                 }
@@ -546,24 +540,23 @@ async fn process_pull_repositories(
                 Ok(permit) => permit,
                 Err(e) => {
                     eprintln!(
-                        "Error: Failed to acquire pull permit for {}: {}",
-                        repo_name, e
+                        "Error: Failed to acquire pull permit for {repo_name}: {e}"
                     );
 
                     // Update statistics to track this failure
-                    let stats = acquire_stats_lock(&stats_clone);
-                    stats.update(
+                    let stats_guard = acquire_stats_lock(&stats_clone);
+                    stats_guard.update(
                         &repo_name,
                         &repo_path.to_string_lossy(),
                         &Status::Error,
-                        &format!("semaphore error: {}", e),
+                        &format!("semaphore error: {e}"),
                         false,
                     );
 
                     // Finish progress bar
                     if verbose_clone {
                         progress_bar
-                            .finish_with_message(format!("🔴 {}  semaphore error", repo_name));
+                            .finish_with_message(format!("🔴 {repo_name}  semaphore error"));
                     }
                     return;
                 }
@@ -586,14 +579,13 @@ async fn process_pull_repositories(
                         // Wait briefly and retry
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         continue;
-                    } else {
-                        // Max attempts reached, return with suggestion
-                        let suggestion = format!(
-                            "{} (try reducing concurrency with --jobs N or --sequential)",
-                            message.replace("⚠️ RATE LIMIT: ", "")
-                        );
-                        break (status, suggestion, has_uncommitted);
                     }
+                    // Max attempts reached, return with suggestion
+                    let suggestion = format!(
+                        "{} (try reducing concurrency with --jobs N or --sequential)",
+                        message.replace("⚠️ RATE LIMIT: ", "")
+                    );
+                    break (status, suggestion, has_uncommitted);
                 }
 
                 break (status, message, has_uncommitted);
@@ -615,14 +607,14 @@ async fn process_pull_repositories(
 
             let display_message =
                 if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
-                    format!("{} (uncommitted changes)", message)
+                    format!("{message} (uncommitted changes)")
                 } else {
                     message.clone()
                 };
 
             // Add elapsed time warning if repo took longer than threshold
             let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
-                format!("{} ({:.1}s)", display_message, repo_elapsed_secs)
+                format!("{display_message} ({repo_elapsed_secs:.1}s)")
             } else {
                 display_message
             };
@@ -646,8 +638,8 @@ async fn process_pull_repositories(
                 progress_bar.inc(1);
             }
 
-            let stats = acquire_stats_lock(&stats_clone);
-            stats.update(
+            let stats_guard = acquire_stats_lock(&stats_clone);
+            stats_guard.update(
                 &repo_name,
                 &repo_path.to_string_lossy(),
                 &status,
@@ -657,22 +649,22 @@ async fn process_pull_repositories(
 
             let duration = start_time_clone.elapsed();
             if verbose_clone {
-                footer_clone.set_message(stats.generate_summary(total_repos_clone, duration));
-            } else {
+                footer_clone.set_message(stats_guard.generate_summary(total_repos_clone, duration));
+            }
+            drop(stats_guard);
+
+            if !verbose_clone {
                 // Read atomics without lock
                 use std::sync::atomic::Ordering;
-                let no_upstream_len = stats
-                    .no_upstream_repos
-                    .lock()
-                    .map(|guard| guard.len())
-                    .unwrap_or(0);
+                let stats_locked = stats_clone.lock().unwrap();
+                let no_upstream_len = stats_locked.no_upstream_repos.lock().unwrap().len();
                 let live_counters = format!(
                     "🔽 {} Pulled  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
                     total_commits_pulled_clone.load(Ordering::Relaxed),
-                    stats.synced_repos.load(Ordering::Relaxed),
-                    stats.error_repos.load(Ordering::Relaxed),
+                    stats_locked.synced_repos.load(Ordering::Relaxed),
+                    stats_locked.error_repos.load(Ordering::Relaxed),
                     no_upstream_len,
-                    stats.skipped_repos.load(Ordering::Relaxed)
+                    stats_locked.skipped_repos.load(Ordering::Relaxed)
                 );
                 footer_clone.set_message(live_counters);
             }
@@ -685,7 +677,7 @@ async fn process_pull_repositories(
     // Show rate limit warning if detected
     if has_rate_limit.load(std::sync::atomic::Ordering::Acquire) {
         let count = rate_limit_count.load(std::sync::atomic::Ordering::Acquire);
-        eprintln!("\n⚠️  Rate limit detected on {} operation(s).", count);
+        eprintln!("\n⚠️  Rate limit detected on {count} operation(s).");
         eprintln!("💡 Try reducing concurrency: repos pull --jobs 3");
     }
 
@@ -695,7 +687,7 @@ async fn process_pull_repositories(
     let detailed_summary = final_stats.generate_detailed_summary(show_changes);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
-        println!("{}", detailed_summary);
+        println!("{detailed_summary}");
         println!("{}", "━".repeat(70));
     }
     println!();

@@ -36,6 +36,7 @@ pub struct FixOptions {
 
 impl FixOptions {
     /// Create options for fix-all mode (apply all available fixes)
+    #[must_use] 
     pub fn fix_all(dry_run: bool, target_repos: Option<Vec<String>>) -> Self {
         Self {
             interactive: false,
@@ -100,7 +101,7 @@ pub async fn apply_fixes(
     println!("\n🔍 Performing safety checks...");
     for (repo_name, repo_path, _) in &repos_to_fix {
         if let Err(e) = check_repository_safety(repo_path, &options).await {
-            println!("❌ Safety check failed for {}: {}", repo_name, e);
+            println!("❌ Safety check failed for {repo_name}: {e}");
             return Err(e);
         }
     }
@@ -119,20 +120,20 @@ pub async fn apply_fixes(
             errors: Vec::new(),
         };
 
-        println!("Processing {}...", repo_name);
+        println!("Processing {repo_name}...");
 
         // Apply gitignore fixes
         if options.fix_gitignore {
             match fix_gitignore_violations(&repo_path, &violations, &options).await {
                 Ok(msg) => {
                     if !msg.is_empty() {
-                        println!("  ✓ {}", msg);
+                        println!("  ✓ {msg}");
                         result.fixes_applied.push(msg);
                     }
                 }
                 Err(e) => {
-                    let error_msg = format!("gitignore fix failed: {}", e);
-                    println!("  ✗ {}", error_msg);
+                    let error_msg = format!("gitignore fix failed: {e}");
+                    println!("  ✗ {error_msg}");
                     result.errors.push(error_msg);
                 }
             }
@@ -143,13 +144,13 @@ pub async fn apply_fixes(
             match fix_large_files(&repo_path, &violations, &options).await {
                 Ok(msg) => {
                     if !msg.is_empty() {
-                        println!("  ✓ {}", msg);
+                        println!("  ✓ {msg}");
                         result.fixes_applied.push(msg);
                     }
                 }
                 Err(e) => {
-                    let error_msg = format!("large file fix failed: {}", e);
-                    println!("  ✗ {}", error_msg);
+                    let error_msg = format!("large file fix failed: {e}");
+                    println!("  ✗ {error_msg}");
                     result.errors.push(error_msg);
                 }
             }
@@ -160,13 +161,13 @@ pub async fn apply_fixes(
             match fix_secrets_in_history(&repo_path, &options).await {
                 Ok(msg) => {
                     if !msg.is_empty() {
-                        println!("  ✓ {}", msg);
+                        println!("  ✓ {msg}");
                         result.fixes_applied.push(msg);
                     }
                 }
                 Err(e) => {
-                    let error_msg = format!("secret removal failed: {}", e);
-                    println!("  ✗ {}", error_msg);
+                    let error_msg = format!("secret removal failed: {e}");
+                    println!("  ✗ {error_msg}");
                     result.errors.push(error_msg);
                 }
             }
@@ -217,7 +218,7 @@ async fn show_fix_summary(
     }
 
     if options.fix_large {
-        println!("  📦 {} large files in history", total_large);
+        println!("  📦 {total_large} large files in history");
         println!("     → Will remove from Git history (requires force-push)");
     }
 
@@ -384,7 +385,7 @@ async fn fix_gitignore_violations(
         "Added {} patterns to .gitignore{}",
         new_patterns.len(),
         if untracked_count > 0 {
-            format!(", untracked {} files", untracked_count)
+            format!(", untracked {untracked_count} files")
         } else {
             String::new()
         }
@@ -479,7 +480,7 @@ async fn fix_large_files(
 
     // Create our own backup ref as well for extra safety
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let backup_ref = format!("refs/original/pre-fix-backup-large-{}", timestamp);
+    let backup_ref = format!("refs/original/pre-fix-backup-large-{timestamp}");
 
     Command::new("git")
         .args(["update-ref", &backup_ref, "HEAD"])
@@ -487,10 +488,10 @@ async fn fix_large_files(
         .output()
         .await?;
 
-    println!("    Backup created at: {}", backup_ref);
+    println!("    Backup created at: {backup_ref}");
 
     // Create a paths file for filter-repo
-    let paths_file = std::env::temp_dir().join(format!("filter-repo-paths-{}.txt", timestamp));
+    let paths_file = std::env::temp_dir().join(format!("filter-repo-paths-{timestamp}.txt"));
     let mut paths_content = String::new();
 
     for file in &large_files {
@@ -528,7 +529,7 @@ async fn fix_large_files(
 
     if !result.status.success() {
         let stderr = String::from_utf8_lossy(&result.stderr);
-        return Err(anyhow!("git filter-repo failed: {}", stderr));
+        return Err(anyhow!("git filter-repo failed: {stderr}"));
     }
 
     // Run garbage collection to reclaim space
@@ -565,7 +566,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     let output = Command::new("trufflehog")
         .args([
             "git",
-            &format!("file://{}", repo_path),
+            &format!("file://{repo_path}"),
             "--results=verified,unknown",
             "--json",
             "--no-update", // Don't auto-update during scan
@@ -609,7 +610,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
     // Create backup before rewriting history
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let backup_ref = format!("refs/original/pre-fix-backup-secrets-{}", timestamp);
+    let backup_ref = format!("refs/original/pre-fix-backup-secrets-{timestamp}");
 
     Command::new("git")
         .args(["update-ref", &backup_ref, "HEAD"])
@@ -617,18 +618,18 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
         .output()
         .await?;
 
-    println!("    Backup created at: {}", backup_ref);
+    println!("    Backup created at: {backup_ref}");
     println!("    Found {} files with secrets", secret_files.len());
 
     // Create replacement file for filter-repo
     let replacements_file =
-        std::env::temp_dir().join(format!("filter-repo-secrets-{}.txt", timestamp));
+        std::env::temp_dir().join(format!("filter-repo-secrets-{timestamp}.txt"));
     let mut replacements_content = String::new();
 
     // Add patterns to be replaced with REDACTED
     for pattern in &secret_patterns {
         // Escape the pattern and replace with REDACTED
-        replacements_content.push_str(&format!("{}==>REDACTED\n", pattern));
+        replacements_content.push_str(&format!("{pattern}==>REDACTED\n"));
     }
 
     if !replacements_content.is_empty() {
@@ -654,7 +655,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(anyhow!("git filter-repo failed: {}", stderr));
+            return Err(anyhow!("git filter-repo failed: {stderr}"));
         }
     }
 
@@ -663,10 +664,10 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
         println!("    Removing entire files containing secrets...");
 
         let paths_file =
-            std::env::temp_dir().join(format!("filter-repo-secret-files-{}.txt", timestamp));
+            std::env::temp_dir().join(format!("filter-repo-secret-files-{timestamp}.txt"));
         let paths_content: String = secret_files
             .iter()
-            .map(|f| format!("literal:{}\n", f))
+            .map(|f| format!("literal:{f}\n"))
             .collect();
 
         fs::write(&paths_file, paths_content)?;
@@ -691,7 +692,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(anyhow!("git filter-repo failed: {}", stderr));
+            return Err(anyhow!("git filter-repo failed: {stderr}"));
         }
     }
 
@@ -758,9 +759,8 @@ async fn check_repository_safety(repo_path: &str, options: &FixOptions) -> Resul
 
             if behind_count > 0 {
                 return Err(anyhow!(
-                    "Repository is {} commits behind remote.\n\
-                     Pull changes first: git pull",
-                    behind_count
+                    "Repository is {behind_count} commits behind remote.\n\
+                     Pull changes first: git pull"
                 ));
             }
         }
@@ -780,9 +780,8 @@ async fn check_repository_safety(repo_path: &str, options: &FixOptions) -> Resul
 
             if ahead_count > 0 {
                 println!(
-                    "⚠️  Warning: Repository is {} commits ahead of remote.\n   \
-                     After history rewrite, you'll need: git push --force-with-lease",
-                    ahead_count
+                    "⚠️  Warning: Repository is {ahead_count} commits ahead of remote.\n   \
+                     After history rewrite, you'll need: git push --force-with-lease"
                 );
             }
         }
@@ -809,8 +808,7 @@ fn show_fix_results(results: &[FixResult]) {
     let failed = results.iter().filter(|r| !r.errors.is_empty()).count();
 
     println!(
-        "✅ Fix Summary: {} successful, {} failed",
-        successful, failed
+        "✅ Fix Summary: {successful} successful, {failed} failed"
     );
 
     if failed > 0 {

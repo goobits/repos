@@ -9,7 +9,7 @@ use super::operations::{get_git_config, run_git, set_git_config};
 use super::status::Status;
 
 /// Type alias for the interactive prompt function
-/// Takes (repo_name, current_config, target_config) and returns whether to apply changes
+/// Takes (`repo_name`, `current_config`, `target_config`) and returns whether to apply changes
 pub type PromptFn = Box<
     dyn Fn(&str, &UserConfig, &UserConfig) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>>
         + Send
@@ -24,10 +24,12 @@ pub struct UserConfig {
 }
 
 impl UserConfig {
+    #[must_use] 
     pub fn new(name: Option<String>, email: Option<String>) -> Self {
         Self { name, email }
     }
 
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.name.is_none() && self.email.is_none()
     }
@@ -103,7 +105,7 @@ pub fn validate_user_config(config: &UserConfig) -> Result<()> {
         }
         // Basic email validation - must contain @ and at least one dot after @
         if !email.contains('@') || !email.split('@').nth(1).unwrap_or("").contains('.') {
-            return Err(anyhow::anyhow!("Invalid email format: {}", email));
+            return Err(anyhow::anyhow!("Invalid email format: {email}"));
         }
     }
 
@@ -116,7 +118,7 @@ pub fn validate_user_config(config: &UserConfig) -> Result<()> {
 /// - `path`: Path to the repository
 /// - `repo_name`: Display name of the repository
 /// - `target_config`: Desired configuration values
-/// - `command`: Config command mode (Interactive, Force, or DryRun)
+/// - `command`: Config command mode (Interactive, Force, or `DryRun`)
 /// - `prompt_fn`: Optional function to prompt user for interactive mode conflicts
 ///
 /// Returns `(Status, message)` tuple indicating the result
@@ -153,12 +155,12 @@ pub async fn check_repo_config(
         let mut changes = Vec::new();
         if name_needs_update {
             if let Some(target_name) = &target_config.name {
-                changes.push(format!("name → {}", target_name));
+                changes.push(format!("name → {target_name}"));
             }
         }
         if email_needs_update {
             if let Some(target_email) = &target_config.email {
-                changes.push(format!("email → {}", target_email));
+                changes.push(format!("email → {target_email}"));
             }
         }
         return (
@@ -210,15 +212,15 @@ pub async fn check_repo_config(
         }
     }
 
-    if !errors.is_empty() {
-        (
-            Status::ConfigError,
-            format!("failed to update: {}", errors.join(", ")),
-        )
-    } else {
+    if errors.is_empty() {
         (
             Status::ConfigUpdated,
             format!("updated: {}", updates.join(", ")),
+        )
+    } else {
+        (
+            Status::ConfigError,
+            format!("failed to update: {}", errors.join(", ")),
         )
     }
 }

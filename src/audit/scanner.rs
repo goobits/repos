@@ -1,7 +1,7 @@
-//! TruffleHog integration and secret scanning functionality
+//! `TruffleHog` integration and secret scanning functionality
 //!
 //! This module orchestrates the complete audit process including:
-//! - TruffleHog installation and verification
+//! - `TruffleHog` installation and verification
 //! - Secret scanning across repositories
 //! - Repository hygiene checking integration
 //! - Statistical reporting and progress tracking
@@ -21,14 +21,14 @@ use crate::core::{
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 
-/// SHA256 checksum of the TruffleHog install script
+/// SHA256 checksum of the `TruffleHog` install script
 /// IMPORTANT: This should be updated when the install script changes
 /// To get the current checksum, download the script and run: sha256sum install.sh
-/// URL: https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh
+/// URL: <https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh>
 const TRUFFLEHOG_INSTALL_SCRIPT_SHA256: &str =
     "c394defeaea8a7c48f828a2051b608a9b19f43f34b891407b66a386c3e2591e2";
 
-/// Comprehensive statistics for TruffleHog scanning
+/// Comprehensive statistics for `TruffleHog` scanning
 #[derive(Clone, Default, Debug)]
 pub struct TruffleStatistics {
     pub total_repos_scanned: u32,
@@ -42,6 +42,7 @@ pub struct TruffleStatistics {
 }
 
 impl TruffleStatistics {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -74,6 +75,7 @@ impl TruffleStatistics {
             .push((repo_name.to_string(), error.to_string()));
     }
 
+    #[must_use] 
     pub fn generate_summary(&self) -> String {
         let duration_secs = self.scan_duration.as_secs_f64();
 
@@ -139,7 +141,7 @@ impl TruffleStatistics {
                 detectors.sort_by(|a, b| b.1.cmp(a.1));
 
                 for (detector, count) in detectors {
-                    report.push(format!("   {} × {}", count, detector));
+                    report.push(format!("   {count} × {detector}"));
                 }
                 report.push(String::new());
             }
@@ -147,7 +149,7 @@ impl TruffleStatistics {
             if !self.failed_repos.is_empty() {
                 report.push(format!("❌ SCAN FAILURES ({})", self.failed_repos.len()));
                 for (repo, error) in &self.failed_repos {
-                    report.push(format!("   {} - {}", repo, error));
+                    report.push(format!("   {repo} - {error}"));
                 }
             }
 
@@ -156,7 +158,7 @@ impl TruffleStatistics {
     }
 }
 
-/// Individual secret finding from TruffleHog
+/// Individual secret finding from `TruffleHog`
 #[derive(Debug, Clone)]
 pub struct SecretFinding {
     pub detector_name: String,
@@ -173,13 +175,14 @@ pub struct AuditStatistics {
 }
 
 impl AuditStatistics {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-/// Runs complete TruffleHog secret scanning and hygiene checking
-/// Returns (truffle_stats, hygiene_stats)
+/// Runs complete `TruffleHog` secret scanning and hygiene checking
+/// Returns (`truffle_stats`, `hygiene_stats`)
 pub async fn run_truffle_scan(
     install_tools: bool,
     verify: bool,
@@ -189,7 +192,7 @@ pub async fn run_truffle_scan(
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         set_terminal_title_and_flush("✅ repos");
         return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
     }
@@ -217,8 +220,7 @@ pub async fn run_truffle_scan(
         "repositories"
     };
     print!(
-        "\r🔍 Auditing {} {}                    \n",
-        total_repos, repo_word
+        "\r🔍 Auditing {total_repos} {repo_word}                    \n"
     );
     println!();
 
@@ -270,32 +272,32 @@ pub async fn run_truffle_scan(
     };
 
     // Display results
-    if !json {
-        println!("\n{}", "═".repeat(70));
-        println!("🔍 SECRET SCANNING RESULTS");
-        println!("{}", "═".repeat(70));
-
-        let detailed_report = final_truffle_stats.generate_detailed_report(false)?;
-        if !detailed_report.trim().is_empty() {
-            println!("{}", detailed_report);
-        } else {
-            println!("✅ No secrets found in any repository");
-        }
-
-        println!("{}", "═".repeat(70));
-    } else {
+    if json {
         // JSON output - combine both truffle and hygiene results
         let combined_output = serde_json::json!({
             "truffle": final_truffle_stats.generate_detailed_report(true)?,
             "summary": final_truffle_stats.generate_summary()
         });
         println!("{}", serde_json::to_string_pretty(&combined_output)?);
+    } else {
+        println!("\n{}", "═".repeat(70));
+        println!("🔍 SECRET SCANNING RESULTS");
+        println!("{}", "═".repeat(70));
+
+        let detailed_report = final_truffle_stats.generate_detailed_report(false)?;
+        if detailed_report.trim().is_empty() {
+            println!("✅ No secrets found in any repository");
+        } else {
+            println!("{detailed_report}");
+        }
+
+        println!("{}", "═".repeat(70));
     }
 
     Ok((final_truffle_stats, HygieneStatistics::new()))
 }
 
-/// Process TruffleHog scanning across repositories
+/// Process `TruffleHog` scanning across repositories
 async fn run_truffle_scanning(
     context: GenericProcessingContext<TruffleStatistics>,
     verify: bool,
@@ -323,7 +325,7 @@ async fn run_truffle_scanning(
             // Create progress bar for this repository
             let pb = multi_progress.add(indicatif::ProgressBar::new(100));
             pb.set_style(progress_style);
-            pb.set_prefix(format!("🟡 {:width$}", repo_name, width = max_name_length));
+            pb.set_prefix(format!("🟡 {repo_name:max_name_length$}"));
             pb.set_message("scanning secrets...");
 
             // Run TruffleHog scan
@@ -349,10 +351,7 @@ async fn run_truffle_scanning(
                     };
 
                     pb.set_prefix(format!(
-                        "{} {:width$}",
-                        status_symbol,
-                        repo_name,
-                        width = max_name_length
+                        "{status_symbol} {repo_name:max_name_length$}"
                     ));
                     pb.set_message(message);
                     pb.finish();
@@ -362,8 +361,8 @@ async fn run_truffle_scanning(
                     stats.add_repo_result(&repo_name, &secrets);
                 }
                 Err(e) => {
-                    pb.set_prefix(format!("🟠 {:width$}", repo_name, width = max_name_length));
-                    pb.set_message(format!("scan failed: {}", e));
+                    pb.set_prefix(format!("🟠 {repo_name:max_name_length$}"));
+                    pb.set_message(format!("scan failed: {e}"));
                     pb.finish();
 
                     // Update statistics with failure
@@ -391,7 +390,7 @@ async fn run_truffle_scanning(
     Ok(final_stats)
 }
 
-/// Scan a single repository for secrets using TruffleHog
+/// Scan a single repository for secrets using `TruffleHog`
 async fn scan_repository_secrets(
     repo_path: &std::path::Path,
     verify: bool,
@@ -448,7 +447,7 @@ async fn scan_repository_secrets(
     Ok(findings)
 }
 
-/// Check if TruffleHog is installed and accessible
+/// Check if `TruffleHog` is installed and accessible
 async fn is_trufflehog_installed() -> bool {
     Command::new("trufflehog")
         .arg("--version")
@@ -458,7 +457,7 @@ async fn is_trufflehog_installed() -> bool {
         .unwrap_or(false)
 }
 
-/// Install TruffleHog if not already present
+/// Install `TruffleHog` if not already present
 async fn ensure_trufflehog_installed() -> Result<()> {
     if is_trufflehog_installed().await {
         println!("✅ TruffleHog is already installed");
@@ -495,7 +494,7 @@ async fn ensure_trufflehog_installed() -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to install TruffleHog: {}", stderr));
+        return Err(anyhow!("Failed to install TruffleHog: {stderr}"));
     }
 
     // Verify installation
@@ -523,13 +522,13 @@ async fn verify_file_checksum(path: &std::path::Path, expected_sha256: &str) -> 
     let mut hasher = Sha256::new();
     hasher.update(&contents);
     let result = hasher.finalize();
-    let computed_hash = format!("{:x}", result);
+    let computed_hash = format!("{result:x}");
 
     // Compare with expected hash (case-insensitive)
     Ok(computed_hash.eq_ignore_ascii_case(expected_sha256))
 }
 
-/// Install TruffleHog using direct download script
+/// Install `TruffleHog` using direct download script
 async fn install_trufflehog_direct() -> Result<()> {
     // Security warning before downloading external script
     println!("\n⚠️  SECURITY NOTICE:");
@@ -547,17 +546,17 @@ async fn install_trufflehog_direct() -> Result<()> {
 
     // Check if we have write access to /usr/local/bin
     let install_path = if std::fs::metadata(install_dir).is_ok()
-        && std::fs::File::create(format!("{}/test_write", install_dir)).is_ok()
+        && std::fs::File::create(format!("{install_dir}/test_write")).is_ok()
     {
         // Clean up test file
-        let _ = std::fs::remove_file(format!("{}/test_write", install_dir));
+        let _ = std::fs::remove_file(format!("{install_dir}/test_write"));
         install_dir.to_string()
     } else {
         // Fallback to user's local bin
         let home = std::env::var("HOME")?;
-        let user_bin = format!("{}/.local/bin", home);
+        let user_bin = format!("{home}/.local/bin");
         std::fs::create_dir_all(&user_bin)?;
-        println!("⚠️  Installing to {} (add to PATH if needed)", user_bin);
+        println!("⚠️  Installing to {user_bin} (add to PATH if needed)");
         user_bin
     };
 
@@ -573,8 +572,7 @@ async fn install_trufflehog_direct() -> Result<()> {
     if !download_output.status.success() {
         let stderr = String::from_utf8_lossy(&download_output.stderr);
         return Err(anyhow!(
-            "Failed to download TruffleHog installer: {}",
-            stderr
+            "Failed to download TruffleHog installer: {stderr}"
         ));
     }
 
@@ -595,7 +593,7 @@ async fn install_trufflehog_direct() -> Result<()> {
             eprintln!("   To update: Download the script and run 'sha256sum install.sh'\n");
         }
         Err(e) => {
-            eprintln!("\n⚠️  WARNING: Checksum verification failed: {}", e);
+            eprintln!("\n⚠️  WARNING: Checksum verification failed: {e}");
             eprintln!("   Proceeding with installation - verify manually if concerned.\n");
         }
     }
@@ -612,7 +610,7 @@ async fn install_trufflehog_direct() -> Result<()> {
 
     if !install_output.status.success() {
         let stderr = String::from_utf8_lossy(&install_output.stderr);
-        return Err(anyhow!("Failed to install TruffleHog: {}", stderr));
+        return Err(anyhow!("Failed to install TruffleHog: {stderr}"));
     }
 
     Ok(())

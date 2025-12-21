@@ -2,7 +2,7 @@
 //!
 //! This module handles the audit command which performs:
 //! - Repository hygiene checking
-//! - Secret scanning with TruffleHog
+//! - Secret scanning with `TruffleHog`
 //! - Automated fixing of detected issues
 
 use anyhow::Result;

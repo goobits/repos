@@ -36,6 +36,7 @@ impl Default for SyncStatistics {
 
 impl SyncStatistics {
     /// Creates a new statistics tracker with all counters initialized to zero
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             synced_repos: AtomicU64::new(0),
@@ -102,7 +103,7 @@ impl SyncStatistics {
                 if let Ok(mut guard) = self.no_upstream_repos.lock() {
                     guard.push((repo_name.to_string(), repo_path.to_string()));
                 } else {
-                    eprintln!("Warning: Failed to record no-upstream repo: {}", repo_name);
+                    eprintln!("Warning: Failed to record no-upstream repo: {repo_name}");
                 }
             }
             Status::NoRemote => {
@@ -110,7 +111,7 @@ impl SyncStatistics {
                 if let Ok(mut guard) = self.no_remote_repos.lock() {
                     guard.push((repo_name.to_string(), repo_path.to_string()));
                 } else {
-                    eprintln!("Warning: Failed to record no-remote repo: {}", repo_name);
+                    eprintln!("Warning: Failed to record no-remote repo: {repo_name}");
                 }
             }
             Status::Error
@@ -126,7 +127,7 @@ impl SyncStatistics {
                         message.to_string(),
                     ));
                 } else {
-                    eprintln!("Warning: Failed to record error for repo: {}", repo_name);
+                    eprintln!("Warning: Failed to record error for repo: {repo_name}");
                 }
             }
         }
@@ -149,8 +150,7 @@ impl SyncStatistics {
                 }
             } else {
                 eprintln!(
-                    "Warning: Failed to record uncommitted changes for repo: {}",
-                    repo_name
+                    "Warning: Failed to record uncommitted changes for repo: {repo_name}"
                 );
             }
         }
@@ -170,13 +170,11 @@ impl SyncStatistics {
         // Main summary line
         if errors > 0 {
             summary.push_str(&format!(
-                "✅ Completed in {:.1}s • {} synced • {} pushed • {} failed",
-                duration_secs, synced, pushed, errors
+                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed} pushed • {errors} failed"
             ));
         } else {
             summary.push_str(&format!(
-                "✅ Completed in {:.1}s • {} synced • {} pushed",
-                duration_secs, synced, pushed
+                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed} pushed"
             ));
         }
 
@@ -188,33 +186,21 @@ impl SyncStatistics {
         let mut lines = Vec::new();
 
         // Lock all vectors once at the beginning - handle lock failures gracefully
-        let failed_repos = match self.failed_repos.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for failed_repos");
-                return String::new();
-            }
+        let failed_repos = if let Ok(guard) = self.failed_repos.lock() { guard } else {
+            eprintln!("Warning: Failed to acquire lock for failed_repos");
+            return String::new();
         };
-        let no_upstream_repos = match self.no_upstream_repos.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for no_upstream_repos");
-                return String::new();
-            }
+        let no_upstream_repos = if let Ok(guard) = self.no_upstream_repos.lock() { guard } else {
+            eprintln!("Warning: Failed to acquire lock for no_upstream_repos");
+            return String::new();
         };
-        let no_remote_repos = match self.no_remote_repos.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for no_remote_repos");
-                return String::new();
-            }
+        let no_remote_repos = if let Ok(guard) = self.no_remote_repos.lock() { guard } else {
+            eprintln!("Warning: Failed to acquire lock for no_remote_repos");
+            return String::new();
         };
-        let uncommitted_repos = match self.uncommitted_repos.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for uncommitted_repos");
-                return String::new();
-            }
+        let uncommitted_repos = if let Ok(guard) = self.uncommitted_repos.lock() { guard } else {
+            eprintln!("Warning: Failed to acquire lock for uncommitted_repos");
+            return String::new();
         };
 
         // Failed repos get priority
@@ -228,8 +214,7 @@ impl SyncStatistics {
                 };
                 let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
-                    "   {} {:20} {:30} # {}",
-                    tree_char, repo_name, short_path, error
+                    "   {tree_char} {repo_name:20} {short_path:30} # {error}"
                 ));
             }
             lines.push(String::new()); // Add blank line
@@ -246,8 +231,7 @@ impl SyncStatistics {
                 };
                 let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
-                    "   {} {:20} {:30} # git push -u origin <branch>",
-                    tree_char, repo_name, short_path
+                    "   {tree_char} {repo_name:20} {short_path:30} # git push -u origin <branch>"
                 ));
             }
             lines.push(String::new()); // Add blank line
@@ -269,7 +253,7 @@ impl SyncStatistics {
 
                 if show_changes {
                     // Show repo header with path
-                    lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
+                    lines.push(format!("   {tree_char} {repo_name:20} {short_path}"));
 
                     // Get and display file changes
                     if let Ok(changes) = get_repo_changes(repo_path) {
@@ -288,12 +272,12 @@ impl SyncStatistics {
                                 } else {
                                     "   │  ├─"
                                 };
-                                lines.push(format!("{}  {}", prefix, change));
+                                lines.push(format!("{prefix}  {change}"));
                             }
                         }
                     }
                 } else {
-                    lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
+                    lines.push(format!("   {tree_char} {repo_name:20} {short_path}"));
                 }
             }
             lines.push(String::new()); // Add blank line
@@ -309,7 +293,7 @@ impl SyncStatistics {
                     "├─"
                 };
                 let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
-                lines.push(format!("   {} {:20} {}", tree_char, repo_name, short_path));
+                lines.push(format!("   {tree_char} {repo_name:20} {short_path}"));
             }
         }
 
@@ -343,7 +327,7 @@ pub(crate) fn clean_error_message(error: &str) -> String {
     } else if cleaned.contains("timed out") {
         // Extract timeout duration if present
         if cleaned.contains(&TIMEOUT_SECONDS_DISPLAY.to_string()) {
-            format!("timeout ({}s)", TIMEOUT_SECONDS_DISPLAY)
+            format!("timeout ({TIMEOUT_SECONDS_DISPLAY}s)")
         } else {
             "timeout".to_string()
         }
@@ -387,7 +371,7 @@ fn get_repo_changes(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
     for (i, line) in status_output.lines().enumerate() {
         if i >= MAX_FILES {
             let remaining = status_output.lines().count() - MAX_FILES;
-            changes.push(format!("... and {} more", remaining));
+            changes.push(format!("... and {remaining} more"));
             break;
         }
         if !line.is_empty() {

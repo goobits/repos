@@ -33,7 +33,7 @@ pub async fn handle_publish_command(
     let (start_time, mut repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         set_terminal_title_and_flush("✅ repos");
         return Ok(());
     }
@@ -119,18 +119,16 @@ pub async fn handle_publish_command(
             };
 
             let mut skip_msg = format!(
-                "\r📦 Filtered to {} repos only ({} skipped)",
-                visibility_type, skipped_count
+                "\r📦 Filtered to {visibility_type} repos only ({skipped_count} skipped)"
             );
 
             if unknown_count > 0 {
                 skip_msg.push_str(&format!(
-                    " [{} unknown visibility treated as private]",
-                    unknown_count
+                    " [{unknown_count} unknown visibility treated as private]"
                 ));
             }
 
-            println!("{}\n", skip_msg);
+            println!("{skip_msg}\n");
         }
     }
 
@@ -160,7 +158,7 @@ pub async fn handle_publish_command(
         );
         println!("Repositories with uncommitted changes:");
         for repo in &dirty_repos {
-            println!("  • {}", repo);
+            println!("  • {repo}");
         }
         println!("\nCommit your changes first, or use --allow-dirty to publish anyway (not recommended).\n");
         set_terminal_title_and_flush("✅ repos");
@@ -223,8 +221,7 @@ pub async fn handle_publish_command(
     };
 
     print!(
-        "\r📦 Publishing {} {}                    \n",
-        total_packages, package_word
+        "\r📦 Publishing {total_packages} {package_word}                    \n"
     );
     println!();
 
@@ -376,9 +373,9 @@ async fn process_publish_repositories(
                     let (tag_success, tag_message) =
                         create_and_push_tag(&repo_path, &tag_name).await;
                     if tag_success {
-                        final_message = format!("{}, {}", message, tag_message);
+                        final_message = format!("{message}, {tag_message}");
                     } else {
-                        final_message = format!("{} (tag failed: {})", message, tag_message);
+                        final_message = format!("{message} (tag failed: {tag_message})");
                     }
                 }
             }
@@ -422,7 +419,7 @@ async fn process_publish_repositories(
         println!("\n{}", "━".repeat(70));
         println!("❌ Failed to publish:\n");
         for (repo, error) in &final_stats.errors {
-            println!("  • {}: {}", repo, error);
+            println!("  • {repo}: {error}");
         }
         println!("{}", "━".repeat(70));
     }

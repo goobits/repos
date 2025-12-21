@@ -4,7 +4,7 @@
 //!
 //! This module provides:
 //! - Detection of files that violate .gitignore patterns
-//! - Identification of universal bad patterns (node_modules, vendor, etc.)
+//! - Identification of universal bad patterns (`node_modules`, vendor, etc.)
 //! - Large file detection in git history
 //! - Statistics tracking and reporting
 //! - Concurrent processing with progress tracking
@@ -107,11 +107,13 @@ pub struct HygieneStatistics {
 }
 
 impl HygieneStatistics {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Get the violation repositories for fix operations
+    #[must_use] 
     pub fn get_violation_repos(&self) -> Vec<(String, String, Vec<HygieneViolation>)> {
         self.violation_repos.clone()
     }
@@ -157,6 +159,7 @@ impl HygieneStatistics {
         }
     }
 
+    #[must_use] 
     pub fn generate_summary(&self, _total_repos: usize, duration: Duration) -> String {
         let duration_secs = duration.as_secs_f64();
 
@@ -173,6 +176,7 @@ impl HygieneStatistics {
         }
     }
 
+    #[must_use] 
     pub fn generate_detailed_summary(&self) -> String {
         let mut lines = Vec::new();
 
@@ -206,8 +210,7 @@ impl HygieneStatistics {
                         .count()
                 );
                 lines.push(format!(
-                    "   {} {:20} {:30} # {}",
-                    tree_char, repo_name, short_path, violation_summary
+                    "   {tree_char} {repo_name:20} {short_path:30} # {violation_summary}"
                 ));
             }
             lines.push(String::new()); // Add blank line
@@ -227,8 +230,7 @@ impl HygieneStatistics {
                 };
                 let short_path = shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
-                    "   {} {:20} {:30} # {}",
-                    tree_char, repo_name, short_path, error
+                    "   {tree_char} {repo_name:20} {short_path:30} # {error}"
                 ));
             }
         }
@@ -302,7 +304,7 @@ async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolati
         // Check against universal bad patterns
         for pattern in UNIVERSAL_BAD_PATTERNS {
             let pattern_matches = if pattern.ends_with('/') {
-                line.starts_with(pattern) || line.contains(&format!("/{}", pattern))
+                line.starts_with(pattern) || line.contains(&format!("/{pattern}"))
             } else if pattern.starts_with("*.") {
                 let extension = &pattern[1..]; // Remove *
                 line.ends_with(extension)
@@ -398,7 +400,7 @@ async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<Hyg
         Err(e) => {
             return (
                 HygieneStatus::Error,
-                format!("gitignore check failed: {}", e),
+                format!("gitignore check failed: {e}"),
                 Vec::new(),
             );
         }
@@ -410,7 +412,7 @@ async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<Hyg
         Err(e) => {
             return (
                 HygieneStatus::Error,
-                format!("pattern check failed: {}", e),
+                format!("pattern check failed: {e}"),
                 Vec::new(),
             );
         }
@@ -422,7 +424,7 @@ async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<Hyg
         Err(e) => {
             return (
                 HygieneStatus::Error,
-                format!("large file check failed: {}", e),
+                format!("large file check failed: {e}"),
                 Vec::new(),
             );
         }
@@ -534,7 +536,7 @@ pub async fn process_hygiene_repositories(context: GenericProcessingContext<Hygi
     let detailed_summary = final_stats.generate_detailed_summary();
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
-        println!("{}", detailed_summary);
+        println!("{detailed_summary}");
         println!("{}", "━".repeat(70));
     }
 

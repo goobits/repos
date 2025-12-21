@@ -16,6 +16,7 @@ pub enum PackageManager {
 
 impl PackageManager {
     /// Returns the display name for this package manager
+    #[must_use] 
     pub fn name(&self) -> &str {
         match self {
             PackageManager::Npm => "npm",
@@ -25,6 +26,7 @@ impl PackageManager {
     }
 
     /// Returns the emoji icon for this package manager
+    #[must_use] 
     pub fn icon(&self) -> &str {
         match self {
             PackageManager::Npm => "📦",
@@ -45,6 +47,7 @@ pub struct PackageInfo {
 
 /// Detects the package manager for a given repository path (synchronous version)
 /// Returns None if no package manager is detected
+#[must_use] 
 pub fn detect_package_manager(repo_path: &Path) -> Option<PackageManager> {
     if repo_path.join("package.json").exists() {
         Some(PackageManager::Npm)
@@ -57,7 +60,7 @@ pub fn detect_package_manager(repo_path: &Path) -> Option<PackageManager> {
     }
 }
 
-/// Detects the package manager for a given repository path (async version using tokio::fs)
+/// Detects the package manager for a given repository path (async version using `tokio::fs`)
 /// Returns None if no package manager is detected
 /// This is significantly faster when called in parallel on many repositories
 pub async fn detect_package_manager_async(repo_path: &Path) -> Option<PackageManager> {
@@ -294,6 +297,7 @@ pub enum PublishStatus {
 
 impl PublishStatus {
     /// Returns the emoji symbol for this status
+    #[must_use] 
     pub fn symbol(&self) -> &str {
         match self {
             PublishStatus::Published | PublishStatus::DryRunOk => "🟢",
@@ -303,6 +307,7 @@ impl PublishStatus {
     }
 
     /// Returns the text representation of this status
+    #[must_use] 
     pub fn text(&self) -> &str {
         match self {
             PublishStatus::Published => "published",

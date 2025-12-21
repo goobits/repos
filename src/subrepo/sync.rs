@@ -31,8 +31,7 @@ fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<S
 
     if instances.is_empty() {
         anyhow::bail!(
-            "Subrepo '{}' not found or not shared across multiple repos",
-            name
+            "Subrepo '{name}' not found or not shared across multiple repos"
         );
     }
 
@@ -41,7 +40,7 @@ fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<S
 
 /// Check if a repository has uncommitted changes (including untracked files)
 ///
-/// Note: This is more conservative than the versions in mod.rs and git::operations,
+/// Note: This is more conservative than the versions in mod.rs and `git::operations`,
 /// which only check tracked files (diff-index). For sync operations, we want to be
 /// extra cautious and block syncing if there are ANY changes, including untracked files.
 /// Uses `git status --porcelain` to detect all modifications.
@@ -77,7 +76,7 @@ fn stash_changes(path: &Path) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git stash failed: {}", stderr);
+        anyhow::bail!("git stash failed: {stderr}");
     }
 
     Ok(())
@@ -92,7 +91,7 @@ fn checkout_commit(path: &Path, commit: &str) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git checkout failed: {}", stderr);
+        anyhow::bail!("git checkout failed: {stderr}");
     }
 
     Ok(())
@@ -110,7 +109,7 @@ fn fetch_latest_commit(path: &Path) -> Result<String> {
 
     if !fetch_output.status.success() {
         let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-        anyhow::bail!("git fetch failed: {}", stderr);
+        anyhow::bail!("git fetch failed: {stderr}");
     }
 
     // Try to get latest commit from origin/HEAD, then origin/main, then origin/master
@@ -136,7 +135,7 @@ pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -
     let instances = find_instances_by_name(&report, name)?;
 
     let short_commit = target_commit.chars().take(7).collect::<String>();
-    println!("\n🔄 Syncing {} to {}...\n", name, short_commit);
+    println!("\n🔄 Syncing {name} to {short_commit}...\n");
 
     let mut success_count = 0;
     let mut skip_count = 0;
@@ -151,7 +150,7 @@ pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -
             if stash {
                 // Stash changes before syncing
                 match stash_changes(&instance.subrepo_path) {
-                    Ok(_) => {
+                    Ok(()) => {
                         stashed_count += 1;
                     }
                     Err(e) => {
@@ -174,7 +173,7 @@ pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -
 
         // Checkout the commit
         match checkout_commit(&instance.subrepo_path, target_commit) {
-            Ok(_) => {
+            Ok(()) => {
                 println!("  ✅ {}", instance.parent_repo);
                 success_count += 1;
             }
@@ -189,24 +188,23 @@ pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -
     println!();
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("📊 Sync Summary");
-    println!("   ✅ {} synced", success_count);
+    println!("   ✅ {success_count} synced");
     if stashed_count > 0 {
         println!(
-            "   📦 {} stashed (changes saved, run 'git stash pop' to restore)",
-            stashed_count
+            "   📦 {stashed_count} stashed (changes saved, run 'git stash pop' to restore)"
         );
     }
     if skip_count > 0 {
-        println!("   ⚠️  {} skipped (uncommitted changes)", skip_count);
+        println!("   ⚠️  {skip_count} skipped (uncommitted changes)");
     }
     if error_count > 0 {
-        println!("   ❌ {} failed", error_count);
+        println!("   ❌ {error_count} failed");
     }
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
     if error_count > 0 {
-        anyhow::bail!("{} repositories failed to sync", error_count);
+        anyhow::bail!("{error_count} repositories failed to sync");
     }
 
     Ok(())
@@ -218,12 +216,12 @@ pub fn update_subrepo(name: &str, force: bool) -> Result<()> {
     let instances = find_instances_by_name(&report, name)?;
 
     // Use first instance to determine latest commit
-    println!("\n🔍 Fetching latest commit for {}...", name);
+    println!("\n🔍 Fetching latest commit for {name}...");
     let latest = fetch_latest_commit(&instances[0].subrepo_path)?;
     let short_latest = latest.chars().take(7).collect::<String>();
-    println!("   Latest commit: {}\n", short_latest);
+    println!("   Latest commit: {short_latest}\n");
 
-    println!("🔄 Updating {} to {}...\n", name, short_latest);
+    println!("🔄 Updating {name} to {short_latest}...\n");
 
     let mut success_count = 0;
     let mut skip_count = 0;
@@ -250,7 +248,7 @@ pub fn update_subrepo(name: &str, force: bool) -> Result<()> {
         // Fetch and checkout
         match fetch_latest_commit(&instance.subrepo_path) {
             Ok(commit) => match checkout_commit(&instance.subrepo_path, &commit) {
-                Ok(_) => {
+                Ok(()) => {
                     let old_short = instance.short_hash.clone();
                     println!(
                         "  ✅ {} ({} → {})",
@@ -274,18 +272,18 @@ pub fn update_subrepo(name: &str, force: bool) -> Result<()> {
     println!();
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("📊 Update Summary");
-    println!("   ✅ {} updated", success_count);
+    println!("   ✅ {success_count} updated");
     if skip_count > 0 {
-        println!("   ⚠️  {} skipped (uncommitted changes)", skip_count);
+        println!("   ⚠️  {skip_count} skipped (uncommitted changes)");
     }
     if error_count > 0 {
-        println!("   ❌ {} failed", error_count);
+        println!("   ❌ {error_count} failed");
     }
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
     if error_count > 0 {
-        anyhow::bail!("{} repositories failed to update", error_count);
+        anyhow::bail!("{error_count} repositories failed to update");
     }
 
     Ok(())

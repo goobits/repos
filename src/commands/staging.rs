@@ -30,7 +30,7 @@ pub async fn handle_stage_command(pattern: String) -> Result<()> {
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         // Set terminal title to green checkbox to indicate completion
         set_terminal_title_and_flush("✅ repos stage");
         return Ok(());
@@ -43,8 +43,7 @@ pub async fn handle_stage_command(pattern: String) -> Result<()> {
         "repositories"
     };
     print!(
-        "\r🚀 Staging {} in {} {}                    \n",
-        pattern, total_repos, repo_word
+        "\r🚀 Staging {pattern} in {total_repos} {repo_word}                    \n"
     );
     println!();
 
@@ -75,7 +74,7 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         // Set terminal title to green checkbox to indicate completion
         set_terminal_title_and_flush("✅ repos unstage");
         return Ok(());
@@ -88,8 +87,7 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
         "repositories"
     };
     print!(
-        "\r🚀 Unstaging {} in {} {}                    \n",
-        pattern, total_repos, repo_word
+        "\r🚀 Unstaging {pattern} in {total_repos} {repo_word}                    \n"
     );
     println!();
 
@@ -120,7 +118,7 @@ pub async fn handle_staging_status_command() -> Result<()> {
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         // Set terminal title to green checkbox to indicate completion
         set_terminal_title_and_flush("✅ repos status");
         return Ok(());
@@ -133,8 +131,7 @@ pub async fn handle_staging_status_command() -> Result<()> {
         "repositories"
     };
     print!(
-        "\r🚀 Checking status of {} {}                    \n",
-        total_repos, repo_word
+        "\r🚀 Checking status of {total_repos} {repo_word}                    \n"
     );
     println!();
 
@@ -259,7 +256,7 @@ async fn process_staging_repositories(
     let detailed_summary = final_stats.generate_detailed_summary(false);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
-        println!("{}", detailed_summary);
+        println!("{detailed_summary}");
         println!("{}", "━".repeat(70));
     }
 
@@ -323,13 +320,13 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
 
                         let mut parts = Vec::new();
                         if staged_count > 0 {
-                            parts.push(format!("{} staged", staged_count));
+                            parts.push(format!("{staged_count} staged"));
                         }
                         if unstaged_count > 0 {
-                            parts.push(format!("{} unstaged", unstaged_count));
+                            parts.push(format!("{unstaged_count} unstaged"));
                         }
                         if untracked_count > 0 {
-                            parts.push(format!("{} untracked", untracked_count));
+                            parts.push(format!("{untracked_count} untracked"));
                         }
 
                         if parts.is_empty() {
@@ -339,7 +336,7 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
                         }
                     }
                 }
-                Err(e) => (Status::StagingError, format!("error: {}", e)),
+                Err(e) => (Status::StagingError, format!("error: {e}")),
             };
 
             progress_bar.set_prefix(format!(
@@ -370,7 +367,7 @@ pub async fn handle_commit_command(message: String, include_empty: bool) -> Resu
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         // Set terminal title to green checkbox to indicate completion
         set_terminal_title_and_flush("✅ repos commit");
         return Ok(());
@@ -383,8 +380,7 @@ pub async fn handle_commit_command(message: String, include_empty: bool) -> Resu
         "repositories"
     };
     print!(
-        "\r🚀 Committing changes in {} {}                    \n",
-        total_repos, repo_word
+        "\r🚀 Committing changes in {total_repos} {repo_word}                    \n"
     );
     println!();
 
@@ -501,7 +497,7 @@ async fn process_commit_repositories(
     let detailed_summary = final_stats.generate_detailed_summary(false);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
-        println!("{}", detailed_summary);
+        println!("{detailed_summary}");
         println!("{}", "━".repeat(70));
     }
 
@@ -514,11 +510,11 @@ async fn perform_staging_operation(repo_path: &std::path::Path, pattern: &str) -
     use crate::core::clean_error_message;
 
     match stage_files(repo_path, pattern).await {
-        Ok((true, _, _)) => (Status::Staged, format!("staged {}", pattern)),
+        Ok((true, _, _)) => (Status::Staged, format!("staged {pattern}")),
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
             if error_message.contains("pathspec") && error_message.contains("did not match") {
-                (Status::NoChanges, format!("no files match {}", pattern))
+                (Status::NoChanges, format!("no files match {pattern}"))
             } else {
                 (Status::StagingError, error_message)
             }
@@ -551,7 +547,7 @@ async fn perform_commit_operation(
                 let error_message = clean_error_message(&e.to_string());
                 return (
                     Status::CommitError,
-                    format!("error checking changes: {}", error_message),
+                    format!("error checking changes: {error_message}"),
                 );
             }
         }
@@ -570,7 +566,7 @@ async fn perform_commit_operation(
             } else {
                 "committed"
             };
-            (Status::Committed, format!("committed {}", commit_info))
+            (Status::Committed, format!("committed {commit_info}"))
         }
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
@@ -597,13 +593,13 @@ async fn perform_unstaging_operation(
     use crate::core::clean_error_message;
 
     match unstage_files(repo_path, pattern).await {
-        Ok((true, _, _)) => (Status::Unstaged, format!("unstaged {}", pattern)),
+        Ok((true, _, _)) => (Status::Unstaged, format!("unstaged {pattern}")),
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
             if error_message.contains("pathspec") && error_message.contains("did not match") {
                 (
                     Status::NoChanges,
-                    format!("no staged files match {}", pattern),
+                    format!("no staged files match {pattern}"),
                 )
             } else {
                 (Status::StagingError, error_message)

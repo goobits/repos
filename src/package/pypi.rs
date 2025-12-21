@@ -80,7 +80,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
     // Build the package first
     let build_result = build_package(repo_path).await;
     if let Err(e) = build_result {
-        return (false, format!("build failed: {}", e));
+        return (false, format!("build failed: {e}"));
     }
 
     // Upload with twine
@@ -123,7 +123,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let combined = format!("{}{}", stdout, stderr);
+                let combined = format!("{stdout}{stderr}");
                 let error_message = clean_python_error(&combined);
 
                 // Check if it's an "already published" error
@@ -134,7 +134,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
                 }
             }
         }
-        Ok(Err(e)) => (false, format!("twine command failed: {}", e)),
+        Ok(Err(e)) => (false, format!("twine command failed: {e}")),
         Err(_) => (false, "python operation timed out".to_string()),
     }
 }
@@ -180,8 +180,6 @@ fn clean_python_error(error: &str) -> String {
         // Return first meaningful line
         error
             .lines()
-            .find(|line| !line.trim().is_empty() && !line.contains("Uploading"))
-            .map(|line| line.trim().to_string())
-            .unwrap_or_else(|| error.trim().to_string())
+            .find(|line| !line.trim().is_empty() && !line.contains("Uploading")).map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
     }
 }

@@ -43,6 +43,7 @@ pub enum Status {
 
 impl Status {
     /// Returns the emoji symbol for this status
+    #[must_use] 
     pub fn symbol(&self) -> &str {
         match self {
             Status::Synced
@@ -64,6 +65,7 @@ impl Status {
     }
 
     /// Returns the text representation of this status
+    #[must_use] 
     pub fn text(&self) -> &str {
         match self {
             Status::Synced => "synced",

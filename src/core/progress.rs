@@ -37,7 +37,7 @@ pub struct ProcessingContext {
 /// Generic processing context for custom statistics types
 ///
 /// This struct allows using custom statistics types while maintaining
-/// the same parameter grouping benefits as ProcessingContext.
+/// the same parameter grouping benefits as `ProcessingContext`.
 pub struct GenericProcessingContext<T> {
     /// List of discovered repositories to process
     pub repositories: Vec<(String, PathBuf)>,
@@ -57,7 +57,7 @@ pub struct GenericProcessingContext<T> {
     pub start_time: std::time::Instant,
 }
 
-/// Creates a ProcessingContext from repositories and start time
+/// Creates a `ProcessingContext` from repositories and start time
 pub fn create_processing_context(
     repositories: Vec<(String, PathBuf)>,
     start_time: std::time::Instant,
@@ -87,7 +87,7 @@ pub fn create_processing_context(
     })
 }
 
-/// Creates a GenericProcessingContext with custom statistics type
+/// Creates a `GenericProcessingContext` with custom statistics type
 pub fn create_generic_processing_context<T>(
     repositories: Vec<(String, PathBuf)>,
     start_time: std::time::Instant,
@@ -118,7 +118,7 @@ pub fn create_generic_processing_context<T>(
 }
 
 /// Creates and configures a progress bar for a repository
-/// Returns a configured ProgressBar with the specified repository name
+/// Returns a configured `ProgressBar` with the specified repository name
 pub(crate) fn create_progress_bar(
     multi: &MultiProgress,
     style: &ProgressStyle,
@@ -126,13 +126,13 @@ pub(crate) fn create_progress_bar(
 ) -> ProgressBar {
     let pb = multi.add(ProgressBar::new(DEFAULT_PROGRESS_BAR_LENGTH));
     pb.set_style(style.clone());
-    pb.set_prefix(format!("🟡 {}", repo_name));
+    pb.set_prefix(format!("🟡 {repo_name}"));
     pb.set_message("syncing...");
     pb
 }
 
 /// Creates a progress bar style configuration
-/// Returns a ProgressStyle configured with the application's visual styling
+/// Returns a `ProgressStyle` configured with the application's visual styling
 pub(crate) fn create_progress_style() -> Result<ProgressStyle> {
     Ok(ProgressStyle::default_bar()
         .template(PROGRESS_TEMPLATE)?
@@ -154,7 +154,7 @@ pub(crate) fn acquire_stats_lock<T>(stats: &'_ Arc<Mutex<T>>) -> std::sync::Mute
 }
 
 /// Creates a separator progress bar for visual spacing between sections
-/// Returns a finished ProgressBar that provides visual separation
+/// Returns a finished `ProgressBar` that provides visual separation
 pub(crate) fn create_separator_progress_bar(multi_progress: &MultiProgress) -> ProgressBar {
     let separator_pb = multi_progress.add(ProgressBar::new(0));
     separator_pb.set_style(ProgressStyle::default_bar().template(" ").expect("Failed to create separator progress bar template - this indicates an invalid template string"));
@@ -163,7 +163,7 @@ pub(crate) fn create_separator_progress_bar(multi_progress: &MultiProgress) -> P
 }
 
 /// Creates a footer progress bar for displaying summary information
-/// Returns a configured ProgressBar for showing operation summaries
+/// Returns a configured `ProgressBar` for showing operation summaries
 pub(crate) fn create_footer_progress_bar(multi_progress: &MultiProgress) -> ProgressBar {
     let footer_pb = multi_progress.add(ProgressBar::new(0));
     let footer_style = ProgressStyle::default_bar()

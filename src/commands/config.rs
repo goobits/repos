@@ -31,24 +31,24 @@ async fn show_config_selection_prompt() -> Result<ConfigArgs> {
 
     println!("1) Global config (~/.gitconfig)");
     if let Some(name) = &global_name {
-        println!("   Name:  {}", name);
+        println!("   Name:  {name}");
     } else {
         println!("   Name:  <not set>");
     }
     if let Some(email) = &global_email {
-        println!("   Email: {}", email);
+        println!("   Email: {email}");
     } else {
         println!("   Email: <not set>");
     }
 
     println!("\n2) Current directory config");
     if let Some(name) = &current_name {
-        println!("   Name:  {}", name);
+        println!("   Name:  {name}");
     } else {
         println!("   Name:  <not set>");
     }
     if let Some(email) = &current_email {
-        println!("   Email: {}", email);
+        println!("   Email: {email}");
     } else {
         println!("   Email: <not set>");
     }
@@ -129,7 +129,7 @@ async fn show_config_selection_prompt() -> Result<ConfigArgs> {
     })
 }
 
-/// Parses config command arguments into a ConfigCommand
+/// Parses config command arguments into a `ConfigCommand`
 pub fn parse_config_command(
     name: Option<String>,
     email: Option<String>,
@@ -162,7 +162,7 @@ pub fn parse_config_command(
     Ok(command)
 }
 
-/// Resolves config source to actual UserConfig values
+/// Resolves config source to actual `UserConfig` values
 pub async fn resolve_config_source(
     source: &ConfigSource,
     _repos: &[(String, PathBuf)],
@@ -192,17 +192,17 @@ pub async fn prompt_for_config_resolution(
     current: &UserConfig,
     target: &UserConfig,
 ) -> Result<bool> {
-    println!("\n🔄 Config conflict in repository: {}", repo_name);
+    println!("\n🔄 Config conflict in repository: {repo_name}");
 
     if let (Some(current_name), Some(target_name)) = (&current.name, &target.name) {
         if current_name != target_name {
-            println!("   Name:  {} → {}", current_name, target_name);
+            println!("   Name:  {current_name} → {target_name}");
         }
     }
 
     if let (Some(current_email), Some(target_email)) = (&current.email, &target.email) {
         if current_email != target_email {
-            println!("   Email: {} → {}", current_email, target_email);
+            println!("   Email: {current_email} → {target_email}");
         }
     }
 
@@ -230,7 +230,7 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     let (start_time, repos) = init_command(SCANNING_MESSAGE);
 
     if repos.is_empty() {
-        println!("\r{}", NO_REPOS_MESSAGE);
+        println!("\r{NO_REPOS_MESSAGE}");
         set_terminal_title_and_flush("✅ repos");
         return Ok(());
     }
@@ -260,17 +260,16 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
         _ => "",
     };
     print!(
-        "\r🚀 Syncing git config for {} {} {}                    \n",
-        total_repos, repo_word, mode_text
+        "\r🚀 Syncing git config for {total_repos} {repo_word} {mode_text}                    \n"
     );
     println!();
 
     // Display target config
     if let Some(name) = &target_config.name {
-        println!("📝 Target name:  {}", name);
+        println!("📝 Target name:  {name}");
     }
     if let Some(email) = &target_config.email {
-        println!("📧 Target email: {}", email);
+        println!("📧 Target email: {email}");
     }
     println!();
 
@@ -396,7 +395,7 @@ async fn process_config_repositories(
     let detailed_summary = final_stats.generate_detailed_summary(false);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
-        println!("{}", detailed_summary);
+        println!("{detailed_summary}");
         println!("{}", "━".repeat(70));
     }
 

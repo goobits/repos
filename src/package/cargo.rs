@@ -77,7 +77,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
                 }
             }
         }
-        Ok(Err(e)) => (false, format!("cargo command failed: {}", e)),
+        Ok(Err(e)) => (false, format!("cargo command failed: {e}")),
         Err(_) => (false, "cargo operation timed out".to_string()),
     }
 }
@@ -95,9 +95,7 @@ fn clean_cargo_error(error: &str) -> String {
         error
             .lines()
             .skip_while(|line| !line.contains("Caused by:"))
-            .nth(1)
-            .map(|line| line.trim().to_string())
-            .unwrap_or_else(|| error.trim().to_string())
+            .nth(1).map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
     } else {
         // Return first meaningful line
         error
@@ -106,8 +104,6 @@ fn clean_cargo_error(error: &str) -> String {
                 !line.trim().is_empty()
                     && !line.contains("Uploading")
                     && !line.contains("Packaging")
-            })
-            .map(|line| line.trim().to_string())
-            .unwrap_or_else(|| error.trim().to_string())
+            }).map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
     }
 }

@@ -35,6 +35,7 @@ pub struct ValidationReport {
 }
 
 impl ValidationReport {
+    #[must_use] 
     pub fn shared_subrepos_count(&self) -> usize {
         self.by_remote
             .iter()
@@ -42,6 +43,7 @@ impl ValidationReport {
             .count()
     }
 
+    #[must_use] 
     pub fn unique_remotes(&self) -> usize {
         self.by_remote.len()
     }
@@ -93,7 +95,7 @@ fn normalize_remote_url(url: &str) -> String {
 /// Check if repo has uncommitted changes (tracked files only)
 ///
 /// Note: This is a synchronous version for use in the validation module.
-/// There's an async version in git::operations, but this module requires
+/// There's an async version in `git::operations`, but this module requires
 /// sync operations. This only checks tracked files (diff-index vs HEAD).
 /// See subrepo/sync.rs for a more conservative version that includes untracked files.
 fn has_uncommitted_changes(path: &Path) -> bool {

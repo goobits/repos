@@ -37,7 +37,7 @@ pub fn validate_subrepos() -> Result<ValidationReport> {
         }
     }
 
-    let total_nested = by_remote.values().map(|v| v.len()).sum::<usize>() + no_remote.len();
+    let total_nested = by_remote.values().map(std::vec::Vec::len).sum::<usize>() + no_remote.len();
 
     Ok(ValidationReport {
         total_nested,
@@ -160,11 +160,11 @@ pub fn display_report(report: &ValidationReport) {
             let name = &instances[0].subrepo_name;
 
             if count > 1 {
-                println!("🔗 {} (found in {} parents)", name, count);
+                println!("🔗 {name} (found in {count} parents)");
             } else {
-                println!("🔗 {} (unique)", name);
+                println!("🔗 {name} (unique)");
             }
-            println!("   Remote: {}", remote);
+            println!("   Remote: {remote}");
 
             for instance in instances {
                 let uncommitted = if instance.has_uncommitted {
@@ -200,12 +200,11 @@ pub fn display_report(report: &ValidationReport) {
 
     if shared_count >= 3 {
         println!(
-            "   ✅ BUILD IT - You have {} subrepos shared across multiple parents",
-            shared_count
+            "   ✅ BUILD IT - You have {shared_count} subrepos shared across multiple parents"
         );
         println!("      This feature would help track drift between them.");
     } else if shared_count > 0 {
-        println!("   ⚠️  MAYBE - You have {} shared subrepos", shared_count);
+        println!("   ⚠️  MAYBE - You have {shared_count} shared subrepos");
         println!("      Consider if manual tracking is sufficient.");
     } else {
         println!("   ❌ SKIP IT - All nested repos are unique (no drift possible)");

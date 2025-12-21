@@ -77,8 +77,7 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
         }
         Ok(Err(e)) => Err(e.into()),
         Err(_) => Err(anyhow::anyhow!(
-            "Git operation timed out after {} seconds",
-            GIT_OPERATION_TIMEOUT_SECS
+            "Git operation timed out after {GIT_OPERATION_TIMEOUT_SECS} seconds"
         )),
     }
 }
@@ -152,7 +151,7 @@ pub async fn check_uses_git_lfs(path: &Path) -> bool {
 
 /// Pushes Git LFS objects to the remote
 /// Should be called BEFORE regular git push when LFS is in use
-/// Returns (success, error_message)
+/// Returns (success, `error_message`)
 pub async fn push_lfs_objects(path: &Path, remote: &str, branch: &str) -> (bool, String) {
     // Run "git lfs push --all <remote> <branch>" to upload all LFS objects
     let args = vec!["lfs", "push", "--all", remote, branch];
@@ -167,7 +166,7 @@ pub async fn push_lfs_objects(path: &Path, remote: &str, branch: &str) -> (bool,
             };
             (false, error_msg)
         }
-        Err(e) => (false, format!("LFS error: {}", e)),
+        Err(e) => (false, format!("LFS error: {e}")),
     }
 }
 
@@ -195,7 +194,7 @@ pub struct FetchResult {
 }
 
 /// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
-/// Returns FetchResult with repository state after fetching
+/// Returns `FetchResult` with repository state after fetching
 pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
     use crate::core::clean_error_message;
 
@@ -266,7 +265,7 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
     if let Err(e) = run_git(path, GIT_FETCH_ARGS).await {
         let error_message = clean_error_message(&e.to_string());
         let final_message = if is_rate_limit_error(&error_message) {
-            format!("⚠️ RATE LIMIT: {}", error_message)
+            format!("⚠️ RATE LIMIT: {error_message}")
         } else {
             error_message
         };
@@ -320,8 +319,7 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             upstream_exists: true,
             status: Status::Error,
             message: format!(
-                "diverged: {} ahead, {} behind (pull required before push)",
-                ahead_count, behind_count
+                "diverged: {ahead_count} ahead, {behind_count} behind (pull required before push)"
             ),
         };
     }
@@ -342,13 +340,13 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             ahead_count,
             upstream_exists: true,
             status: Status::Synced, // Will be pushed in phase 2
-            message: format!("{} commits ahead", ahead_count),
+            message: format!("{ahead_count} commits ahead"),
         }
     }
 }
 
 /// Phase 2: Push repository if needed (write operation, moderate concurrency)
-/// Returns (status, message, has_uncommitted_changes)
+/// Returns (status, message, `has_uncommitted_changes`)
 pub async fn push_if_needed(
     path: &Path,
     fetch_result: &FetchResult,
@@ -399,9 +397,9 @@ pub async fn push_if_needed(
             match run_git(path, &push_args).await {
                 Ok((true, _, _)) => {
                     let msg = if uses_lfs {
-                        format!("set upstream ({}) & pushed (with LFS)", remote_name)
+                        format!("set upstream ({remote_name}) & pushed (with LFS)")
                     } else {
-                        format!("set upstream ({}) & pushed", remote_name)
+                        format!("set upstream ({remote_name}) & pushed")
                     };
                     return (Status::Pushed, msg, fetch_result.has_uncommitted);
                 }
@@ -414,13 +412,12 @@ pub async fn push_if_needed(
                     return (Status::Error, error_message, fetch_result.has_uncommitted);
                 }
             }
-        } else {
-            return (
-                Status::NoUpstream,
-                STATUS_NO_UPSTREAM.to_string(),
-                fetch_result.has_uncommitted,
-            );
         }
+        return (
+            Status::NoUpstream,
+            STATUS_NO_UPSTREAM.to_string(),
+            fetch_result.has_uncommitted,
+        );
     }
 
     // If no commits ahead, already synced
@@ -454,7 +451,7 @@ pub async fn push_if_needed(
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
             let final_message = if is_rate_limit_error(&error_message) {
-                format!("⚠️ RATE LIMIT: {}", error_message)
+                format!("⚠️ RATE LIMIT: {error_message}")
             } else {
                 error_message
             };
@@ -463,7 +460,7 @@ pub async fn push_if_needed(
         Err(e) => {
             let error_message = clean_error_message(&e.to_string());
             let final_message = if is_rate_limit_error(&error_message) {
-                format!("⚠️ RATE LIMIT: {}", error_message)
+                format!("⚠️ RATE LIMIT: {error_message}")
             } else {
                 error_message
             };
@@ -551,7 +548,7 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
 
     let (success, _, stderr) = match tag_result {
         Ok(result) => result,
-        Err(e) => return (false, format!("failed to create tag: {}", e)),
+        Err(e) => return (false, format!("failed to create tag: {e}")),
     };
 
     if !success {
@@ -559,14 +556,14 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
         if stderr.contains("already exists") {
             return (true, "tag already exists".to_string());
         }
-        return (false, format!("failed to create tag: {}", stderr));
+        return (false, format!("failed to create tag: {stderr}"));
     }
 
     // Push the tag
     let push_result = run_git(path, &["push", "origin", tag_name]).await;
 
     match push_result {
-        Ok((true, _, _)) => (true, format!("tagged & pushed {}", tag_name)),
+        Ok((true, _, _)) => (true, format!("tagged & pushed {tag_name}")),
         Ok((false, _, stderr)) => {
             // Tag was created but push failed - that's okay, we'll leave the local tag
             (
@@ -578,7 +575,7 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
                 ),
             )
         }
-        Err(e) => (true, format!("tagged {} (push failed: {})", tag_name, e)),
+        Err(e) => (true, format!("tagged {tag_name} (push failed: {e})")),
     }
 }
 
@@ -592,7 +589,7 @@ pub struct PullFetchResult {
 }
 
 /// Phase 1: Fetch and analyze repository state for pull (read-only, can be highly concurrent)
-/// Returns PullFetchResult with repository state after fetching
+/// Returns `PullFetchResult` with repository state after fetching
 pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     use crate::core::clean_error_message;
 
@@ -655,7 +652,7 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     if let Err(e) = run_git(path, GIT_FETCH_ARGS).await {
         let error_message = clean_error_message(&e.to_string());
         let final_message = if is_rate_limit_error(&error_message) {
-            format!("⚠️ RATE LIMIT: {}", error_message)
+            format!("⚠️ RATE LIMIT: {error_message}")
         } else {
             error_message
         };
@@ -701,8 +698,7 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
             behind_count,
             status: Status::PullError,
             message: format!(
-                "diverged: {} ahead, {} behind (manual merge required)",
-                ahead_count, behind_count
+                "diverged: {ahead_count} ahead, {behind_count} behind (manual merge required)"
             ),
         };
     }
@@ -719,13 +715,13 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
             has_uncommitted,
             behind_count,
             status: Status::Synced, // Will be pulled in phase 2
-            message: format!("{} commits behind", behind_count),
+            message: format!("{behind_count} commits behind"),
         }
     }
 }
 
 /// Phase 2: Pull repository if needed (write operation, moderate concurrency)
-/// Returns (status, message, has_uncommitted_changes)
+/// Returns (status, message, `has_uncommitted_changes`)
 pub async fn pull_if_needed(
     path: &Path,
     fetch_result: &PullFetchResult,
@@ -789,14 +785,14 @@ pub async fn pull_if_needed(
 
             // Check for common pull errors
             let final_message = if error_message.to_lowercase().contains("conflict") {
-                format!("merge conflict: {}", error_message)
+                format!("merge conflict: {error_message}")
             } else if error_message
                 .to_lowercase()
                 .contains("would be overwritten")
             {
-                format!("uncommitted changes conflict: {}", error_message)
+                format!("uncommitted changes conflict: {error_message}")
             } else if is_rate_limit_error(&error_message) {
-                format!("⚠️ RATE LIMIT: {}", error_message)
+                format!("⚠️ RATE LIMIT: {error_message}")
             } else {
                 error_message
             };
@@ -809,7 +805,7 @@ pub async fn pull_if_needed(
         Err(e) => {
             let error_message = clean_error_message(&e.to_string());
             let final_message = if is_rate_limit_error(&error_message) {
-                format!("⚠️ RATE LIMIT: {}", error_message)
+                format!("⚠️ RATE LIMIT: {error_message}")
             } else {
                 error_message
             };
@@ -841,7 +837,7 @@ fn get_visibility_cache() -> &'static DashMap<PathBuf, RepoVisibility> {
 }
 
 /// Detects repository visibility using gh CLI with in-memory caching
-/// Returns RepoVisibility (defaults to Unknown if gh is not available or repo is not on GitHub)
+/// Returns `RepoVisibility` (defaults to Unknown if gh is not available or repo is not on GitHub)
 /// Results are cached in-memory for the lifetime of the program to avoid repeated gh CLI calls
 pub async fn get_repo_visibility(path: &Path) -> RepoVisibility {
     let path_buf = path.to_path_buf();

@@ -72,7 +72,7 @@ pub async fn publish(repo_path: &Path, dry_run: bool) -> (bool, String) {
                 (false, error_message)
             }
         }
-        Ok(Err(e)) => (false, format!("npm command failed: {}", e)),
+        Ok(Err(e)) => (false, format!("npm command failed: {e}")),
         Err(_) => (false, "npm operation timed out".to_string()),
     }
 }
@@ -92,8 +92,6 @@ fn clean_npm_error(error: &str) -> String {
         // Return first line of error, cleaned up
         error
             .lines()
-            .find(|line| !line.trim().is_empty() && line.contains("npm ERR!"))
-            .map(|line| line.replace("npm ERR!", "").trim().to_string())
-            .unwrap_or_else(|| error.trim().to_string())
+            .find(|line| !line.trim().is_empty() && line.contains("npm ERR!")).map_or_else(|| error.trim().to_string(), |line| line.replace("npm ERR!", "").trim().to_string())
     }
 }

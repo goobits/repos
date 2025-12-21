@@ -110,7 +110,7 @@ enum Commands {
         #[arg(long)]
         include_empty: bool,
     },
-    /// Publish packages to their registries (npm, cargo, PyPI)
+    /// Publish packages to their registries (npm, cargo, `PyPI`)
     Publish {
         /// Specific repositories to publish (by name)
         repos: Vec<String>,
@@ -135,7 +135,7 @@ enum Commands {
     },
     /// Audit repositories for security vulnerabilities and secrets
     Audit {
-        /// Install required tools (TruffleHog) without prompting
+        /// Install required tools (`TruffleHog`) without prompting
         #[arg(long)]
         install_tools: bool,
         /// Verify discovered secrets are active and fail on findings
