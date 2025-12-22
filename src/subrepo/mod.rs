@@ -1,4 +1,8 @@
-//! Subrepo detection and analysis module
+//! Subrepo detection and analysis module.
+//!
+//! This module provides tools for finding and managing Git repositories nested
+//! within other Git repositories (subrepos). It can detect drift between
+//! subrepos that share the same remote URL.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -9,22 +13,32 @@ pub mod status;
 pub mod sync;
 pub mod validation;
 
-/// Represents a single instance of a nested repository
+/// Represents a single instance of a nested repository.
 #[derive(Debug, Clone)]
 pub struct SubrepoInstance {
+    /// Name of the parent repository.
     pub parent_repo: String,
     #[allow(dead_code)]
     pub parent_path: PathBuf,
+    /// Name of the subrepo (usually the directory name).
     pub subrepo_name: String,
+    /// Absolute path to the subrepo.
     pub subrepo_path: PathBuf,
+    /// Relative path from parent root.
     #[allow(dead_code)]
     pub relative_path: String,
+    /// Full commit hash.
     pub commit_hash: String,
+    /// Short 7-character commit hash.
     pub short_hash: String,
+    /// Remote origin URL, if available.
     pub remote_url: Option<String>,
+    /// Whether there are uncommitted changes in the subrepo.
     pub has_uncommitted: bool,
-    pub commit_timestamp: i64, // Unix timestamp for sorting by date
+    /// Unix timestamp of the current commit.
+    pub commit_timestamp: i64, 
 }
+
 
 /// Summary of discovered subrepos grouped by remote URL
 #[derive(Debug)]

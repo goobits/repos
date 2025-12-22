@@ -1,4 +1,7 @@
 //! Package management and publishing functionality
+//!
+//! This module provides an extensible system for detecting and publishing packages
+//! across different ecosystems (npm, Cargo, PyPI).
 
 pub mod cargo;
 pub mod npm;
@@ -8,33 +11,42 @@ use std::path::Path;
 use std::sync::Arc;
 use async_trait::async_trait;
 
-/// Trait for package managers to implement
+/// Trait for package managers to implement.
+///
+/// Implementors can define how to detect their package type, how to extract
+/// version information, and how to perform the actual publishing operation.
 #[async_trait]
 pub trait PackageManager: Send + Sync {
-    /// Returns the display name for this package manager
+    /// Returns the display name for this package manager (e.g., "npm", "cargo").
     fn name(&self) -> &str;
     
-    /// Returns the emoji icon for this package manager
+    /// Returns the emoji icon for this package manager.
     fn icon(&self) -> &str;
     
-    /// Detects if this package manager manages the given repository
+    /// Detects if this package manager manages the repository at the given path.
     async fn detect(&self, path: &Path) -> bool;
     
-    /// Gets package information from the repository
+    /// Gets package information (name, version) from the repository.
     async fn get_info(&self, path: &Path) -> Option<PackageInfo>;
     
-    /// Publishes the package
+    /// Publishes the package to its respective registry.
+    ///
+    /// Returns `(success, message)`.
     async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String);
 }
 
-/// Information about a detected package
+/// Information about a detected package.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct PackageInfo {
+    /// The name of the package manager that detected this package.
     pub manager_name: String,
+    /// The name of the package as defined in its manifest.
     pub name: String,
+    /// The version of the package.
     pub version: String,
 }
+
 
 /// Returns a list of all supported package managers
 pub fn get_all_managers() -> Vec<Arc<dyn PackageManager>> {

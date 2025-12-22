@@ -3,10 +3,20 @@
 //! This module provides the stable public API for git-related functionality:
 //! - Repository status checking and pushing
 //! - User configuration management
-//! - Git command execution
-//! - Tag creation and publishing
+//! - Tag creation
 //!
-//! Internal staging operations remain internal (pub(crate)) for command modules.
+//! ## Example: Checking for changes
+//!
+//! ```rust,no_run
+//! use goobits_repos::git::has_uncommitted_changes;
+//! use std::path::Path;
+//!
+//! async fn check(path: &Path) {
+//!     if has_uncommitted_changes(path).await {
+//!         println!("Repository has changes");
+//!     }
+//! }
+//! ```
 
 // Core operations
 pub use super::operations::RepoVisibility;
@@ -27,6 +37,7 @@ pub use super::operations::{
     commit_changes, create_and_push_tag, get_repo_visibility, get_staging_status,
     has_staged_changes, has_uncommitted_changes, stage_files, unstage_files,
 };
+
 
 // LFS functions - used internally by push_if_needed, exported for integration tests
 #[allow(unused_imports)]

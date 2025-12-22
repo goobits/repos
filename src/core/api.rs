@@ -2,11 +2,18 @@
 //!
 //! This module provides the stable public API for core functionality including:
 //! - Repository discovery
-//! - Processing context management
+//! - Processing context management for progress tracking
 //! - Statistics tracking
-//! - Configuration utilities
 //!
-//! Internal implementation details are not exposed through this API.
+//! ## Repository Discovery
+//!
+//! The core discovery logic uses parallel directory walking to find Git repositories
+//! efficiently even in very large directory trees.
+//!
+//! ```rust,no_run
+//! use goobits_repos::core::find_repos_from_path;
+//! let repos = find_repos_from_path("/path/to/search");
+//! ```
 
 // Core types
 pub use super::progress::{
@@ -15,10 +22,15 @@ pub use super::progress::{
 };
 pub use super::stats::SyncStatistics;
 
-// Discovery
+/// Searches for Git repositories from a specific path.
+///
+/// Returns a vector of `(repository_name, path)` tuples.
 #[allow(unused_imports)] // Used by integration tests
 pub use super::discovery::find_repos_from_path;
+
+/// Common initialization for commands that scan repositories.
 pub use super::discovery::init_command;
+
 
 // Configuration
 pub use super::config::GIT_CONCURRENT_CAP;

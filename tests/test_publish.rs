@@ -7,6 +7,7 @@ use common::{is_git_available, TestRepoBuilder};
 
 #[tokio::test]
 async fn test_publish_dry_run_cargo() {
+    let _lock = common::lock_test();
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -52,6 +53,7 @@ version = "0.1.0"
 
 #[tokio::test]
 async fn test_publish_dry_run_npm() {
+    let _lock = common::lock_test();
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;

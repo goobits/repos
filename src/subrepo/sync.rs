@@ -68,6 +68,7 @@ fn stash_changes(path: &Path) -> Result<()> {
             path_to_str(path)?,
             "stash",
             "push",
+            "--include-untracked",
             "-m",
             "repos-subrepo-sync: auto-stash",
         ])

@@ -46,41 +46,83 @@ const STATUS_SYNCED: &str = "up to date";
 /// Includes a 180-second timeout to prevent hanging on network operations.
 #[doc(hidden)]
 pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String)> {
-    let timeout_duration = Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS);
+    let mut last_error = None;
+    let max_retries = if is_network_operation(args) { 3 } else { 1 };
+    
+    for attempt in 1..=max_retries {
+        let timeout_duration = Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS);
 
-    let result = tokio::time::timeout(
-        timeout_duration,
-        Command::new("git").args(args).current_dir(path).output(),
-    )
-    .await;
+        let result = tokio::time::timeout(
+            timeout_duration,
+            Command::new("git").args(args).current_dir(path).output(),
+        )
+        .await;
 
-    match result {
-        Ok(Ok(output)) => {
-            // Optimize string allocations: only allocate if non-empty (5-10% faster)
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stdout_trimmed = stdout.trim();
-            let stdout_string = if stdout_trimmed.is_empty() {
-                String::new() // No heap allocation for empty strings
-            } else {
-                stdout_trimmed.to_string()
-            };
+        match result {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stdout_trimmed = stdout.trim();
+                let stdout_string = if stdout_trimmed.is_empty() {
+                    String::new()
+                } else {
+                    stdout_trimmed.to_string()
+                };
 
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr_trimmed = stderr.trim();
-            let stderr_string = if stderr_trimmed.is_empty() {
-                String::new() // No heap allocation for empty strings
-            } else {
-                stderr_trimmed.to_string()
-            };
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stderr_trimmed = stderr.trim();
+                let stderr_string = if stderr_trimmed.is_empty() {
+                    String::new()
+                } else {
+                    stderr_trimmed.to_string()
+                };
 
-            Ok((output.status.success(), stdout_string, stderr_string))
+                // If success or not a network error, return immediately
+                if output.status.success() || !is_transient_network_error(&stderr_string) {
+                    return Ok((output.status.success(), stdout_string, stderr_string));
+                }
+                
+                last_error = Some(anyhow::anyhow!("Git command failed: {}", stderr_string));
+            }
+            Ok(Err(e)) => {
+                if attempt == max_retries {
+                    return Err(e.into());
+                }
+                last_error = Some(e.into());
+            }
+            Err(_) => {
+                if attempt == max_retries {
+                    return Err(anyhow::anyhow!(
+                        "Git operation timed out after {GIT_OPERATION_TIMEOUT_SECS} seconds"
+                    ));
+                }
+                last_error = Some(anyhow::anyhow!("Git operation timed out"));
+            }
         }
-        Ok(Err(e)) => Err(e.into()),
-        Err(_) => Err(anyhow::anyhow!(
-            "Git operation timed out after {GIT_OPERATION_TIMEOUT_SECS} seconds"
-        )),
+        
+        // Wait before retrying
+        if attempt < max_retries {
+            tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
+        }
     }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error during git operation")))
 }
+
+/// Helper to determine if an operation involves network
+fn is_network_operation(args: &[&str]) -> bool {
+    args.iter().any(|&arg| arg == "push" || arg == "pull" || arg == "fetch" || arg == "clone" || arg == "ls-remote")
+}
+
+/// Helper to detect transient network errors that might succeed on retry
+fn is_transient_network_error(stderr: &str) -> bool {
+    let err = stderr.to_lowercase();
+    err.contains("could not resolve host") || 
+    err.contains("connection reset") || 
+    err.contains("network is unreachable") ||
+    err.contains("operation timed out") ||
+    err.contains("temporary failure")
+}
+
 
 /// Reads a git config value from the specified repository
 /// Returns the config value if it exists, None if not found

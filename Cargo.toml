@@ -12,6 +12,7 @@ repository = "https://github.com/goobits/repos"
 homepage = "https://github.com/goobits/repos"
 
 [dev-dependencies]
+criterion = "0.8.1"
 tempfile = "3.23"
 
 [dependencies]
@@ -55,6 +56,10 @@ async-trait = "0.1.89"
 name = "repos"
 path = "src/main.rs"
 doc = false  # Don't include binary in documentation
+
+[[bench]]
+name = "benchmark"
+harness = false
 
 [lib]
 name = "goobits_repos"
