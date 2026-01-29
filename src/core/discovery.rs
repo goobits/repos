@@ -184,14 +184,19 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
 
 /// Common initialization for commands that scan repositories
 #[must_use] 
-pub fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, PathBuf)>) {
+pub async fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, PathBuf)>) {
     println!();
     print!("{scanning_msg}");
     // Flush stdout - ignore errors as this is non-critical
     let _ = std::io::stdout().flush();
 
     let start_time = std::time::Instant::now();
-    let repos = find_repos();
+    let repos = tokio::task::spawn_blocking(find_repos)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Error in repository discovery: {e}");
+            Vec::new()
+        });
 
     (start_time, repos)
 }
