@@ -27,7 +27,7 @@ pub async fn handle_push_command(
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE);
+    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
@@ -366,7 +366,7 @@ pub async fn handle_pull_command(
     // Set terminal title to indicate repos is running
     set_terminal_title("🔽 repos");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE);
+    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");

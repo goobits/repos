@@ -227,7 +227,7 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
         args
     };
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE);
+    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");

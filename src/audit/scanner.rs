@@ -190,7 +190,7 @@ pub async fn run_truffle_scan(
     json: bool,
     target_repos: Option<Vec<String>>,
 ) -> Result<(TruffleStatistics, HygieneStatistics)> {
-    let (start_time, repos) = tokio::task::spawn_blocking(|| init_command(SCANNING_MESSAGE)).await?;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
