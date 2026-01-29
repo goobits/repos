@@ -2,6 +2,7 @@
 pub(crate) mod config;
 pub(crate) mod discovery;
 pub(crate) mod progress;
+pub(crate) mod sync;
 pub(crate) mod stats;
 
 // Test modules
