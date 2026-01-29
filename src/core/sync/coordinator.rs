@@ -68,6 +68,14 @@ impl SyncCoordinator {
         (stop_tx, handle)
     }
 
+    pub fn render_final(&self) {
+        if let (Ok(state_guard), Ok(stats_guard)) = (self.state.lock(), self.stats.lock()) {
+            let hud = self.renderer.render(&state_guard, &stats_guard);
+            print!("\x1b[2J\x1b[H{hud}");
+            let _ = std::io::stdout().flush();
+        }
+    }
+
     pub fn set_stage(&self, repo_name: &str, stage: Stage, op: &str) {
         if let Ok(mut guard) = self.state.lock() {
             guard.set_stage(repo_name, stage, op);

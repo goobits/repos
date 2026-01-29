@@ -357,6 +357,9 @@ async fn process_push_repositories(
 
     while pipeline_futures.next().await.is_some() {}
 
+    if let Some(coordinator) = coordinator.as_ref() {
+        coordinator.render_final();
+    }
     if let Some(stop_tx) = hud_stop_tx {
         let _ = stop_tx.send(true);
     }
@@ -759,6 +762,9 @@ async fn process_pull_repositories(
 
     while pipeline_futures.next().await.is_some() {}
 
+    if let Some(coordinator) = coordinator.as_ref() {
+        coordinator.render_final();
+    }
     if let Some(stop_tx) = hud_stop_tx {
         let _ = stop_tx.send(true);
     }
