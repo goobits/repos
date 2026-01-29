@@ -1,12 +1,12 @@
 //! Repository hygiene checking for detecting improperly committed files
 
+pub mod report;
 pub mod rules;
 pub mod scanner;
-pub mod report;
 
-use std::sync::Arc;
-use futures::stream::{FuturesUnordered, StreamExt};
 use crate::core::{create_progress_bar, GenericProcessingContext};
+use futures::stream::{FuturesUnordered, StreamExt};
+use std::sync::Arc;
 
 // Re-export key types and functions
 pub use report::{HygieneStatistics, HygieneViolation, ViolationType};
@@ -65,7 +65,7 @@ pub async fn process_hygiene_repositories(context: GenericProcessingContext<Hygi
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let (status, message, violations) = check_repo_hygiene(&repo_path).await;
+            let (status, message, violations) = check_repo_hygiene(repo_path).await;
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
@@ -79,7 +79,7 @@ pub async fn process_hygiene_repositories(context: GenericProcessingContext<Hygi
             // Update statistics
             let mut stats_guard = stats_clone.lock().expect("Failed to acquire stats lock");
             let repo_path_str = repo_path.to_string_lossy();
-            stats_guard.update(&repo_name, &repo_path_str, &status, &message, violations);
+            stats_guard.update(repo_name, &repo_path_str, &status, &message, violations);
 
             // Update the footer summary after each repository completes
             let duration = start_time.elapsed();

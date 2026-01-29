@@ -42,20 +42,20 @@ pub async fn handle_stage_command(pattern: String) -> Result<()> {
     } else {
         "repositories"
     };
-    print!(
-        "\r🚀 Staging {pattern} in {total_repos} {repo_word}                    \n"
-    );
+    print!("\r🚀 Staging {pattern} in {total_repos} {repo_word}                    \n");
     println!();
 
     // Create processing context
-    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
-        Ok(context) => context,
-        Err(e) => {
-            // If context creation fails, set completion title and return error
-            set_terminal_title_and_flush("✅ repos stage");
-            return Err(e);
-        }
-    };
+    let context =
+        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
+        {
+            Ok(context) => context,
+            Err(e) => {
+                // If context creation fails, set completion title and return error
+                set_terminal_title_and_flush("✅ repos stage");
+                return Err(e);
+            }
+        };
 
     // Process all repositories concurrently
     process_staging_repositories(context, pattern, true).await;
@@ -86,20 +86,20 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
     } else {
         "repositories"
     };
-    print!(
-        "\r🚀 Unstaging {pattern} in {total_repos} {repo_word}                    \n"
-    );
+    print!("\r🚀 Unstaging {pattern} in {total_repos} {repo_word}                    \n");
     println!();
 
     // Create processing context
-    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
-        Ok(context) => context,
-        Err(e) => {
-            // If context creation fails, set completion title and return error
-            set_terminal_title_and_flush("✅ repos unstage");
-            return Err(e);
-        }
-    };
+    let context =
+        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
+        {
+            Ok(context) => context,
+            Err(e) => {
+                // If context creation fails, set completion title and return error
+                set_terminal_title_and_flush("✅ repos unstage");
+                return Err(e);
+            }
+        };
 
     // Process all repositories concurrently
     process_staging_repositories(context, pattern, false).await;
@@ -130,20 +130,20 @@ pub async fn handle_staging_status_command() -> Result<()> {
     } else {
         "repositories"
     };
-    print!(
-        "\r🚀 Checking status of {total_repos} {repo_word}                    \n"
-    );
+    print!("\r🚀 Checking status of {total_repos} {repo_word}                    \n");
     println!();
 
     // Create processing context
-    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
-        Ok(context) => context,
-        Err(e) => {
-            // If context creation fails, set completion title and return error
-            set_terminal_title_and_flush("✅ repos status");
-            return Err(e);
-        }
-    };
+    let context =
+        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
+        {
+            Ok(context) => context,
+            Err(e) => {
+                // If context creation fails, set completion title and return error
+                set_terminal_title_and_flush("✅ repos status");
+                return Err(e);
+            }
+        };
 
     // Process all repositories concurrently for status
     process_status_repositories(context).await;
@@ -211,9 +211,9 @@ async fn process_staging_repositories(
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
             let (status, message) = if is_staging {
-                perform_staging_operation(&repo_path, &pattern_clone).await
+                perform_staging_operation(repo_path, &pattern_clone).await
             } else {
-                perform_unstaging_operation(&repo_path, &pattern_clone).await
+                perform_unstaging_operation(repo_path, &pattern_clone).await
             };
 
             progress_bar.set_prefix(format!(
@@ -229,7 +229,7 @@ async fn process_staging_repositories(
             let stats_guard = acquire_stats_lock(&stats_clone);
             let repo_path_str = repo_path.to_string_lossy();
             stats_guard.update(
-                &repo_name,
+                repo_name,
                 &repo_path_str,
                 &status,
                 &message,
@@ -294,7 +294,7 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let status_result = get_staging_status(&repo_path).await;
+            let status_result = get_staging_status(repo_path).await;
             let (status, message) = match status_result {
                 Ok((stdout, _)) => {
                     if stdout.trim().is_empty() {
@@ -379,20 +379,20 @@ pub async fn handle_commit_command(message: String, include_empty: bool) -> Resu
     } else {
         "repositories"
     };
-    print!(
-        "\r🚀 Committing changes in {total_repos} {repo_word}                    \n"
-    );
+    print!("\r🚀 Committing changes in {total_repos} {repo_word}                    \n");
     println!();
 
     // Create processing context
-    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
-        Ok(context) => context,
-        Err(e) => {
-            // If context creation fails, set completion title and return error
-            set_terminal_title_and_flush("✅ repos commit");
-            return Err(e);
-        }
-    };
+    let context =
+        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
+        {
+            Ok(context) => context,
+            Err(e) => {
+                // If context creation fails, set completion title and return error
+                set_terminal_title_and_flush("✅ repos commit");
+                return Err(e);
+            }
+        };
 
     // Process all repositories concurrently
     process_commit_repositories(context, message, include_empty).await;
@@ -455,7 +455,7 @@ async fn process_commit_repositories(
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
             let (status, message) =
-                perform_commit_operation(&repo_path, &message_clone, include_empty).await;
+                perform_commit_operation(repo_path, &message_clone, include_empty).await;
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
@@ -470,7 +470,7 @@ async fn process_commit_repositories(
             let stats_guard = acquire_stats_lock(&stats_clone);
             let repo_path_str = repo_path.to_string_lossy();
             stats_guard.update(
-                &repo_name,
+                repo_name,
                 &repo_path_str,
                 &status,
                 &message,

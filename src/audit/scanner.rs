@@ -43,7 +43,7 @@ pub struct TruffleStatistics {
 }
 
 impl TruffleStatistics {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -76,7 +76,7 @@ impl TruffleStatistics {
             .push((repo_name.to_string(), error.to_string()));
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn generate_summary(&self) -> String {
         let duration_secs = self.scan_duration.as_secs_f64();
 
@@ -176,7 +176,7 @@ pub struct AuditStatistics {
 }
 
 impl AuditStatistics {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -220,9 +220,7 @@ pub async fn run_truffle_scan(
     } else {
         "repositories"
     };
-    print!(
-        "\r🔍 Auditing {total_repos} {repo_word}                    \n"
-    );
+    print!("\r🔍 Auditing {total_repos} {repo_word}                    \n");
     println!();
 
     // Install TruffleHog if requested and not already installed
@@ -333,7 +331,7 @@ async fn run_truffle_scanning(
             pb.set_message("scanning secrets...");
 
             // Run TruffleHog scan
-            match scan_repository_secrets(&repo_path, verify).await {
+            match scan_repository_secrets(repo_path, verify).await {
                 Ok(secrets) => {
                     let status_symbol = if secrets.iter().any(|s| s.verified) {
                         "🔴" // Verified secrets found
@@ -354,15 +352,13 @@ async fn run_truffle_scanning(
                         }
                     };
 
-                    pb.set_prefix(format!(
-                        "{status_symbol} {repo_name:max_name_length$}"
-                    ));
+                    pb.set_prefix(format!("{status_symbol} {repo_name:max_name_length$}"));
                     pb.set_message(message);
                     pb.finish();
 
                     // Update statistics
                     let mut stats = stats_clone.lock().expect("Failed to acquire stats lock");
-                    stats.add_repo_result(&repo_name, &secrets);
+                    stats.add_repo_result(repo_name, &secrets);
                 }
                 Err(e) => {
                     pb.set_prefix(format!("🟠 {repo_name:max_name_length$}"));
@@ -371,7 +367,7 @@ async fn run_truffle_scanning(
 
                     // Update statistics with failure
                     let mut stats = stats_clone.lock().expect("Failed to acquire stats lock");
-                    stats.add_repo_failure(&repo_name, &e.to_string());
+                    stats.add_repo_failure(repo_name, &e.to_string());
                 }
             }
         };
@@ -577,9 +573,7 @@ async fn install_trufflehog_direct() -> Result<()> {
 
     if !download_output.status.success() {
         let stderr = String::from_utf8_lossy(&download_output.stderr);
-        return Err(anyhow!(
-            "Failed to download TruffleHog installer: {stderr}"
-        ));
+        return Err(anyhow!("Failed to download TruffleHog installer: {stderr}"));
     }
 
     println!("✅ Download complete, verifying checksum...");

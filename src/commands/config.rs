@@ -274,13 +274,15 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
-        Ok(context) => context,
-        Err(e) => {
-            set_terminal_title_and_flush("✅ repos");
-            return Err(e);
-        }
-    };
+    let context =
+        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
+        {
+            Ok(context) => context,
+            Err(e) => {
+                set_terminal_title_and_flush("✅ repos");
+                return Err(e);
+            }
+        };
 
     // Process all repositories concurrently for config sync
     process_config_repositories(context, resolved_args.command, target_config).await;
@@ -353,8 +355,8 @@ async fn process_config_repositories(
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
             let (status, message) = check_repo_config(
-                &repo_path,
-                &repo_name,
+                repo_path,
+                repo_name,
                 &target_config_clone,
                 &command_clone,
                 Some(&*prompt_clone),
@@ -373,7 +375,7 @@ async fn process_config_repositories(
             // Update statistics
             let stats_guard = acquire_stats_lock(&stats_clone);
             let repo_path_str = repo_path.to_string_lossy();
-            stats_guard.update(&repo_name, &repo_path_str, &status, &message, false);
+            stats_guard.update(repo_name, &repo_path_str, &status, &message, false);
 
             // Update the footer summary after each repository completes
             let duration = start_time.elapsed();

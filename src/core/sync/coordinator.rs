@@ -1,7 +1,7 @@
 //! Shared coordinator for sync events and HUD rendering.
 
 use crate::core::sync::renderer::HudRenderer;
-use crate::core::sync::state::{Stage, SyncMode, SyncState};
+use crate::core::sync::state::{Stage, SyncState};
 use crate::core::SyncStatistics;
 use crate::git::Status;
 use std::io::Write;
@@ -17,7 +17,6 @@ pub struct SyncCoordinator {
 
 impl SyncCoordinator {
     pub fn new(
-        mode: SyncMode,
         repo_names: &[String],
         total_repos: usize,
         fetch_concurrency: usize,
@@ -25,13 +24,12 @@ impl SyncCoordinator {
         stats: Arc<Mutex<SyncStatistics>>,
     ) -> Self {
         let state = SyncState::new(
-            mode,
             repo_names,
             total_repos,
             fetch_concurrency,
             update_concurrency,
         );
-        let renderer = HudRenderer::new(mode);
+        let renderer = HudRenderer::new();
         Self {
             state: Arc::new(Mutex::new(state)),
             stats,

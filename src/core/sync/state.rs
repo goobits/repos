@@ -5,12 +5,6 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SyncMode {
-    Pull,
-    Push,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     Queued,
     Checking,
@@ -43,7 +37,6 @@ impl RepoState {
 }
 
 pub struct SyncState {
-    pub mode: SyncMode,
     pub repos: HashMap<String, RepoState>,
     pub total_repos: usize,
     pub start_time: Instant,
@@ -53,7 +46,6 @@ pub struct SyncState {
 
 impl SyncState {
     pub fn new(
-        mode: SyncMode,
         repo_names: &[String],
         total_repos: usize,
         fetch_concurrency: usize,
@@ -65,7 +57,6 @@ impl SyncState {
             .map(|name| (name.clone(), RepoState::new(now)))
             .collect();
         Self {
-            mode,
             repos,
             total_repos,
             start_time: now,

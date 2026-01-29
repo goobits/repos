@@ -1,22 +1,21 @@
 //! HUD renderer for sync operations.
 
 use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
-use crate::core::sync::state::{Stage, SyncMode, SyncState};
+use crate::core::sync::state::{Stage, SyncState};
 use crate::core::SyncStatistics;
 use crate::git::Status;
 use std::time::{Duration, Instant};
 
 const STALL_THRESHOLD_SECS: u64 = 120;
-const BAR_WIDTH: usize = 20;
+const BAR_WIDTH: usize = 28;
+const PILL_WIDTH: usize = 12;
 
 #[derive(Clone)]
-pub struct HudRenderer {
-    mode: SyncMode,
-}
+pub struct HudRenderer;
 
 impl HudRenderer {
-    pub fn new(mode: SyncMode) -> Self {
-        Self { mode }
+    pub fn new() -> Self {
+        Self
     }
 
     pub fn render(&self, state: &SyncState, _stats: &SyncStatistics) -> String {
@@ -24,7 +23,7 @@ impl HudRenderer {
         let total = state.total_repos.max(1);
         let done = count_stage(state, Stage::Done);
         let percent = (done.saturating_mul(100)) / total;
-        let activity_bar = render_bar(percent);
+        let activity_bar = render_progress_bar(percent);
 
         let checking = count_stage(state, Stage::Checking);
         let updating = count_stage(state, Stage::Updating);
@@ -41,70 +40,64 @@ impl HudRenderer {
         let eta = estimate_eta(state, done, total, now);
         let rate = rate_per_sec(state, done, now);
 
-        let mode_label = match self.mode {
-            SyncMode::Pull => "[PULL]",
-            SyncMode::Push => "[PUSH]",
-        };
-
         let mut lines = Vec::new();
+        lines.push(format!("  🔄  Syncing {} Repositories", state.total_repos));
+        lines.push(
+            "  ───────────────────────────────────────────────────────────────────────────"
+                .to_string(),
+        );
+        lines.push(format!("  {}%  {}  ETA {}", percent, activity_bar, eta));
+        lines.push(String::new());
         lines.push(format!(
-            "  🔄  Syncing {} Repositories — {}",
-            state.total_repos, mode_label
-        ));
-        lines.push("  ───────────────────────────────────────────────────────────────────────────".to_string());
-        lines.push(format!(
-            "  ACTIVITY    [{}]  {}%",
-            activity_bar, percent
-        ));
-        lines.push(format!(
-            "  CAPACITY    📡 {} Scanning  •  📤 {} Uploading  •  📥 {} Writing  •  ⏳ {} Pending",
-            checking,
-            if self.mode == SyncMode::Push { updating } else { 0 },
-            if self.mode == SyncMode::Pull { updating } else { 0 },
-            pending
+            "       Scan {}  Update {}  Wait {}",
+            render_pill_bar(checking, state.fetch_concurrency),
+            render_pill_bar(updating, state.update_concurrency),
+            render_wait_bar(pending, state.total_repos),
         ));
 
         lines.push(String::new());
-        lines.push("  ──  CRITICAL SIGNALS  ─────────────────────────────────────────────────────".to_string());
+        lines.push(
+            "  ──  ACTIVITY  ─────────────────────────────────────────────────────────────"
+                .to_string(),
+        );
         if let Some(signal) = stalled.first() {
+            lines.push(format!("  🟠  Stalled   {}", signal.repo));
             lines.push(format!(
-                "  🟠  STALLED   {} ({})",
-                signal.repo, signal.phase
-            ));
-            lines.push(format!(
-                "                └─ {} idle  •  {}",
+                "                └─ {} idle • {}",
                 format_duration(signal.idle),
                 signal.last_op
             ));
-        } else {
-            lines.push("  🟢  STALLED   none".to_string());
         }
-
         if let Some(held_signal) = held.first() {
+            lines.push(format!("  🔵  Waiting   {}", held_signal.repo));
             lines.push(format!(
-                "  🔵  HELD      {} ({})",
-                held_signal.repo, held_signal.phase
-            ));
-            lines.push(format!(
-                "                └─ {} waiting  •  {}",
+                "                └─ {} in queue • {}",
                 format_duration(held_signal.idle),
                 held_signal.last_op
             ));
-        } else {
-            lines.push("  🔵  HELD      none".to_string());
+        }
+        if stalled.is_empty() && held.is_empty() {
+            lines.push("  🟢  All processes nominal".to_string());
         }
 
         lines.push(String::new());
-        lines.push("  ──  INVENTORY  ────────────────────────────────────────────────────────────".to_string());
+        lines.push(
+            "  ──  HEALTH  ───────────────────────────────────────────────────────────────"
+                .to_string(),
+        );
         lines.push(format!(
             "  🟢 {} Identical   📤 {} Pushed   📥 {} Pulled   🐢 {} Latent   🔴 {} Errored",
             identical, pushed, pulled, latent, errored
         ));
 
-        lines.push("  ───────────────────────────────────────────────────────────────────────────".to_string());
+        lines.push(
+            "  ───────────────────────────────────────────────────────────────────────────"
+                .to_string(),
+        );
         lines.push(format!(
-            "  ETA {}  •  {:.2} r/s",
-            eta, rate
+            "  {:.2} r/s  •  v{}",
+            rate,
+            env!("CARGO_PKG_VERSION")
         ));
 
         lines.join("\n")
@@ -113,7 +106,6 @@ impl HudRenderer {
 
 struct Signal {
     repo: String,
-    phase: String,
     idle: Duration,
     last_op: String,
 }
@@ -169,7 +161,6 @@ fn collect_stalled(state: &SyncState, now: Instant) -> Vec<Signal> {
         if is_active && idle.as_secs() >= STALL_THRESHOLD_SECS {
             stalled.push(Signal {
                 repo: name.clone(),
-                phase: stage_label(repo.stage),
                 idle,
                 last_op: repo.last_op.clone(),
             });
@@ -186,7 +177,6 @@ fn collect_waiting(state: &SyncState, now: Instant) -> Vec<Signal> {
             let idle = now.duration_since(repo.last_update);
             waiting.push(Signal {
                 repo: name.clone(),
-                phase: stage_label(repo.stage),
                 idle,
                 last_op: repo.last_op.clone(),
             });
@@ -196,24 +186,33 @@ fn collect_waiting(state: &SyncState, now: Instant) -> Vec<Signal> {
     waiting
 }
 
-fn stage_label(stage: Stage) -> String {
-    match stage {
-        Stage::Queued => "queued",
-        Stage::Checking => "scanning",
-        Stage::Waiting => "waiting",
-        Stage::Updating => "updating",
-        Stage::Done => "done",
+fn render_progress_bar(percent: usize) -> String {
+    let clamped = percent.min(100);
+    let dot_pos = (clamped * (BAR_WIDTH - 1)) / 100;
+    let mut chars = vec!['━'; BAR_WIDTH];
+    if let Some(slot) = chars.get_mut(dot_pos) {
+        *slot = '●';
     }
-    .to_string()
+    chars.into_iter().collect()
 }
 
-fn render_bar(percent: usize) -> String {
-    let filled = (percent * BAR_WIDTH) / 100;
-    let empty = BAR_WIDTH.saturating_sub(filled);
+fn render_pill_bar(active: usize, capacity: usize) -> String {
+    let cap = capacity.max(1);
+    let filled = ((active * PILL_WIDTH) / cap).min(PILL_WIDTH);
     format!(
-        "{}{}",
-        "|".repeat(filled),
-        " ".repeat(empty)
+        "[{}{}]",
+        "●".repeat(filled),
+        "○".repeat(PILL_WIDTH - filled)
+    )
+}
+
+fn render_wait_bar(pending: usize, total: usize) -> String {
+    let total = total.max(1);
+    let filled = ((pending * PILL_WIDTH) / total).min(PILL_WIDTH);
+    format!(
+        "[{}{}]",
+        "░".repeat(filled),
+        " ".repeat(PILL_WIDTH - filled)
     )
 }
 

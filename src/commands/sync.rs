@@ -5,11 +5,11 @@
 
 use anyhow::Result;
 
+use crate::core::sync::{Stage, SyncCoordinator};
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
     NO_REPOS_MESSAGE,
 };
-use crate::core::sync::{Stage, SyncCoordinator, SyncMode};
 use crate::git::Status;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -52,21 +52,20 @@ pub async fn handle_push_command(
         String::new()
     };
     if verbose {
-        print!(
-            "\r🚀 Pushing {total_repos} {repo_word}{concurrency_info}                    \n"
-        );
+        print!("\r🚀 Pushing {total_repos} {repo_word}{concurrency_info}                    \n");
         println!();
     }
 
     // Create processing context with configured concurrency
-    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, concurrent_limit) {
-        Ok(context) => context,
-        Err(e) => {
-            // If context creation fails, set completion title and return error
-            set_terminal_title_and_flush("✅ repos");
-            return Err(e);
-        }
-    };
+    let context =
+        match create_processing_context(std::sync::Arc::new(repos), start_time, concurrent_limit) {
+            Ok(context) => context,
+            Err(e) => {
+                // If context creation fails, set completion title and return error
+                set_terminal_title_and_flush("✅ repos");
+                return Err(e);
+            }
+        };
 
     // Process all repositories concurrently
     process_push_repositories(context, force_push, verbose, show_changes).await;
@@ -110,7 +109,6 @@ async fn process_push_repositories(
             .map(|(name, _)| name.clone())
             .collect();
         Some(std::sync::Arc::new(SyncCoordinator::new(
-            SyncMode::Push,
             &repo_names,
             context.total_repos,
             fetch_concurrency,
@@ -192,14 +190,12 @@ async fn process_push_repositories(
             let _fetch_permit = match fetch_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    eprintln!(
-                        "Error: Failed to acquire fetch permit for {repo_name}: {e}"
-                    );
+                    eprintln!("Error: Failed to acquire fetch permit for {repo_name}: {e}");
 
                     // Update statistics to track this failure
                     let stats_guard = acquire_stats_lock(&stats_clone);
                     stats_guard.update(
-                        &repo_name,
+                        repo_name,
                         &repo_path.to_string_lossy(),
                         &Status::Error,
                         &format!("semaphore error: {e}"),
@@ -215,7 +211,7 @@ async fn process_push_repositories(
                     }
                     if let Some(coordinator) = coordinator_clone.as_ref() {
                         coordinator.set_status(
-                            &repo_name,
+                            repo_name,
                             Status::Error,
                             &format!("semaphore error: {e}"),
                         );
@@ -224,26 +220,24 @@ async fn process_push_repositories(
                 }
             };
             if let Some(coordinator) = coordinator_clone.as_ref() {
-                coordinator.set_stage(&repo_name, Stage::Checking, "git fetch --quiet");
+                coordinator.set_stage(repo_name, Stage::Checking, "git fetch --quiet");
             }
-            let fetch_result = fetch_and_analyze(&repo_path, force_push).await;
+            let fetch_result = fetch_and_analyze(repo_path, force_push).await;
             drop(_fetch_permit); // Fetch permit released here
 
             // PHASE 2: Push with standard concurrency + rate limit protection
             if let Some(coordinator) = coordinator_clone.as_ref() {
-                coordinator.set_stage(&repo_name, Stage::Waiting, "waiting on upload slot");
+                coordinator.set_stage(repo_name, Stage::Waiting, "waiting on upload slot");
             }
             let _push_permit = match push_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    eprintln!(
-                        "Error: Failed to acquire push permit for {repo_name}: {e}"
-                    );
+                    eprintln!("Error: Failed to acquire push permit for {repo_name}: {e}");
 
                     // Update statistics to track this failure
                     let stats_guard = acquire_stats_lock(&stats_clone);
                     stats_guard.update(
-                        &repo_name,
+                        repo_name,
                         &repo_path.to_string_lossy(),
                         &Status::Error,
                         &format!("semaphore error: {e}"),
@@ -259,7 +253,7 @@ async fn process_push_repositories(
                     }
                     if let Some(coordinator) = coordinator_clone.as_ref() {
                         coordinator.set_status(
-                            &repo_name,
+                            repo_name,
                             Status::Error,
                             &format!("semaphore error: {e}"),
                         );
@@ -268,7 +262,7 @@ async fn process_push_repositories(
                 }
             };
             if let Some(coordinator) = coordinator_clone.as_ref() {
-                coordinator.set_stage(&repo_name, Stage::Updating, "git push");
+                coordinator.set_stage(repo_name, Stage::Updating, "git push");
             }
 
             // Attempt push with retry on rate limit
@@ -277,7 +271,7 @@ async fn process_push_repositories(
             let result = loop {
                 attempt += 1;
                 let (status, message, has_uncommitted) =
-                    push_if_needed(&repo_path, &fetch_result, force_push).await;
+                    push_if_needed(repo_path, &fetch_result, force_push).await;
 
                 // Check for rate limit error
                 if message.contains("⚠️ RATE LIMIT") {
@@ -328,15 +322,18 @@ async fn process_push_repositories(
                         repo_name,
                         width = max_name_length_clone
                     ));
-                    progress_bar
-                        .set_message(format!("{:<10}   {}", status.text(), display_message));
+                    progress_bar.set_message(format!(
+                        "{:<10}   {}",
+                        status.text(),
+                        display_message
+                    ));
                     progress_bar.finish();
                 }
             }
 
             let stats_guard = acquire_stats_lock(&stats_clone);
             stats_guard.update(
-                &repo_name,
+                repo_name,
                 &repo_path.to_string_lossy(),
                 &status,
                 &message,
@@ -352,7 +349,7 @@ async fn process_push_repositories(
             }
             drop(stats_guard);
             if let Some(coordinator) = coordinator_clone.as_ref() {
-                coordinator.set_status(&repo_name, status, &message);
+                coordinator.set_status(repo_name, status, &message);
             }
         };
         pipeline_futures.push(future);
@@ -445,14 +442,15 @@ pub async fn handle_pull_command(
     }
 
     // Create processing context with configured concurrency
-    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, concurrent_limit) {
-        Ok(context) => context,
-        Err(e) => {
-            // If context creation fails, set completion title and return error
-            set_terminal_title_and_flush("✅ repos");
-            return Err(e);
-        }
-    };
+    let context =
+        match create_processing_context(std::sync::Arc::new(repos), start_time, concurrent_limit) {
+            Ok(context) => context,
+            Err(e) => {
+                // If context creation fails, set completion title and return error
+                set_terminal_title_and_flush("✅ repos");
+                return Err(e);
+            }
+        };
 
     // Process all repositories concurrently
     process_pull_repositories(context, use_rebase, verbose, show_changes).await;
@@ -496,7 +494,6 @@ async fn process_pull_repositories(
             .map(|(name, _)| name.clone())
             .collect();
         Some(std::sync::Arc::new(SyncCoordinator::new(
-            SyncMode::Pull,
             &repo_names,
             context.total_repos,
             fetch_concurrency,
@@ -582,14 +579,12 @@ async fn process_pull_repositories(
             let _fetch_permit = match fetch_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    eprintln!(
-                        "Error: Failed to acquire fetch permit for {repo_name}: {e}"
-                    );
+                    eprintln!("Error: Failed to acquire fetch permit for {repo_name}: {e}");
 
                     // Update statistics to track this failure
                     let stats_guard = acquire_stats_lock(&stats_clone);
                     stats_guard.update(
-                        &repo_name,
+                        repo_name,
                         &repo_path.to_string_lossy(),
                         &Status::Error,
                         &format!("semaphore error: {e}"),
@@ -605,7 +600,7 @@ async fn process_pull_repositories(
                     }
                     if let Some(coordinator) = coordinator_clone.as_ref() {
                         coordinator.set_status(
-                            &repo_name,
+                            repo_name,
                             Status::Error,
                             &format!("semaphore error: {e}"),
                         );
@@ -614,26 +609,24 @@ async fn process_pull_repositories(
                 }
             };
             if let Some(coordinator) = coordinator_clone.as_ref() {
-                coordinator.set_stage(&repo_name, Stage::Checking, "git fetch --quiet");
+                coordinator.set_stage(repo_name, Stage::Checking, "git fetch --quiet");
             }
-            let fetch_result = fetch_and_analyze_for_pull(&repo_path).await;
+            let fetch_result = fetch_and_analyze_for_pull(repo_path).await;
             drop(_fetch_permit); // Fetch permit released here
 
             // PHASE 2: Pull with standard concurrency + rate limit protection
             if let Some(coordinator) = coordinator_clone.as_ref() {
-                coordinator.set_stage(&repo_name, Stage::Waiting, "waiting on write slot");
+                coordinator.set_stage(repo_name, Stage::Waiting, "waiting on write slot");
             }
             let _pull_permit = match pull_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    eprintln!(
-                        "Error: Failed to acquire pull permit for {repo_name}: {e}"
-                    );
+                    eprintln!("Error: Failed to acquire pull permit for {repo_name}: {e}");
 
                     // Update statistics to track this failure
                     let stats_guard = acquire_stats_lock(&stats_clone);
                     stats_guard.update(
-                        &repo_name,
+                        repo_name,
                         &repo_path.to_string_lossy(),
                         &Status::Error,
                         &format!("semaphore error: {e}"),
@@ -649,7 +642,7 @@ async fn process_pull_repositories(
                     }
                     if let Some(coordinator) = coordinator_clone.as_ref() {
                         coordinator.set_status(
-                            &repo_name,
+                            repo_name,
                             Status::Error,
                             &format!("semaphore error: {e}"),
                         );
@@ -663,7 +656,7 @@ async fn process_pull_repositories(
                 } else {
                     "git pull --ff-only"
                 };
-                coordinator.set_stage(&repo_name, Stage::Updating, pull_op);
+                coordinator.set_stage(repo_name, Stage::Updating, pull_op);
             }
 
             // Attempt pull with retry on rate limit
@@ -672,7 +665,7 @@ async fn process_pull_repositories(
             let result = loop {
                 attempt += 1;
                 let (status, message, has_uncommitted) =
-                    pull_if_needed(&repo_path, &fetch_result, use_rebase).await;
+                    pull_if_needed(repo_path, &fetch_result, use_rebase).await;
 
                 // Check for rate limit error
                 if message.contains("⚠️ RATE LIMIT") {
@@ -731,15 +724,18 @@ async fn process_pull_repositories(
                         repo_name,
                         width = max_name_length_clone
                     ));
-                    progress_bar
-                        .set_message(format!("{:<10}   {}", status.text(), display_message));
+                    progress_bar.set_message(format!(
+                        "{:<10}   {}",
+                        status.text(),
+                        display_message
+                    ));
                     progress_bar.finish();
                 }
             }
 
             let stats_guard = acquire_stats_lock(&stats_clone);
             stats_guard.update(
-                &repo_name,
+                repo_name,
                 &repo_path.to_string_lossy(),
                 &status,
                 &message,
@@ -755,7 +751,7 @@ async fn process_pull_repositories(
             }
             drop(stats_guard);
             if let Some(coordinator) = coordinator_clone.as_ref() {
-                coordinator.set_status(&repo_name, status, &message);
+                coordinator.set_status(repo_name, status, &message);
             }
         };
         pipeline_futures.push(future);
