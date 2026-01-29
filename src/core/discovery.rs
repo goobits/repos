@@ -1,12 +1,13 @@
 //! Repository discovery and initialization utilities
 
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::config::{
     DEFAULT_REPO_NAME, ESTIMATED_REPO_COUNT, MAX_SCAN_DEPTH, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME,
@@ -39,8 +40,10 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
     let search_path = search_path.as_ref();
 
     // Use DashMap for lock-free concurrent access (20-40% faster than Mutex<HashMap>)
-    let repositories = Arc::new(Mutex::new(Vec::with_capacity(ESTIMATED_REPO_COUNT)));
-    let seen_paths = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
+    // Using a single DashMap<PathBuf, String> avoids:
+    // 1. Mutex contention on a separate Vec
+    // 2. Double allocation of PathBuf (once for set, once for list)
+    let repos_map = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
     let name_counts = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
     let search_path_buf = search_path.to_path_buf();
 
@@ -69,8 +72,7 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 
     // Walk the directory tree in parallel
     walker.run(|| {
-        let repositories = Arc::clone(&repositories);
-        let seen_paths = Arc::clone(&seen_paths);
+        let repos_map = Arc::clone(&repos_map);
         let name_counts = Arc::clone(&name_counts);
         let search_path_buf = search_path_buf.clone();
 
@@ -101,48 +103,46 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                     if is_git_repo {
                         // Skip if we've already seen this exact path
                         // Check existence first to avoid allocation
-                        if seen_paths.contains_key(path) {
+                        if repos_map.contains_key(path) {
                             return WalkState::Continue;
                         }
 
-                        // DashMap provides lock-free concurrent insert
-                        // insert() returns Some(old_value) if key existed, None if new
                         let path_buf = path.to_path_buf();
-                        if seen_paths.insert(path_buf.clone(), ()).is_some() {
-                            return WalkState::Continue;
-                        }
 
-                        let base_name = if path == search_path_buf {
-                            // If this is the search path itself, use its directory name
-                            search_path_buf
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or(DEFAULT_REPO_NAME)
-                                .to_string()
-                        } else {
-                            path.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or(UNKNOWN_REPO_NAME)
-                                .to_string()
-                        };
+                        // Use entry API to atomically check and insert
+                        // This avoids allocating a second PathBuf copy if the entry is new
+                        match repos_map.entry(path_buf) {
+                            Entry::Occupied(_) => return WalkState::Continue,
+                            Entry::Vacant(entry) => {
+                                let base_name = if path == search_path_buf {
+                                    // If this is the search path itself, use its directory name
+                                    search_path_buf
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or(DEFAULT_REPO_NAME)
+                                        .to_string()
+                                } else {
+                                    path.file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or(UNKNOWN_REPO_NAME)
+                                        .to_string()
+                                };
 
-                        // Handle duplicate names by adding a suffix
-                        // DashMap's entry API provides atomic counter increment
-                        let repo_name = {
-                            let mut entry = name_counts.entry(base_name.clone()).or_insert(0);
-                            *entry += 1;
-                            let count = *entry;
-                            if count > 1 {
-                                format!("{base_name}-{count}")
-                            } else {
-                                base_name
+                                // Handle duplicate names by adding a suffix
+                                // DashMap's entry API provides atomic counter increment
+                                let repo_name = {
+                                    let mut entry = name_counts.entry(base_name.clone()).or_insert(0);
+                                    *entry += 1;
+                                    let count = *entry;
+                                    if count > 1 {
+                                        format!("{base_name}-{count}")
+                                    } else {
+                                        base_name
+                                    }
+                                };
+
+                                entry.insert(repo_name);
                             }
-                        };
-
-                        if let Ok(mut repos) = repositories.lock() {
-                            repos.push((repo_name, path_buf));
-                        } else {
-                            eprintln!("Warning: Failed to record repository at {}", path.display());
                         }
                     }
                 }
@@ -152,19 +152,13 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
         })
     });
 
-    // Extract repositories from Arc<Mutex<>>
-    let mut repos = Arc::try_unwrap(repositories)
-        .map(|mutex| {
-            mutex.into_inner().unwrap_or_else(|e| {
-                eprintln!("Warning: Mutex poisoned during repository extraction");
-                e.into_inner()
-            })
-        })
+    // Extract repositories from DashMap
+    // Convert DashMap to Vec<(String, PathBuf)>
+    let mut repos: Vec<(String, PathBuf)> = Arc::try_unwrap(repos_map)
+        .map(|map| map.into_iter().map(|(p, n)| (n, p)).collect())
         .unwrap_or_else(|arc| {
-            arc.lock().map(|guard| guard.clone()).unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to lock repositories for extraction");
-                e.into_inner().clone()
-            })
+            // Fallback if Arc has other references (should not happen in normal flow)
+            arc.iter().map(|r| (r.value().clone(), r.key().clone())).collect()
         });
 
     // Sort repositories alphabetically by name (case-insensitive) using parallel sort
@@ -283,5 +277,40 @@ mod tests {
 
         // Should have 2 unique paths
         assert_eq!(seen.len(), 2);
+    }
+
+    #[test]
+    fn test_find_repos_from_path_deduplication() {
+        use tempfile::TempDir;
+        use std::process::Command;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create 3 repos
+        let repo1 = root.join("repo1");
+        let repo2 = root.join("repo2");
+        let repo3 = root.join("repo3");
+
+        for path in [&repo1, &repo2, &repo3] {
+            fs::create_dir(path).unwrap();
+            Command::new("git")
+                .arg("init")
+                .arg("-q")
+                .current_dir(path)
+                .output()
+                .unwrap();
+        }
+
+        // Run discovery
+        let repos = find_repos_from_path(root);
+
+        assert_eq!(repos.len(), 3);
+
+        // Check names
+        let names: Vec<_> = repos.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"repo1"));
+        assert!(names.contains(&"repo2"));
+        assert!(names.contains(&"repo3"));
     }
 }

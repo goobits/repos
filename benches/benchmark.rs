@@ -30,6 +30,14 @@ fn bench_discovery(c: &mut Criterion) {
     c.bench_function("discovery_100_repos", |b| {
         b.iter(|| find_repos_from_path(&path))
     });
+
+    let count_large = 1000;
+    let temp_dir_large = setup_many_repos(count_large);
+    let path_large = temp_dir_large.path().to_path_buf();
+
+    c.bench_function("discovery_1000_repos", |b| {
+        b.iter(|| find_repos_from_path(&path_large))
+    });
 }
 
 criterion_group!(benches, bench_discovery);
