@@ -100,6 +100,11 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 
                     if is_git_repo {
                         // Skip if we've already seen this exact path
+                        // Check existence first to avoid allocation
+                        if seen_paths.contains_key(path) {
+                            return WalkState::Continue;
+                        }
+
                         // DashMap provides lock-free concurrent insert
                         // insert() returns Some(old_value) if key existed, None if new
                         let path_buf = path.to_path_buf();
