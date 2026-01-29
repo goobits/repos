@@ -68,11 +68,6 @@ pub async fn execute_publish(
         .map(|p| (p.name.clone(), p.path.clone()))
         .collect();
 
-    // Note: GIT_CONCURRENT_CAP is private in crate::core in original code?
-    // If it is, we might need to use a hardcoded value or expose it.
-    // I'll assume 8 for now or check if I can import it.
-    // Checking previous file read... it was used as `crate::core::GIT_CONCURRENT_CAP`.
-    // So it should be available.
     let context = create_processing_context(std::sync::Arc::new(repos_for_context), start_time, crate::core::GIT_CONCURRENT_CAP)?;
 
     let mut futures = FuturesUnordered::new();
