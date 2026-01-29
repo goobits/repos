@@ -47,91 +47,59 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
     let name_counts = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
     let search_path_buf = search_path.to_path_buf();
 
+    // Clone for closure
+    let repos_map_clone = Arc::clone(&repos_map);
+    let name_counts_clone = Arc::clone(&name_counts);
+    let search_path_buf_clone = search_path_buf.clone();
+
     // Build parallel walker with optimizations
     let walker = WalkBuilder::new(search_path)
         .follow_links(true) // Follow symlinks to find symlinked repos
         .max_depth(Some(MAX_SCAN_DEPTH)) // Limit depth to avoid deep recursion
         .threads(num_cpus::get().min(8)) // Use up to 8 threads for directory walking
-        .filter_entry(|entry| {
+        .hidden(false) // Enable hidden files to see .git
+        .filter_entry(move |entry| {
             let file_name = entry.file_name().to_str().unwrap_or("");
 
-            // Skip common build/dependency directories
-            if SKIP_DIRECTORIES.contains(&file_name) {
-                return false;
-            }
-
-            // Skip .git directories themselves (don't descend into them)
-            // This prevents scanning thousands of files in .git/objects/, etc.
+            // If we find .git, check if it's a valid repo and add the parent directory
             if file_name == ".git" {
-                return false;
-            }
-
-            true
-        })
-        .build_parallel();
-
-    // Walk the directory tree in parallel
-    walker.run(|| {
-        let repos_map = Arc::clone(&repos_map);
-        let name_counts = Arc::clone(&name_counts);
-        let search_path_buf = search_path_buf.clone();
-
-        Box::new(move |result| {
-            use ignore::WalkState;
-
-            if let Ok(entry) = result {
                 let path = entry.path();
-
-                // Only check directories
-                if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
-                    return WalkState::Continue;
-                }
-
-                // Check if this directory contains a .git entry
-                let git_path = path.join(".git");
-
-                if git_path.exists() {
-                    let is_git_repo = if git_path.is_dir() {
+                // .git found, check its parent (the repo root)
+                if let Some(repo_path) = path.parent() {
+                    let is_git_repo = if entry.file_type().is_some_and(|ft| ft.is_dir()) {
                         true
-                    } else if git_path.is_file() {
-                        // Submodules and worktrees expose a .git file
-                        is_git_file(&git_path)
                     } else {
-                        false
+                        // Submodules and worktrees expose a .git file
+                        is_git_file(path)
                     };
 
                     if is_git_repo {
                         // Skip if we've already seen this exact path
                         // Check existence first to avoid allocation
-                        if repos_map.contains_key(path) {
-                            return WalkState::Continue;
-                        }
+                        if !repos_map_clone.contains_key(repo_path) {
+                            let path_buf = repo_path.to_path_buf();
 
-                        let path_buf = path.to_path_buf();
-
-                        // Use entry API to atomically check and insert
-                        // This avoids allocating a second PathBuf copy if the entry is new
-                        match repos_map.entry(path_buf) {
-                            Entry::Occupied(_) => return WalkState::Continue,
-                            Entry::Vacant(entry) => {
-                                let base_name = if path == search_path_buf {
+                            // Use entry API to atomically check and insert
+                            if let Entry::Vacant(entry) = repos_map_clone.entry(path_buf) {
+                                let base_name = if repo_path == search_path_buf_clone {
                                     // If this is the search path itself, use its directory name
-                                    search_path_buf
+                                    search_path_buf_clone
                                         .file_name()
                                         .and_then(|n| n.to_str())
                                         .unwrap_or(DEFAULT_REPO_NAME)
                                         .to_string()
                                 } else {
-                                    path.file_name()
+                                    repo_path
+                                        .file_name()
                                         .and_then(|n| n.to_str())
                                         .unwrap_or(UNKNOWN_REPO_NAME)
                                         .to_string()
                                 };
 
                                 // Handle duplicate names by adding a suffix
-                                // DashMap's entry API provides atomic counter increment
                                 let repo_name = {
-                                    let mut entry = name_counts.entry(base_name.clone()).or_insert(0);
+                                    let mut entry =
+                                        name_counts_clone.entry(base_name.clone()).or_insert(0);
                                     *entry += 1;
                                     let count = *entry;
                                     if count > 1 {
@@ -146,11 +114,27 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                         }
                     }
                 }
+                // Don't descend into .git
+                return false;
             }
 
-            WalkState::Continue
+            // Skip common build/dependency directories
+            if SKIP_DIRECTORIES.contains(&file_name) {
+                return false;
+            }
+
+            // Skip hidden files/directories (emulate default behavior), except root
+            // This prevents scanning .config, .ssh, etc. but allows .git (handled above)
+            if entry.depth() > 0 && file_name.starts_with('.') {
+                return false;
+            }
+
+            true
         })
-    });
+        .build_parallel();
+
+    // Walk the directory tree in parallel - logic is now in filter_entry
+    walker.run(|| Box::new(|_| ignore::WalkState::Continue));
 
     // Extract repositories from DashMap
     // Convert DashMap to Vec<(String, PathBuf)>
