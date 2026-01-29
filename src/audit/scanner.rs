@@ -549,13 +549,12 @@ async fn install_trufflehog_direct() -> Result<()> {
     let install_dir = "/usr/local/bin";
 
     // Check if we have write access to /usr/local/bin
+    let test_file = std::path::Path::new(install_dir).join("test_write");
     let install_path = if tokio::fs::metadata(install_dir).await.is_ok()
-        && tokio::fs::File::create(format!("{install_dir}/test_write"))
-            .await
-            .is_ok()
+        && tokio::fs::File::create(&test_file).await.is_ok()
     {
         // Clean up test file
-        let _ = tokio::fs::remove_file(format!("{install_dir}/test_write")).await;
+        let _ = tokio::fs::remove_file(&test_file).await;
         install_dir.to_string()
     } else {
         // Fallback to user's local bin
