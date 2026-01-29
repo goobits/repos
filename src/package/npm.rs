@@ -1,10 +1,10 @@
 //! NPM package publishing functionality
 
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
-use async_trait::async_trait;
 
 use super::{PackageInfo, PackageManager};
 
@@ -118,6 +118,10 @@ fn clean_npm_error(error: &str) -> String {
         // Return first line of error, cleaned up
         error
             .lines()
-            .find(|line| !line.trim().is_empty() && line.contains("npm ERR!")).map_or_else(|| error.trim().to_string(), |line| line.replace("npm ERR!", "").trim().to_string())
+            .find(|line| !line.trim().is_empty() && line.contains("npm ERR!"))
+            .map_or_else(
+                || error.trim().to_string(),
+                |line| line.replace("npm ERR!", "").trim().to_string(),
+            )
     }
 }

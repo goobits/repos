@@ -1,8 +1,8 @@
 //! Hygiene reporting and statistics
 
-use std::time::Duration;
-use crate::utils::shorten_path;
 use crate::core::config::PATH_DISPLAY_WIDTH;
+use crate::utils::shorten_path;
+use std::time::Duration;
 
 /// Status for hygiene check results
 #[derive(Clone, Debug)]
@@ -61,13 +61,13 @@ pub struct HygieneStatistics {
 }
 
 impl HygieneStatistics {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Get the violation repositories for fix operations
-    #[must_use] 
+    #[must_use]
     pub fn get_violation_repos(&self) -> Vec<(String, String, Vec<HygieneViolation>)> {
         self.violation_repos.clone()
     }
@@ -113,7 +113,7 @@ impl HygieneStatistics {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn generate_summary(&self, _total_repos: usize, duration: Duration) -> String {
         let duration_secs = duration.as_secs_f64();
 
@@ -130,7 +130,7 @@ impl HygieneStatistics {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn generate_detailed_summary(&self) -> String {
         let mut lines = Vec::new();
 

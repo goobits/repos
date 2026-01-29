@@ -1,6 +1,6 @@
 //! # goobits-repos
 //!
-//! `goobits-repos` is a high-performance library for managing and synchronizing 
+//! `goobits-repos` is a high-performance library for managing and synchronizing
 //! multiple Git repositories concurrently. It powers the `repos` CLI tool.
 //!
 //! ## Core Features
@@ -32,4 +32,3 @@ pub mod git;
 pub mod package;
 pub mod subrepo;
 pub mod utils;
-

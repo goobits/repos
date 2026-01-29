@@ -1,11 +1,11 @@
 //! Python package publishing functionality
 
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
-use async_trait::async_trait;
 
 use super::{PackageInfo, PackageManager};
 
@@ -24,7 +24,9 @@ impl PackageManager for PyPI {
     }
 
     async fn detect(&self, path: &Path) -> bool {
-        tokio::fs::metadata(path.join("pyproject.toml")).await.is_ok()
+        tokio::fs::metadata(path.join("pyproject.toml"))
+            .await
+            .is_ok()
             || tokio::fs::metadata(path.join("setup.py")).await.is_ok()
     }
 
@@ -207,6 +209,7 @@ fn clean_python_error(error: &str) -> String {
         // Return first meaningful line
         error
             .lines()
-            .find(|line| !line.trim().is_empty() && !line.contains("Uploading")).map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
+            .find(|line| !line.trim().is_empty() && !line.contains("Uploading"))
+            .map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
     }
 }

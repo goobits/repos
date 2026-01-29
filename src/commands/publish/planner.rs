@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-use futures::stream::{FuturesUnordered, StreamExt};
 use crate::git::{get_repo_visibility, has_uncommitted_changes, RepoVisibility};
 use crate::package::{detect_manager, PackageManager};
+use futures::stream::{FuturesUnordered, StreamExt};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 pub struct PublishPlan {
     pub packages: Vec<PackageToPublish>,
@@ -26,14 +26,16 @@ pub struct PlannerOptions {
     pub dry_run: bool,
 }
 
-pub async fn plan_publish(
-    repos: Vec<(String, PathBuf)>,
-    options: PlannerOptions,
-) -> PublishPlan {
+pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions) -> PublishPlan {
     // Filter repositories if specific targets were requested
     let mut filtered_repos = repos;
     if !options.target_repos.is_empty() {
-        filtered_repos.retain(|(name, _)| options.target_repos.iter().any(|target| name.contains(target)));
+        filtered_repos.retain(|(name, _)| {
+            options
+                .target_repos
+                .iter()
+                .any(|target| name.contains(target))
+        });
     }
 
     // Determine visibility filter
@@ -52,17 +54,14 @@ pub async fn plan_publish(
             let allow_dirty = options.allow_dirty;
             let dry_run = options.dry_run;
             async move {
-                let (visibility, manager, is_dirty) = tokio::join!(
-                    get_repo_visibility(&path),
-                    detect_manager(&path),
-                    async {
+                let (visibility, manager, is_dirty) =
+                    tokio::join!(get_repo_visibility(&path), detect_manager(&path), async {
                         if !allow_dirty && !dry_run {
                             has_uncommitted_changes(&path).await
                         } else {
                             false
                         }
-                    }
-                );
+                    });
                 (name, path, visibility, manager, is_dirty)
             }
         })

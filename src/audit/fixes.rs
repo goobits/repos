@@ -38,7 +38,7 @@ pub struct FixOptions {
 
 impl FixOptions {
     /// Create options for fix-all mode (apply all available fixes)
-    #[must_use] 
+    #[must_use]
     pub fn fix_all(dry_run: bool, target_repos: Option<Vec<String>>) -> Self {
         Self {
             interactive: false,
@@ -810,9 +810,7 @@ fn show_fix_results(results: &[FixResult]) {
     let successful = results.iter().filter(|r| r.errors.is_empty()).count();
     let failed = results.iter().filter(|r| !r.errors.is_empty()).count();
 
-    println!(
-        "✅ Fix Summary: {successful} successful, {failed} failed"
-    );
+    println!("✅ Fix Summary: {successful} successful, {failed} failed");
 
     if failed > 0 {
         println!("\n⚠️  Failed fixes:");

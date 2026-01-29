@@ -36,9 +36,8 @@ pub struct SubrepoInstance {
     /// Whether there are uncommitted changes in the subrepo.
     pub has_uncommitted: bool,
     /// Unix timestamp of the current commit.
-    pub commit_timestamp: i64, 
+    pub commit_timestamp: i64,
 }
-
 
 /// Summary of discovered subrepos grouped by remote URL
 #[derive(Debug)]
@@ -49,7 +48,7 @@ pub struct ValidationReport {
 }
 
 impl ValidationReport {
-    #[must_use] 
+    #[must_use]
     pub fn shared_subrepos_count(&self) -> usize {
         self.by_remote
             .iter()
@@ -57,7 +56,7 @@ impl ValidationReport {
             .count()
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn unique_remotes(&self) -> usize {
         self.by_remote.len()
     }

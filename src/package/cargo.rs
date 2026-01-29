@@ -1,10 +1,10 @@
 //! Cargo package publishing functionality
 
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
-use async_trait::async_trait;
 
 use super::{PackageInfo, PackageManager};
 
@@ -121,7 +121,8 @@ fn clean_cargo_error(error: &str) -> String {
         error
             .lines()
             .skip_while(|line| !line.contains("Caused by:"))
-            .nth(1).map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
+            .nth(1)
+            .map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
     } else {
         // Return first meaningful line
         error
@@ -130,6 +131,7 @@ fn clean_cargo_error(error: &str) -> String {
                 !line.trim().is_empty()
                     && !line.contains("Uploading")
                     && !line.contains("Packaging")
-            }).map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
+            })
+            .map_or_else(|| error.trim().to_string(), |line| line.trim().to_string())
     }
 }

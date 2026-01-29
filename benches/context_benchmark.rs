@@ -5,7 +5,12 @@ use std::sync::Arc;
 
 fn generate_repos(count: usize) -> Vec<(String, PathBuf)> {
     (0..count)
-        .map(|i| (format!("repo-{}", i), PathBuf::from(format!("/path/to/repo-{}", i))))
+        .map(|i| {
+            (
+                format!("repo-{}", i),
+                PathBuf::from(format!("/path/to/repo-{}", i)),
+            )
+        })
         .collect()
 }
 

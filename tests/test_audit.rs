@@ -6,10 +6,8 @@
 //! - fixes.rs: Automated fix operations (with safety checks)
 
 use goobits_repos::audit::fixes::FixOptions;
-use goobits_repos::audit::hygiene::{
-    HygieneStatistics, HygieneViolation, ViolationType,
-};
 use goobits_repos::audit::hygiene::report::HygieneStatus;
+use goobits_repos::audit::hygiene::{HygieneStatistics, HygieneViolation, ViolationType};
 use goobits_repos::audit::scanner::{AuditStatistics, SecretFinding, TruffleStatistics};
 use std::time::Duration;
 

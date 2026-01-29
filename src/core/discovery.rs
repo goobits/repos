@@ -131,7 +131,8 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                                 // Handle duplicate names by adding a suffix
                                 // DashMap's entry API provides atomic counter increment
                                 let repo_name = {
-                                    let mut entry = name_counts.entry(base_name.clone()).or_insert(0);
+                                    let mut entry =
+                                        name_counts.entry(base_name.clone()).or_insert(0);
                                     *entry += 1;
                                     let count = *entry;
                                     if count > 1 {
@@ -158,7 +159,9 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
         .map(|map| map.into_iter().map(|(p, n)| (n, p)).collect())
         .unwrap_or_else(|arc| {
             // Fallback if Arc has other references (should not happen in normal flow)
-            arc.iter().map(|r| (r.value().clone(), r.key().clone())).collect()
+            arc.iter()
+                .map(|r| (r.value().clone(), r.key().clone()))
+                .collect()
         });
 
     // Sort repositories alphabetically by name (case-insensitive) using parallel sort
@@ -177,7 +180,7 @@ pub fn find_repos() -> Vec<(String, PathBuf)> {
 }
 
 /// Common initialization for commands that scan repositories
-#[must_use] 
+#[must_use]
 pub async fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, PathBuf)>) {
     println!();
     print!("{scanning_msg}");
@@ -286,8 +289,8 @@ mod tests {
 
     #[test]
     fn test_find_repos_from_path_deduplication() {
-        use tempfile::TempDir;
         use std::process::Command;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();

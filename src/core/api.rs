@@ -31,7 +31,6 @@ pub use super::discovery::find_repos_from_path;
 /// Common initialization for commands that scan repositories.
 pub use super::discovery::init_command;
 
-
 // Configuration
 pub use super::config::GIT_CONCURRENT_CAP;
 pub use super::config::{HYGIENE_CONCURRENT_LIMIT, TRUFFLE_CONCURRENT_LIMIT};

@@ -7,8 +7,8 @@ pub mod git;
 pub use self::fixtures::TestRepoBuilder;
 pub use self::git::{create_multiple_repos, is_git_available, setup_git_repo};
 
-use std::sync::{Mutex, MutexGuard};
 use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard};
 
 static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 

@@ -1,7 +1,7 @@
 //! File system utilities
 
 /// Shortens long paths for display
-#[must_use] 
+#[must_use]
 pub fn shorten_path(path: &str, max_length: usize) -> String {
     if path.len() <= max_length {
         return path.to_string();

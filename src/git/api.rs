@@ -38,7 +38,6 @@ pub use super::operations::{
     has_staged_changes, has_uncommitted_changes, stage_files, unstage_files,
 };
 
-
 // LFS functions - used internally by push_if_needed, exported for integration tests
 #[allow(unused_imports)]
 pub use super::operations::{check_uses_git_lfs, has_pending_lfs_objects, push_lfs_objects};

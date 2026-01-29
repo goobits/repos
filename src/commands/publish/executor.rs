@@ -1,10 +1,10 @@
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use futures::stream::{FuturesUnordered, StreamExt};
+use super::planner::PackageToPublish;
 use crate::core::{create_processing_context, create_progress_bar};
 use crate::git::create_and_push_tag;
 use crate::package::PublishStatus;
-use super::planner::PackageToPublish;
+use futures::stream::{FuturesUnordered, StreamExt};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 const PUBLISHING_MESSAGE: &str = "publishing...";
 
@@ -57,18 +57,22 @@ pub async fn execute_publish(
     start_time: std::time::Instant,
 ) -> anyhow::Result<()> {
     if packages.is_empty() {
-        return Ok(())
+        return Ok(());
     }
 
     let total_packages = packages.len();
-    
+
     // Create processing context
     let repos_for_context: Vec<(String, PathBuf)> = packages
         .iter()
         .map(|p| (p.name.clone(), p.path.clone()))
         .collect();
 
-    let context = create_processing_context(std::sync::Arc::new(repos_for_context), start_time, crate::core::GIT_CONCURRENT_CAP)?;
+    let context = create_processing_context(
+        std::sync::Arc::new(repos_for_context),
+        start_time,
+        crate::core::GIT_CONCURRENT_CAP,
+    )?;
 
     let mut futures = FuturesUnordered::new();
     let statistics = Arc::new(Mutex::new(PublishStatistics::default()));
@@ -76,7 +80,8 @@ pub async fn execute_publish(
     // Create progress bars
     let mut repo_progress_bars = Vec::new();
     for (repo_name, _) in context.repositories.iter() {
-        let progress_bar = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
+        let progress_bar =
+            create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(PUBLISHING_MESSAGE);
         repo_progress_bars.push(progress_bar);
     }
@@ -90,7 +95,11 @@ pub async fn execute_publish(
     let max_name_length = context.max_name_length;
     let publish_semaphore = Arc::new(tokio::sync::Semaphore::new(8));
 
-    for ((pkg, progress_bar), _) in packages.into_iter().zip(repo_progress_bars).zip(context.repositories.iter()) {
+    for ((pkg, progress_bar), _) in packages
+        .into_iter()
+        .zip(repo_progress_bars)
+        .zip(context.repositories.iter())
+    {
         let stats_clone = Arc::clone(&statistics);
         let semaphore_clone = Arc::clone(&publish_semaphore);
         let footer_clone = footer_pb.clone();
@@ -114,7 +123,8 @@ pub async fn execute_publish(
             if tag && matches!(status, PublishStatus::Published) {
                 if let Some(info) = pkg.manager.get_info(&pkg.path).await {
                     let tag_name = format!("v{}", info.version);
-                    let (tag_success, tag_message) = create_and_push_tag(&pkg.path, &tag_name).await;
+                    let (tag_success, tag_message) =
+                        create_and_push_tag(&pkg.path, &tag_name).await;
                     if tag_success {
                         final_message = format!("{message}, {tag_message}");
                     } else {

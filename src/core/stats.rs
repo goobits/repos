@@ -36,7 +36,7 @@ impl Default for SyncStatistics {
 
 impl SyncStatistics {
     /// Creates a new statistics tracker with all counters initialized to zero
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             synced_repos: AtomicU64::new(0),
@@ -149,9 +149,7 @@ impl SyncStatistics {
                     uncommitted.push((repo_name.to_string(), repo_path.to_string()));
                 }
             } else {
-                eprintln!(
-                    "Warning: Failed to record uncommitted changes for repo: {repo_name}"
-                );
+                eprintln!("Warning: Failed to record uncommitted changes for repo: {repo_name}");
             }
         }
     }
@@ -186,19 +184,27 @@ impl SyncStatistics {
         let mut lines = Vec::new();
 
         // Lock all vectors once at the beginning - handle lock failures gracefully
-        let failed_repos = if let Ok(guard) = self.failed_repos.lock() { guard } else {
+        let failed_repos = if let Ok(guard) = self.failed_repos.lock() {
+            guard
+        } else {
             eprintln!("Warning: Failed to acquire lock for failed_repos");
             return String::new();
         };
-        let no_upstream_repos = if let Ok(guard) = self.no_upstream_repos.lock() { guard } else {
+        let no_upstream_repos = if let Ok(guard) = self.no_upstream_repos.lock() {
+            guard
+        } else {
             eprintln!("Warning: Failed to acquire lock for no_upstream_repos");
             return String::new();
         };
-        let no_remote_repos = if let Ok(guard) = self.no_remote_repos.lock() { guard } else {
+        let no_remote_repos = if let Ok(guard) = self.no_remote_repos.lock() {
+            guard
+        } else {
             eprintln!("Warning: Failed to acquire lock for no_remote_repos");
             return String::new();
         };
-        let uncommitted_repos = if let Ok(guard) = self.uncommitted_repos.lock() { guard } else {
+        let uncommitted_repos = if let Ok(guard) = self.uncommitted_repos.lock() {
+            guard
+        } else {
             eprintln!("Warning: Failed to acquire lock for uncommitted_repos");
             return String::new();
         };

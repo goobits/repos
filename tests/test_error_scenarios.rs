@@ -4,7 +4,7 @@ use std::process::Command;
 use tempfile::TempDir;
 
 mod common;
-use common::git::{setup_git_repo, create_test_commit};
+use common::git::{create_test_commit, setup_git_repo};
 
 #[tokio::test]
 async fn test_pull_merge_conflict_handled() -> Result<()> {
@@ -16,10 +16,16 @@ async fn test_pull_merge_conflict_handled() -> Result<()> {
     std::fs::create_dir(&remote_path)?;
     setup_git_repo(&remote_path)?;
     create_test_commit(&remote_path, "f.txt", "base", "Init")?;
-    
+
     // 2. Clone to local
     let local_path = root.join("local");
-    Command::new("git").args(["clone", remote_path.to_str().unwrap(), local_path.to_str().unwrap()]).output()?;
+    Command::new("git")
+        .args([
+            "clone",
+            remote_path.to_str().unwrap(),
+            local_path.to_str().unwrap(),
+        ])
+        .output()?;
     setup_git_repo(&local_path)?; // Re-setup to ensure test config (user.name etc)
 
     // 3. Update remote with a change
@@ -30,7 +36,7 @@ async fn test_pull_merge_conflict_handled() -> Result<()> {
 
     // 5. Analyze for pull
     let fetch_result = fetch_and_analyze_for_pull(&local_path).await;
-    
+
     // It should detect diverged
     assert_eq!(fetch_result.status, Status::PullError);
     assert!(fetch_result.message.contains("diverged"));
@@ -47,7 +53,7 @@ async fn test_pull_merge_conflict_handled() -> Result<()> {
 async fn test_invalid_git_repo_detection() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path();
-    
+
     // Not a git repo
     std::fs::write(repo_path.join("README.md"), "hello")?;
 
@@ -62,7 +68,7 @@ async fn test_corrupt_git_repo_handled() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path();
     setup_git_repo(repo_path)?;
-    
+
     // Corrupt it by removing .git/objects
     let objects_dir = repo_path.join(".git").join("objects");
     if objects_dir.exists() {

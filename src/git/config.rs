@@ -24,12 +24,12 @@ pub struct UserConfig {
 }
 
 impl UserConfig {
-    #[must_use] 
+    #[must_use]
     pub fn new(name: Option<String>, email: Option<String>) -> Self {
         Self { name, email }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.name.is_none() && self.email.is_none()
     }

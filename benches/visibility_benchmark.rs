@@ -14,9 +14,8 @@ fn bench_visibility_cache_hit(c: &mut Criterion) {
     });
 
     c.bench_function("get_repo_visibility_cache_hit", |b| {
-        b.to_async(&rt).iter(|| async {
-            get_repo_visibility(path).await
-        })
+        b.to_async(&rt)
+            .iter(|| async { get_repo_visibility(path).await })
     });
 }
 

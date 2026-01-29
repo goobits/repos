@@ -1,11 +1,11 @@
 //! Hygiene scanning logic
 
+use super::report::{HygieneStatus, HygieneViolation, ViolationType};
+use super::rules::{LARGE_FILE_THRESHOLD, UNIVERSAL_BAD_PATTERNS};
+use crate::core::config::{GIT_OBJECTS_CHUNK_SIZE, LARGE_FILES_DISPLAY_LIMIT};
 use anyhow::Result;
 use std::path::Path;
 use tokio::process::Command;
-use crate::core::config::{GIT_OBJECTS_CHUNK_SIZE, LARGE_FILES_DISPLAY_LIMIT};
-use super::rules::{UNIVERSAL_BAD_PATTERNS, LARGE_FILE_THRESHOLD};
-use super::report::{HygieneStatus, HygieneViolation, ViolationType};
 
 /// Checks for gitignore violations using git ls-files
 async fn check_gitignore_violations(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
@@ -150,7 +150,9 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
 }
 
 /// Scans a repository for hygiene violations
-pub async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec<HygieneViolation>) {
+pub async fn check_repo_hygiene(
+    repo_path: &Path,
+) -> (HygieneStatus, String, Vec<HygieneViolation>) {
     let mut all_violations = Vec::new();
 
     // Check gitignore violations
@@ -196,8 +198,11 @@ pub async fn check_repo_hygiene(repo_path: &Path) -> (HygieneStatus, String, Vec
             Vec::new(),
         )
     } else {
-        let message = format!("{}
- violations found", all_violations.len());
+        let message = format!(
+            "{}
+ violations found",
+            all_violations.len()
+        );
         (HygieneStatus::Violations, message, all_violations)
     }
 }

@@ -30,9 +30,7 @@ fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<S
     }
 
     if instances.is_empty() {
-        anyhow::bail!(
-            "Subrepo '{name}' not found or not shared across multiple repos"
-        );
+        anyhow::bail!("Subrepo '{name}' not found or not shared across multiple repos");
     }
 
     Ok(instances)
@@ -142,7 +140,7 @@ pub fn sync_subrepo_with_report(
     target_commit: &str,
     stash: bool,
     force: bool,
-    report: &ValidationReport
+    report: &ValidationReport,
 ) -> Result<()> {
     let instances = find_instances_by_name(report, name)?;
 
@@ -202,9 +200,7 @@ pub fn sync_subrepo_with_report(
     println!("📊 Sync Summary");
     println!("   ✅ {success_count} synced");
     if stashed_count > 0 {
-        println!(
-            "   📦 {stashed_count} stashed (changes saved, run 'git stash pop' to restore)"
-        );
+        println!("   📦 {stashed_count} stashed (changes saved, run 'git stash pop' to restore)");
     }
     if skip_count > 0 {
         println!("   ⚠️  {skip_count} skipped (uncommitted changes)");
@@ -232,7 +228,7 @@ pub fn update_subrepo(name: &str, force: bool) -> Result<()> {
 pub fn update_subrepo_with_report(
     name: &str,
     force: bool,
-    report: &ValidationReport
+    report: &ValidationReport,
 ) -> Result<()> {
     let instances = find_instances_by_name(report, name)?;
 

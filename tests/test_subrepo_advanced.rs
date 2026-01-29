@@ -1,20 +1,26 @@
 use anyhow::Result;
-use goobits_repos::subrepo::{SubrepoInstance, ValidationReport, sync::sync_subrepo_with_report, sync::update_subrepo_with_report};
+use goobits_repos::subrepo::{
+    sync::sync_subrepo_with_report, sync::update_subrepo_with_report, SubrepoInstance,
+    ValidationReport,
+};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
 mod common;
-use common::git::{setup_git_repo, create_test_commit};
+use common::git::{create_test_commit, setup_git_repo};
 
 fn clone_repo(source: &Path, dest: &Path) -> Result<()> {
     let output = Command::new("git")
         .args(["clone", source.to_str().unwrap(), dest.to_str().unwrap()])
         .output()?;
-    
+
     if !output.status.success() {
-        anyhow::bail!("Failed to clone repo: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "Failed to clone repo: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(())
 }
@@ -23,7 +29,7 @@ fn get_head_commit(path: &Path) -> Result<String> {
     let output = Command::new("git")
         .args(["-C", path.to_str().unwrap(), "rev-parse", "HEAD"])
         .output()?;
-    
+
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
@@ -47,7 +53,9 @@ fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
     setup_git_repo(&parent_path)?;
     let sub_path = parent_path.join("sub");
     clone_repo(&remote_path, &sub_path)?;
-    Command::new("git").args(["-C", sub_path.to_str().unwrap(), "checkout", &commit1]).output()?;
+    Command::new("git")
+        .args(["-C", sub_path.to_str().unwrap(), "checkout", &commit1])
+        .output()?;
 
     // 3. Create uncommitted change in subrepo
     std::fs::write(sub_path.join("dirty.txt"), "mod")?;
@@ -67,21 +75,25 @@ fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
     };
     let mut by_remote = HashMap::new();
     by_remote.insert(remote_path.to_str().unwrap().to_string(), vec![instance]);
-    let report = ValidationReport { total_nested: 1, by_remote, no_remote: vec![] };
+    let report = ValidationReport {
+        total_nested: 1,
+        by_remote,
+        no_remote: vec![],
+    };
 
     // 5. Try sync without stash/force (should fail/skip)
     let result = sync_subrepo_with_report("upstream", &commit2, false, false, &report);
     assert!(result.is_ok()); // sync_subrepo returns Ok even if it skips, but shows warning
-    // Verify it DID NOT sync
+                             // Verify it DID NOT sync
     assert_eq!(get_head_commit(&sub_path)?, commit1);
 
     // 6. Try sync WITH stash
     sync_subrepo_with_report("upstream", &commit2, true, false, &report)?;
-    
+
     // Verify it DID sync
     assert_eq!(get_head_commit(&sub_path)?, commit2);
-    
-    // Verify stash was created (dirty.txt should be gone from worktree if stashed, 
+
+    // Verify stash was created (dirty.txt should be gone from worktree if stashed,
     // but the current implementation doesn't pop it back yet in sync_subrepo)
     // Actually, sync_subrepo just runs `git stash push`. It doesn't pop.
     assert!(!sub_path.join("dirty.txt").exists());
@@ -128,17 +140,21 @@ fn test_update_with_diverged_branches_fails_safely() -> Result<()> {
     };
     let mut by_remote = HashMap::new();
     by_remote.insert(remote_path.to_str().unwrap().to_string(), vec![instance]);
-    let report = ValidationReport { total_nested: 1, by_remote, no_remote: vec![] };
+    let report = ValidationReport {
+        total_nested: 1,
+        by_remote,
+        no_remote: vec![],
+    };
 
-    // 4. Try update without force (checkout should fail or be blocked by uncommitted changes check, 
+    // 4. Try update without force (checkout should fail or be blocked by uncommitted changes check,
     // but here we have a committed local change).
     // The current update_subrepo logic just does `git checkout <remote_tip>`.
     // Git checkout will succeed if there are no conflicts, even if it's not a fast-forward.
     // However, if we want "safe" updates, we might want to ensure it's a FF.
-    // The Roadmap says "Verify force logic". 
-    
+    // The Roadmap says "Verify force logic".
+
     update_subrepo_with_report("upstream", false, &report)?;
-    
+
     // Verify it synced to remote tip (because checkout works)
     assert_eq!(get_head_commit(&sub_path)?, remote_tip);
 
@@ -163,7 +179,9 @@ fn test_sync_with_conflicts_fails() -> Result<()> {
     setup_git_repo(&parent_path)?;
     let sub_path = parent_path.join("sub");
     clone_repo(&remote_path, &sub_path)?;
-    Command::new("git").args(["-C", sub_path.to_str().unwrap(), "checkout", &commit1]).output()?;
+    Command::new("git")
+        .args(["-C", sub_path.to_str().unwrap(), "checkout", &commit1])
+        .output()?;
 
     // Create a local file that will conflict with commit2
     // Actually, common.txt already exists. If I modify it locally and don't stash, checkout should fail.
@@ -183,17 +201,21 @@ fn test_sync_with_conflicts_fails() -> Result<()> {
     };
     let mut by_remote = HashMap::new();
     by_remote.insert(remote_path.to_str().unwrap().to_string(), vec![instance]);
-    let report = ValidationReport { total_nested: 1, by_remote, no_remote: vec![] };
+    let report = ValidationReport {
+        total_nested: 1,
+        by_remote,
+        no_remote: vec![],
+    };
 
     // Try sync with force=true (discards changes) - wait, does checkout -f discard changes?
     // The current checkout_commit doesn't use -f.
     // So even with force=true in sync_subrepo, it might still fail if checkout fails.
     // Actually, sync_subrepo with force=true just skips the has_uncommitted_changes check.
-    
+
     let result = sync_subrepo_with_report("upstream", &commit2, false, true, &report);
     // It should return an error because checkout fails
     assert!(result.is_err());
-    
+
     Ok(())
 }
 
@@ -236,7 +258,9 @@ fn test_multiple_subrepos_batch_sync() -> Result<()> {
         setup_git_repo(&parent_path)?;
         let sub_path = parent_path.join("sub");
         clone_repo(&remote_path, &sub_path)?;
-        Command::new("git").args(["-C", sub_path.to_str().unwrap(), "checkout", &commit1]).output()?;
+        Command::new("git")
+            .args(["-C", sub_path.to_str().unwrap(), "checkout", &commit1])
+            .output()?;
 
         instances.push(SubrepoInstance {
             parent_repo: parent_name,
@@ -253,7 +277,11 @@ fn test_multiple_subrepos_batch_sync() -> Result<()> {
     }
 
     by_remote.insert(remote_path.to_str().unwrap().to_string(), instances);
-    let report = ValidationReport { total_nested: 3, by_remote, no_remote: vec![] };
+    let report = ValidationReport {
+        total_nested: 3,
+        by_remote,
+        no_remote: vec![],
+    };
 
     sync_subrepo_with_report("upstream", &commit2, false, false, &report)?;
 
@@ -265,6 +293,3 @@ fn test_multiple_subrepos_batch_sync() -> Result<()> {
 
     Ok(())
 }
-
-
-

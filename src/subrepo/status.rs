@@ -50,7 +50,7 @@ impl SubrepoStatus {
     }
 
     /// Create a new `SubrepoStatus` from instances
-    #[must_use] 
+    #[must_use]
     pub fn new(name: String, remote_url: String, instances: Vec<SubrepoInstance>) -> Self {
         let (sync_score, unique_commits) = Self::calculate_sync_score(&instances);
         let has_drift = sync_score < 100.0;
@@ -180,8 +180,7 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
     }
 
     // Show sync command
-    let target_commit = latest_clean
-        .map_or(&latest.short_hash, |t| &t.short_hash);
+    let target_commit = latest_clean.map_or(&latest.short_hash, |t| &t.short_hash);
     println!(
         "    Sync: repos subrepo sync {} --to {}",
         status.name, target_commit
@@ -414,9 +413,7 @@ fn display_drift_status(status: &SubrepoStatus) {
                 "     repos subrepo sync {} --to {} --stash",
                 status.name, target_commit
             );
-            println!(
-                "     (Syncs {dirty_list} to the clean commit from '{target_repo}')"
-            );
+            println!("     (Syncs {dirty_list} to the clean commit from '{target_repo}')");
             println!();
 
             println!("  🔥 FORCE FIX (Discards changes in {dirty_list}):");
