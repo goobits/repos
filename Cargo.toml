@@ -65,6 +65,10 @@ harness = false
 name = "visibility_benchmark"
 harness = false
 
+[[bench]]
+name = "context_benchmark"
+harness = false
+
 [lib]
 name = "goobits_repos"
 path = "src/lib.rs"
