@@ -549,17 +549,19 @@ async fn install_trufflehog_direct() -> Result<()> {
     let install_dir = "/usr/local/bin";
 
     // Check if we have write access to /usr/local/bin
-    let install_path = if std::fs::metadata(install_dir).is_ok()
-        && std::fs::File::create(format!("{install_dir}/test_write")).is_ok()
+    let install_path = if tokio::fs::metadata(install_dir).await.is_ok()
+        && tokio::fs::File::create(format!("{install_dir}/test_write"))
+            .await
+            .is_ok()
     {
         // Clean up test file
-        let _ = std::fs::remove_file(format!("{install_dir}/test_write"));
+        let _ = tokio::fs::remove_file(format!("{install_dir}/test_write")).await;
         install_dir.to_string()
     } else {
         // Fallback to user's local bin
         let home = std::env::var("HOME")?;
         let user_bin = format!("{home}/.local/bin");
-        std::fs::create_dir_all(&user_bin)?;
+        tokio::fs::create_dir_all(&user_bin).await?;
         println!("⚠️  Installing to {user_bin} (add to PATH if needed)");
         user_bin
     };
@@ -610,7 +612,7 @@ async fn install_trufflehog_direct() -> Result<()> {
         .await?;
 
     // Clean up temporary script file
-    let _ = std::fs::remove_file(&temp_script);
+    let _ = tokio::fs::remove_file(&temp_script).await;
 
     if !install_output.status.success() {
         let stderr = String::from_utf8_lossy(&install_output.stderr);
