@@ -882,11 +882,10 @@ fn get_visibility_cache() -> &'static DashMap<PathBuf, RepoVisibility> {
 /// Returns `RepoVisibility` (defaults to Unknown if gh is not available or repo is not on GitHub)
 /// Results are cached in-memory for the lifetime of the program to avoid repeated gh CLI calls
 pub async fn get_repo_visibility(path: &Path) -> RepoVisibility {
-    let path_buf = path.to_path_buf();
     let cache = get_visibility_cache();
 
     // Check cache first - lock-free read
-    if let Some(visibility) = cache.get(&path_buf) {
+    if let Some(visibility) = cache.get(path) {
         return *visibility;
     }
 
@@ -894,7 +893,7 @@ pub async fn get_repo_visibility(path: &Path) -> RepoVisibility {
     let visibility = get_repo_visibility_uncached(path).await;
 
     // Store in cache - lock-free insert
-    cache.insert(path_buf, visibility);
+    cache.insert(path.to_path_buf(), visibility);
 
     visibility
 }

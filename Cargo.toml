@@ -12,7 +12,7 @@ repository = "https://github.com/goobits/repos"
 homepage = "https://github.com/goobits/repos"
 
 [dev-dependencies]
-criterion = "0.8.1"
+criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.23"
 
 [dependencies]
@@ -59,6 +59,10 @@ doc = false  # Don't include binary in documentation
 
 [[bench]]
 name = "benchmark"
+harness = false
+
+[[bench]]
+name = "visibility_benchmark"
 harness = false
 
 [lib]
