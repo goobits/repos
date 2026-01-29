@@ -274,7 +274,7 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_CAP) {
+    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
         Ok(context) => context,
         Err(e) => {
             set_terminal_title_and_flush("✅ repos");
@@ -302,7 +302,7 @@ async fn process_config_repositories(
 
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
-    for (repo_name, _) in &context.repositories {
+    for (repo_name, _) in context.repositories.iter() {
         let progress_bar =
             create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(CONFIG_SYNCING_MESSAGE);
@@ -340,7 +340,7 @@ async fn process_config_repositories(
     let prompt_fn = std::sync::Arc::new(prompt_fn);
 
     for ((repo_name, repo_path), progress_bar) in
-        context.repositories.into_iter().zip(repo_progress_bars)
+        context.repositories.iter().zip(repo_progress_bars)
     {
         let stats_clone = std::sync::Arc::clone(&context.statistics);
         let semaphore_clone = std::sync::Arc::clone(&context.semaphore);

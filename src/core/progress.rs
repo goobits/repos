@@ -15,7 +15,7 @@ use super::stats::SyncStatistics;
 /// concurrent repository operations.
 pub struct ProcessingContext {
     /// List of discovered repositories to process
-    pub repositories: Vec<(String, PathBuf)>,
+    pub repositories: Arc<Vec<(String, PathBuf)>>,
     /// Maximum length of repository names for formatting alignment
     pub max_name_length: usize,
     /// Multi-progress instance for managing multiple concurrent progress bars
@@ -40,7 +40,7 @@ pub struct ProcessingContext {
 /// the same parameter grouping benefits as `ProcessingContext`.
 pub struct GenericProcessingContext<T> {
     /// List of discovered repositories to process
-    pub repositories: Vec<(String, PathBuf)>,
+    pub repositories: Arc<Vec<(String, PathBuf)>>,
     /// Maximum length of repository names for formatting alignment
     pub max_name_length: usize,
     /// Multi-progress instance for managing multiple concurrent progress bars
@@ -59,7 +59,7 @@ pub struct GenericProcessingContext<T> {
 
 /// Creates a `ProcessingContext` from repositories and start time
 pub fn create_processing_context(
-    repositories: Vec<(String, PathBuf)>,
+    repositories: Arc<Vec<(String, PathBuf)>>,
     start_time: std::time::Instant,
     concurrent_limit: usize,
 ) -> Result<ProcessingContext> {
@@ -89,7 +89,7 @@ pub fn create_processing_context(
 
 /// Creates a `GenericProcessingContext` with custom statistics type
 pub fn create_generic_processing_context<T>(
-    repositories: Vec<(String, PathBuf)>,
+    repositories: Arc<Vec<(String, PathBuf)>>,
     start_time: std::time::Instant,
     statistics: T,
     concurrent_limit: usize,

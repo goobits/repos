@@ -48,7 +48,7 @@ pub async fn handle_stage_command(pattern: String) -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_CAP) {
+    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -92,7 +92,7 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_CAP) {
+    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -136,7 +136,7 @@ pub async fn handle_staging_status_command() -> Result<()> {
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_CAP) {
+    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -167,7 +167,7 @@ async fn process_staging_repositories(
 
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
-    for (repo_name, _) in &context.repositories {
+    for (repo_name, _) in context.repositories.iter() {
         let progress_bar =
             create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         let message = if is_staging {
@@ -200,7 +200,7 @@ async fn process_staging_repositories(
     let total_repos = context.total_repos;
 
     for ((repo_name, repo_path), progress_bar) in
-        context.repositories.into_iter().zip(repo_progress_bars)
+        context.repositories.iter().zip(repo_progress_bars)
     {
         let stats_clone = std::sync::Arc::clone(&context.statistics);
         let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
@@ -273,7 +273,7 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
 
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
-    for (repo_name, _) in &context.repositories {
+    for (repo_name, _) in context.repositories.iter() {
         let progress_bar =
             create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(STATUS_MESSAGE);
@@ -287,7 +287,7 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
     let max_name_length = context.max_name_length;
 
     for ((repo_name, repo_path), progress_bar) in
-        context.repositories.into_iter().zip(repo_progress_bars)
+        context.repositories.iter().zip(repo_progress_bars)
     {
         let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
 
@@ -385,7 +385,7 @@ pub async fn handle_commit_command(message: String, include_empty: bool) -> Resu
     println!();
 
     // Create processing context
-    let context = match create_processing_context(repos, start_time, GIT_CONCURRENT_CAP) {
+    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -416,7 +416,7 @@ async fn process_commit_repositories(
 
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
-    for (repo_name, _) in &context.repositories {
+    for (repo_name, _) in context.repositories.iter() {
         let progress_bar =
             create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(COMMITTING_MESSAGE);
@@ -444,7 +444,7 @@ async fn process_commit_repositories(
     let total_repos = context.total_repos;
 
     for ((repo_name, repo_path), progress_bar) in
-        context.repositories.into_iter().zip(repo_progress_bars)
+        context.repositories.iter().zip(repo_progress_bars)
     {
         let stats_clone = std::sync::Arc::clone(&context.statistics);
         let semaphore_clone = std::sync::Arc::clone(&context.semaphore);

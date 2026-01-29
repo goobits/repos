@@ -28,7 +28,7 @@ pub async fn process_hygiene_repositories(context: GenericProcessingContext<Hygi
 
     // Create all repository progress bars
     let mut repo_progress_bars = Vec::new();
-    for (repo_name, _) in &context.repositories {
+    for (repo_name, _) in context.repositories.iter() {
         let progress_bar =
             create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message("checking hygiene...");
@@ -56,7 +56,7 @@ pub async fn process_hygiene_repositories(context: GenericProcessingContext<Hygi
     let total_repos = context.total_repos;
 
     for ((repo_name, repo_path), progress_bar) in
-        context.repositories.into_iter().zip(repo_progress_bars)
+        context.repositories.iter().zip(repo_progress_bars)
     {
         let stats_clone = Arc::clone(&context.statistics);
         let semaphore_clone = Arc::clone(&context.semaphore);

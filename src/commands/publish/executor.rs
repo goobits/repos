@@ -73,14 +73,14 @@ pub async fn execute_publish(
     // I'll assume 8 for now or check if I can import it.
     // Checking previous file read... it was used as `crate::core::GIT_CONCURRENT_CAP`.
     // So it should be available.
-    let context = create_processing_context(repos_for_context, start_time, crate::core::GIT_CONCURRENT_CAP)?;
+    let context = create_processing_context(std::sync::Arc::new(repos_for_context), start_time, crate::core::GIT_CONCURRENT_CAP)?;
 
     let mut futures = FuturesUnordered::new();
     let statistics = Arc::new(Mutex::new(PublishStatistics::default()));
 
     // Create progress bars
     let mut repo_progress_bars = Vec::new();
-    for (repo_name, _) in &context.repositories {
+    for (repo_name, _) in context.repositories.iter() {
         let progress_bar = create_progress_bar(&context.multi_progress, &context.progress_style, repo_name);
         progress_bar.set_message(PUBLISHING_MESSAGE);
         repo_progress_bars.push(progress_bar);
@@ -95,7 +95,7 @@ pub async fn execute_publish(
     let max_name_length = context.max_name_length;
     let publish_semaphore = Arc::new(tokio::sync::Semaphore::new(8));
 
-    for ((pkg, progress_bar), _) in packages.into_iter().zip(repo_progress_bars).zip(context.repositories) {
+    for ((pkg, progress_bar), _) in packages.into_iter().zip(repo_progress_bars).zip(context.repositories.iter()) {
         let stats_clone = Arc::clone(&statistics);
         let semaphore_clone = Arc::clone(&publish_semaphore);
         let footer_clone = footer_pb.clone();
