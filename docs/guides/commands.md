@@ -38,6 +38,7 @@ repos push --sequential      # Debug with serial execution
 
 - [Command Overview](#command-overview)
 - [repos push](#repos-push)
+- [repos pull](#repos-pull)
 - [repos stage](#repos-stage)
 - [repos unstage](#repos-unstage)
 - [repos status](#repos-status)
@@ -56,6 +57,7 @@ repos push --sequential      # Debug with serial execution
 | Command | Purpose |
 |---------|---------|
 | `push` | Push unpushed commits to remotes |
+| `pull` | Pull changes from remotes |
 | `stage` | Stage files matching pattern |
 | `unstage` | Unstage files matching pattern |
 | `status` | Show staging status across repos |
@@ -94,6 +96,28 @@ repos push --sequential        # Run operations one at a time
 ```
 
 **Integrated Health Check**: After pushing, `repos push` automatically checks for subrepo drift and displays a concise summary if any drifted subrepos are found. This gives you a complete picture of your repository health in one command.
+
+---
+
+## repos pull
+
+Pull changes from remotes across all repositories.
+
+| Flag | Description |
+|------|-------------|
+| `--rebase` | Use rebase instead of merge (git pull --rebase) |
+| `--verbose`, `-v` | Show detailed progress for all repos |
+| `--show-changes`, `-c` | Display file changes in repos with uncommitted changes |
+| `--no-drift-check` | Skip subrepo drift check (faster but less complete) |
+| `--jobs N`, `-j N` | Set number of concurrent operations (default: CPU cores + 2) |
+| `--sequential` | Run one operation at a time (useful for debugging) |
+
+```bash
+repos pull                     # Pull changes
+repos pull --rebase            # Pull with rebase
+repos pull --verbose           # Show live progress
+repos pull --jobs 4            # Limit concurrency
+```
 
 ---
 

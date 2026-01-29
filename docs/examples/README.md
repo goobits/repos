@@ -193,13 +193,7 @@ repos status
 
 echo ""
 echo "🔄 Pulling latest changes..."
-# Note: repos doesn't have a pull command yet, so use git directly
-for repo in */; do
-    if [ -d "$repo/.git" ]; then
-        echo "  Pulling $repo"
-        (cd "$repo" && git pull)
-    fi
-done
+repos pull
 
 echo ""
 echo "⚙️  Syncing git config..."
