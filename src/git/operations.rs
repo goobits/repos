@@ -885,6 +885,7 @@ pub async fn get_repo_visibility(path: &Path) -> RepoVisibility {
     let cache = get_visibility_cache();
 
     // Check cache first - lock-free read
+    // Note: Use &Path lookup to avoid PathBuf allocation on cache hits
     if let Some(visibility) = cache.get(path) {
         return *visibility;
     }
