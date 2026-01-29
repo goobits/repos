@@ -56,7 +56,7 @@ pub async fn handle_push_command(
     println!();
 
     // Create processing context with configured concurrency
-    let context = match create_processing_context(repos, start_time, concurrent_limit) {
+    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, concurrent_limit) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -143,7 +143,7 @@ async fn process_push_repositories(
     // Create pipelined futures: each does fetch → immediately push
     let mut pipeline_futures = FuturesUnordered::new();
     for ((repo_name, repo_path), progress_bar) in
-        context.repositories.into_iter().zip(repo_progress_bars)
+        context.repositories.iter().zip(repo_progress_bars)
     {
         let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
         let push_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
@@ -396,7 +396,7 @@ pub async fn handle_pull_command(
     println!();
 
     // Create processing context with configured concurrency
-    let context = match create_processing_context(repos, start_time, concurrent_limit) {
+    let context = match create_processing_context(std::sync::Arc::new(repos), start_time, concurrent_limit) {
         Ok(context) => context,
         Err(e) => {
             // If context creation fails, set completion title and return error
@@ -486,7 +486,7 @@ async fn process_pull_repositories(
     // Create pipelined futures: each does fetch → immediately pull
     let mut pipeline_futures = FuturesUnordered::new();
     for ((repo_name, repo_path), progress_bar) in
-        context.repositories.into_iter().zip(repo_progress_bars)
+        context.repositories.iter().zip(repo_progress_bars)
     {
         let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
         let pull_semaphore_clone = std::sync::Arc::clone(&context.semaphore);

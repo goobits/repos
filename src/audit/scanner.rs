@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use serde_json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -242,9 +243,12 @@ pub async fn run_truffle_scan(
     // Create combined audit statistics
     let audit_stats = AuditStatistics::new();
 
+    // Wrap repositories in Arc to avoid cloning
+    let repos_arc = Arc::new(repos_to_scan);
+
     // Create processing context for TruffleHog scanning
     let truffle_context = create_generic_processing_context(
-        repos_to_scan.clone(),
+        Arc::clone(&repos_arc),
         start_time,
         audit_stats.truffle_stats.clone(),
         TRUFFLE_CONCURRENT_LIMIT,
@@ -255,7 +259,7 @@ pub async fn run_truffle_scan(
 
     // Create processing context for hygiene checking
     let hygiene_context = create_generic_processing_context(
-        repos_to_scan,
+        Arc::clone(&repos_arc),
         start_time,
         audit_stats.hygiene_stats.clone(),
         HYGIENE_CONCURRENT_LIMIT,
@@ -310,7 +314,7 @@ async fn run_truffle_scanning(
     // Extract values before moving context
     let max_name_length = context.max_name_length;
 
-    for (repo_name, repo_path) in context.repositories {
+    for (repo_name, repo_path) in context.repositories.iter() {
         let stats_clone = Arc::clone(&context.statistics);
         let semaphore_clone = Arc::clone(&context.semaphore);
         let progress_style = context.progress_style.clone();
