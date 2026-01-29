@@ -224,15 +224,15 @@ struct Cli {
 }
 
 /// Handles subrepo subcommands
-fn handle_subrepo_command(subcommand: SubrepoCommand) -> Result<()> {
+async fn handle_subrepo_command(subcommand: SubrepoCommand) -> Result<()> {
     match subcommand {
         SubrepoCommand::Validate => {
-            let report = subrepo::validation::validate_subrepos()?;
+            let report = subrepo::validation::validate_subrepos().await?;
             subrepo::validation::display_report(&report);
             Ok(())
         }
         SubrepoCommand::Status { all } => {
-            let statuses = subrepo::status::analyze_subrepos()?;
+            let statuses = subrepo::status::analyze_subrepos().await?;
             subrepo::status::display_status(&statuses, all);
             Ok(())
         }
@@ -241,8 +241,10 @@ fn handle_subrepo_command(subcommand: SubrepoCommand) -> Result<()> {
             to,
             stash,
             force,
-        } => subrepo::sync::sync_subrepo(&name, &to, stash, force),
-        SubrepoCommand::Update { name, force } => subrepo::sync::update_subrepo(&name, force),
+        } => subrepo::sync::sync_subrepo(&name, &to, stash, force).await,
+        SubrepoCommand::Update { name, force } => {
+            subrepo::sync::update_subrepo(&name, force).await
+        }
     }
 }
 
@@ -362,7 +364,9 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Some(Commands::Subrepo { subcommand }) => handle_subrepo_command(subcommand.clone()),
+        Some(Commands::Subrepo { subcommand }) => {
+            handle_subrepo_command(subcommand.clone()).await
+        }
         None => {
             // Default behavior - show help
             use clap::CommandFactory;

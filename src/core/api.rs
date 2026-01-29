@@ -12,7 +12,7 @@
 //!
 //! ```rust,no_run
 //! use goobits_repos::core::find_repos_from_path;
-//! let repos = find_repos_from_path("/path/to/search");
+//! let repos = find_repos_from_path("/path/to/search", None);
 //! ```
 
 // Core types

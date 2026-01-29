@@ -18,7 +18,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let repos = find_repos_from_path(".");
+//!     let repos = find_repos_from_path(".", None);
 //!     for (name, path) in repos {
 //!         println!("{}: {}", name, path.display());
 //!     }

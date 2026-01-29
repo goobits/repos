@@ -38,7 +38,7 @@ async fn test_stress_discovery_and_analysis() -> Result<()> {
     let path = temp_dir.path();
 
     // 1. Discovery
-    let repos = find_repos_from_path(path);
+    let repos = find_repos_from_path(path, None);
     assert_eq!(repos.len(), count);
 
     // 2. Parallel analysis
@@ -67,7 +67,7 @@ async fn test_stress_discovery_scaling_500() -> Result<()> {
     let path = temp_dir.path();
 
     let start = std::time::Instant::now();
-    let repos = find_repos_from_path(path);
+    let repos = find_repos_from_path(path, None);
     let duration = start.elapsed();
 
     assert_eq!(repos.len(), count);

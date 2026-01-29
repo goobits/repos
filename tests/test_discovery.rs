@@ -26,7 +26,7 @@ fn test_find_single_repo() {
     fs::rename(repo.path(), &repo_path).expect("Failed to move repo");
 
     // Find repositories from the repos directory
-    let found_repos = find_repos_from_path(&repos_dir);
+    let found_repos = find_repos_from_path(&repos_dir, None);
 
     assert_eq!(found_repos.len(), 1, "Should find exactly one repository");
     assert_eq!(found_repos[0].0, "my-repo");
@@ -45,7 +45,7 @@ fn test_find_multiple_repos() {
     create_multiple_repos(temp_dir.path(), 5).expect("Failed to create repos");
 
     // Find repositories from the temp directory
-    let found_repos = find_repos_from_path(temp_dir.path());
+    let found_repos = find_repos_from_path(temp_dir.path(), None);
 
     assert_eq!(found_repos.len(), 5, "Should find all 5 repositories");
 
@@ -82,7 +82,7 @@ fn test_find_repos_with_duplicate_names() {
     setup_git_repo(&repo2).expect("Failed to setup repo2");
 
     // Find repositories from the temp directory
-    let found_repos = find_repos_from_path(temp_dir.path());
+    let found_repos = find_repos_from_path(temp_dir.path(), None);
 
     assert_eq!(found_repos.len(), 2, "Should find both repositories");
 
@@ -115,7 +115,7 @@ fn test_skips_node_modules() {
     setup_git_repo(&nested_repo).expect("Failed to setup nested repo");
 
     // Find repositories from the temp directory
-    let found_repos = find_repos_from_path(temp_dir.path());
+    let found_repos = find_repos_from_path(temp_dir.path(), None);
 
     // Should only find the valid repo, not the one in node_modules
     assert_eq!(found_repos.len(), 1, "Should skip repo in node_modules");
@@ -147,7 +147,7 @@ fn test_max_depth_limit() {
     setup_git_repo(&shallow_repo).expect("Failed to setup shallow repo");
 
     // Find repositories from the temp directory
-    let found_repos = find_repos_from_path(temp_dir.path());
+    let found_repos = find_repos_from_path(temp_dir.path(), None);
 
     // Should only find the shallow repo, not the deep one
     assert_eq!(
@@ -179,7 +179,7 @@ fn test_handles_symlinks() {
         let symlink_path = temp_dir.path().join("symlink-repo");
         if symlink(&real_repo, &symlink_path).is_ok() {
             // Find repositories from the temp directory
-            let found_repos = find_repos_from_path(temp_dir.path());
+            let found_repos = find_repos_from_path(temp_dir.path(), None);
 
             // Should find both the real repo and symlink (with deduplication)
             // Depending on implementation, might find 1 or 2
@@ -202,7 +202,7 @@ fn test_current_directory_as_repo() {
     setup_git_repo(temp_dir.path()).expect("Failed to setup repo");
 
     // Find repositories - should find the directory itself as a repo
-    let found_repos = find_repos_from_path(temp_dir.path());
+    let found_repos = find_repos_from_path(temp_dir.path(), None);
 
     // Should find current directory as a repo with appropriate name
     assert_eq!(
@@ -235,7 +235,7 @@ fn test_alphabetical_sorting() {
     }
 
     // Find repositories from the temp directory
-    let found_repos = find_repos_from_path(temp_dir.path());
+    let found_repos = find_repos_from_path(temp_dir.path(), None);
 
     assert_eq!(found_repos.len(), 5);
 

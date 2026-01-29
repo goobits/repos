@@ -67,8 +67,8 @@ impl SubrepoStatus {
 }
 
 /// Analyze all subrepos and return status for shared ones
-pub fn analyze_subrepos() -> Result<Vec<SubrepoStatus>> {
-    let report = super::validation::validate_subrepos()?;
+pub async fn analyze_subrepos() -> Result<Vec<SubrepoStatus>> {
+    let report = super::validation::validate_subrepos().await?;
 
     let mut statuses = Vec::new();
     for (remote_url, instances) in report.by_remote {

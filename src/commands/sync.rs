@@ -27,7 +27,7 @@ pub async fn handle_push_command(
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE, None).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
@@ -70,7 +70,7 @@ pub async fn handle_push_command(
 
     // Check for subrepo drift unless explicitly skipped
     if !no_drift_check {
-        check_and_display_drift();
+        check_and_display_drift().await;
     }
 
     // Set terminal title to green checkbox to indicate completion
@@ -342,9 +342,9 @@ async fn process_push_repositories(
 }
 
 /// Check for subrepo drift and display concise summary
-fn check_and_display_drift() {
+async fn check_and_display_drift() {
     // Try to analyze subrepos - if it fails (e.g., no subrepos), silently skip
-    if let Ok(statuses) = crate::subrepo::status::analyze_subrepos() {
+    if let Ok(statuses) = crate::subrepo::status::analyze_subrepos().await {
         // Only display if there's drift to report
         if statuses.iter().any(|s| s.has_drift) {
             crate::subrepo::status::display_drift_summary(&statuses);
@@ -366,7 +366,7 @@ pub async fn handle_pull_command(
     // Set terminal title to indicate repos is running
     set_terminal_title("🔽 repos");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE, None).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
@@ -410,7 +410,7 @@ pub async fn handle_pull_command(
 
     // Check for subrepo drift unless explicitly skipped
     if !no_drift_check {
-        check_and_display_drift();
+        check_and_display_drift().await;
     }
 
     // Set terminal title to green checkbox to indicate completion

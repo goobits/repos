@@ -190,29 +190,22 @@ pub async fn run_truffle_scan(
     json: bool,
     target_repos: Option<Vec<String>>,
 ) -> Result<(TruffleStatistics, HygieneStatistics)> {
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    // Pass target_repos to init_command for optimized filtering during discovery
+    let (start_time, repos) = init_command(SCANNING_MESSAGE, target_repos.clone()).await;
 
     if repos.is_empty() {
+        if target_repos.is_some() {
+            println!("\r❌ No matching repositories found");
+            set_terminal_title_and_flush("✅ repos");
+            return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
+        }
+
         println!("\r{NO_REPOS_MESSAGE}");
         set_terminal_title_and_flush("✅ repos");
         return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
     }
 
-    // Filter repositories if specific targets are specified
-    let repos_to_scan = if let Some(targets) = target_repos {
-        repos
-            .into_iter()
-            .filter(|(name, _)| targets.contains(name))
-            .collect()
-    } else {
-        repos
-    };
-
-    if repos_to_scan.is_empty() {
-        println!("\r❌ No matching repositories found");
-        set_terminal_title_and_flush("✅ repos");
-        return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
-    }
+    let repos_to_scan = repos;
 
     let total_repos = repos_to_scan.len();
     let repo_word = if total_repos == 1 {
