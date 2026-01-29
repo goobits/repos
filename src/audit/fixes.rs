@@ -8,9 +8,9 @@
 use anyhow::{anyhow, Result};
 use serde_json;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use tokio::fs;
 use tokio::process::Command;
 
 use super::hygiene::{HygieneStatistics, HygieneViolation, ViolationType};
@@ -310,7 +310,7 @@ async fn fix_gitignore_violations(
 
     // Read existing .gitignore
     let gitignore_path = Path::new(repo_path).join(".gitignore");
-    let existing_content = fs::read_to_string(&gitignore_path).unwrap_or_default();
+    let existing_content = fs::read_to_string(&gitignore_path).await.unwrap_or_default();
     let existing_patterns: HashSet<_> = existing_content
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
@@ -340,7 +340,7 @@ async fn fix_gitignore_violations(
         gitignore_content.push('\n');
     }
 
-    fs::write(&gitignore_path, gitignore_content)?;
+    fs::write(&gitignore_path, gitignore_content).await?;
 
     // Untrack files if requested
     let mut untracked_count = 0;
@@ -508,7 +508,7 @@ async fn fix_large_files(
     }
 
     // Write paths to temporary file
-    fs::write(&paths_file, paths_content)?;
+    fs::write(&paths_file, paths_content).await?;
 
     // Run git filter-repo to remove the files
     let paths_file_str = paths_file
@@ -528,7 +528,7 @@ async fn fix_large_files(
         .await?;
 
     // Clean up temp file
-    let _ = fs::remove_file(paths_file);
+    let _ = fs::remove_file(paths_file).await;
 
     if !result.status.success() {
         let stderr = String::from_utf8_lossy(&result.stderr);
@@ -636,7 +636,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     }
 
     if !replacements_content.is_empty() {
-        fs::write(&replacements_file, replacements_content)?;
+        fs::write(&replacements_file, replacements_content).await?;
 
         // Run git filter-repo to replace secrets with REDACTED
         let replacements_file_str = replacements_file
@@ -654,7 +654,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
             .output()
             .await?;
 
-        let _ = fs::remove_file(replacements_file);
+        let _ = fs::remove_file(replacements_file).await;
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
@@ -673,7 +673,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
             .map(|f| format!("literal:{f}\n"))
             .collect();
 
-        fs::write(&paths_file, paths_content)?;
+        fs::write(&paths_file, paths_content).await?;
 
         let paths_file_str = paths_file
             .to_str()
@@ -691,7 +691,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
             .output()
             .await?;
 
-        let _ = fs::remove_file(paths_file);
+        let _ = fs::remove_file(paths_file).await;
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
