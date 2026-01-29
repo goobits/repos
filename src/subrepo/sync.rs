@@ -131,8 +131,8 @@ fn fetch_latest_commit(path: &Path) -> Result<String> {
 }
 
 /// Sync a subrepo to a specific commit across all parent repositories
-pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -> Result<()> {
-    let report = super::validation::validate_subrepos()?;
+pub async fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -> Result<()> {
+    let report = super::validation::validate_subrepos().await?;
     sync_subrepo_with_report(name, target_commit, stash, force, &report)
 }
 
@@ -223,8 +223,8 @@ pub fn sync_subrepo_with_report(
 }
 
 /// Update a subrepo to the latest commit from remote
-pub fn update_subrepo(name: &str, force: bool) -> Result<()> {
-    let report = super::validation::validate_subrepos()?;
+pub async fn update_subrepo(name: &str, force: bool) -> Result<()> {
+    let report = super::validation::validate_subrepos().await?;
     update_subrepo_with_report(name, force, &report)
 }
 

@@ -27,7 +27,7 @@ pub async fn handle_stage_command(pattern: String) -> Result<()> {
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos stage");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE, None).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
@@ -71,7 +71,7 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos unstage");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE, None).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
@@ -115,7 +115,7 @@ pub async fn handle_staging_status_command() -> Result<()> {
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos status");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE, None).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
@@ -364,7 +364,7 @@ pub async fn handle_commit_command(message: String, include_empty: bool) -> Resu
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos commit");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE, None).await;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");

@@ -11,39 +11,43 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Discover all nested repositories and generate a validation report
-pub fn validate_subrepos() -> Result<ValidationReport> {
-    let parent_repos = crate::core::discovery::find_repos();
-    let mut all_nested = Vec::new();
+pub async fn validate_subrepos() -> Result<ValidationReport> {
+    tokio::task::spawn_blocking(move || {
+        let parent_repos = crate::core::discovery::find_repos(None);
+        let mut all_nested = Vec::new();
 
-    println!(
-        "🔍 Scanning {} parent repositories for nested repos...\n",
-        parent_repos.len()
-    );
+        println!(
+            "🔍 Scanning {} parent repositories for nested repos...\n",
+            parent_repos.len()
+        );
 
-    for (parent_name, parent_path) in parent_repos {
-        let nested = find_nested_in_parent(&parent_name, &parent_path)?;
-        all_nested.extend(nested);
-    }
-
-    // Group by remote URL
-    let mut by_remote: HashMap<String, Vec<SubrepoInstance>> = HashMap::new();
-    let mut no_remote = Vec::new();
-
-    for instance in all_nested {
-        if let Some(ref remote) = instance.remote_url {
-            by_remote.entry(remote.clone()).or_default().push(instance);
-        } else {
-            no_remote.push(instance);
+        for (parent_name, parent_path) in parent_repos {
+            let nested = find_nested_in_parent(&parent_name, &parent_path)?;
+            all_nested.extend(nested);
         }
-    }
 
-    let total_nested = by_remote.values().map(std::vec::Vec::len).sum::<usize>() + no_remote.len();
+        // Group by remote URL
+        let mut by_remote: HashMap<String, Vec<SubrepoInstance>> = HashMap::new();
+        let mut no_remote = Vec::new();
 
-    Ok(ValidationReport {
-        total_nested,
-        by_remote,
-        no_remote,
+        for instance in all_nested {
+            if let Some(ref remote) = instance.remote_url {
+                by_remote.entry(remote.clone()).or_default().push(instance);
+            } else {
+                no_remote.push(instance);
+            }
+        }
+
+        let total_nested =
+            by_remote.values().map(std::vec::Vec::len).sum::<usize>() + no_remote.len();
+
+        Ok(ValidationReport {
+            total_nested,
+            by_remote,
+            no_remote,
+        })
     })
+    .await?
 }
 
 /// Find nested repositories within a parent repository

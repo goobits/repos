@@ -36,7 +36,10 @@ fn is_git_file(path: &Path) -> bool {
 /// This function uses parallel directory walking for significantly better performance
 /// with large directory trees (5-10x faster than sequential walking).
 /// Uses `DashMap` for lock-free concurrent access, eliminating mutex contention.
-pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathBuf)> {
+pub fn find_repos_from_path(
+    search_path: impl AsRef<Path>,
+    filter: Option<&[String]>,
+) -> Vec<(String, PathBuf)> {
     let search_path = search_path.as_ref();
 
     // Use DashMap for lock-free concurrent access (20-40% faster than Mutex<HashMap>)
@@ -46,6 +49,9 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
     let repos_map = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
     let name_counts = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
     let search_path_buf = search_path.to_path_buf();
+
+    // Convert filter to Arc for sharing across threads
+    let filter = filter.map(|f| Arc::new(f.to_vec()));
 
     // Build parallel walker with optimizations
     let walker = WalkBuilder::new(search_path)
@@ -75,6 +81,7 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
         let repos_map = Arc::clone(&repos_map);
         let name_counts = Arc::clone(&name_counts);
         let search_path_buf = search_path_buf.clone();
+        let filter = filter.clone();
 
         Box::new(move |result| {
             use ignore::WalkState;
@@ -141,6 +148,12 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                                     }
                                 };
 
+                                if let Some(ref f) = filter {
+                                    if !f.contains(&repo_name) {
+                                        return WalkState::Continue;
+                                    }
+                                }
+
                                 entry.insert(repo_name);
                             }
                         }
@@ -172,20 +185,23 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 ///
 /// This is a convenience wrapper around `find_repos_from_path()` that searches
 /// from the current working directory.
-pub fn find_repos() -> Vec<(String, PathBuf)> {
-    find_repos_from_path(".")
+pub fn find_repos(filter: Option<&[String]>) -> Vec<(String, PathBuf)> {
+    find_repos_from_path(".", filter)
 }
 
 /// Common initialization for commands that scan repositories
 #[must_use] 
-pub async fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, PathBuf)>) {
+pub async fn init_command(
+    scanning_msg: &str,
+    filter: Option<Vec<String>>,
+) -> (std::time::Instant, Vec<(String, PathBuf)>) {
     println!();
     print!("{scanning_msg}");
     // Flush stdout - ignore errors as this is non-critical
     let _ = std::io::stdout().flush();
 
     let start_time = std::time::Instant::now();
-    let repos = tokio::task::spawn_blocking(find_repos)
+    let repos = tokio::task::spawn_blocking(move || find_repos(filter.as_deref()))
         .await
         .unwrap_or_else(|e| {
             eprintln!("Error in repository discovery: {e}");
@@ -308,7 +324,7 @@ mod tests {
         }
 
         // Run discovery
-        let repos = find_repos_from_path(root);
+        let repos = find_repos_from_path(root, None);
 
         assert_eq!(repos.len(), 3);
 

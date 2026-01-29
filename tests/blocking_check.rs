@@ -54,7 +54,7 @@ async fn test_blocking_discovery() {
     // Run the command under test
     println!("Running init_command...");
     // This is synchronous and will block the single thread
-    let _ = init_command("Scanning...").await;
+    let _ = init_command("Scanning...", None).await;
 
     let duration = start.elapsed();
     println!("init_command took: {:?}", duration);
@@ -125,7 +125,7 @@ fn test_blocking_discovery_measure() {
         println!("Running init_command...");
         // This will block the single thread
         // std::thread::sleep(Duration::from_millis(100));
-        let _ = init_command("Scanning...").await;
+        let _ = init_command("Scanning...", None).await;
         let duration = start.elapsed();
 
         // Yield to let the heartbeat task process (it should process now)
