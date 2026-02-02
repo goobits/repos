@@ -19,16 +19,9 @@ impl SyncCoordinator {
     pub fn new(
         repo_names: &[String],
         total_repos: usize,
-        fetch_concurrency: usize,
-        update_concurrency: usize,
         stats: Arc<Mutex<SyncStatistics>>,
     ) -> Self {
-        let state = SyncState::new(
-            repo_names,
-            total_repos,
-            fetch_concurrency,
-            update_concurrency,
-        );
+        let state = SyncState::new(repo_names, total_repos);
         let renderer = HudRenderer::new();
         Self {
             state: Arc::new(Mutex::new(state)),

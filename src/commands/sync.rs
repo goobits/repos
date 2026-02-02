@@ -95,7 +95,7 @@ async fn process_push_repositories(
     use crate::git::{fetch_and_analyze, push_if_needed};
     use futures::stream::{FuturesUnordered, StreamExt};
 
-    let use_hud = !verbose;
+    let use_hud = false;
 
     // Use 2x concurrency for fetch phase (I/O bound), standard concurrency for push phase
     use crate::core::config::FETCH_CONCURRENT_CAP;
@@ -111,8 +111,6 @@ async fn process_push_repositories(
         Some(std::sync::Arc::new(SyncCoordinator::new(
             &repo_names,
             context.total_repos,
-            fetch_concurrency,
-            context.max_concurrency,
             std::sync::Arc::clone(&context.statistics),
         )))
     } else {
@@ -357,14 +355,14 @@ async fn process_push_repositories(
 
     while pipeline_futures.next().await.is_some() {}
 
-    if let Some(coordinator) = coordinator.as_ref() {
-        coordinator.render_final();
-    }
     if let Some(stop_tx) = hud_stop_tx {
         let _ = stop_tx.send(true);
     }
     if let Some(handle) = hud_handle {
         let _ = handle.await;
+    }
+    if let Some(coordinator) = coordinator.as_ref() {
+        coordinator.render_final();
     }
 
     // Show rate limit warning if detected
@@ -379,6 +377,11 @@ async fn process_push_repositories(
     }
 
     let final_stats = acquire_stats_lock(&context.statistics);
+    if !verbose {
+        let summary = final_stats.generate_summary(context.total_repos, context.start_time.elapsed());
+        println!();
+        println!("{summary}");
+    }
     let detailed_summary = final_stats.generate_detailed_summary(show_changes);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));
@@ -483,7 +486,7 @@ async fn process_pull_repositories(
     use crate::git::{fetch_and_analyze_for_pull, pull_if_needed};
     use futures::stream::{FuturesUnordered, StreamExt};
 
-    let use_hud = !verbose;
+    let use_hud = false;
 
     // Use 2x concurrency for fetch phase (I/O bound), standard concurrency for pull phase
     use crate::core::config::FETCH_CONCURRENT_CAP;
@@ -499,8 +502,6 @@ async fn process_pull_repositories(
         Some(std::sync::Arc::new(SyncCoordinator::new(
             &repo_names,
             context.total_repos,
-            fetch_concurrency,
-            context.max_concurrency,
             std::sync::Arc::clone(&context.statistics),
         )))
     } else {
@@ -762,14 +763,14 @@ async fn process_pull_repositories(
 
     while pipeline_futures.next().await.is_some() {}
 
-    if let Some(coordinator) = coordinator.as_ref() {
-        coordinator.render_final();
-    }
     if let Some(stop_tx) = hud_stop_tx {
         let _ = stop_tx.send(true);
     }
     if let Some(handle) = hud_handle {
         let _ = handle.await;
+    }
+    if let Some(coordinator) = coordinator.as_ref() {
+        coordinator.render_final();
     }
 
     // Show rate limit warning if detected
@@ -784,6 +785,11 @@ async fn process_pull_repositories(
     }
 
     let final_stats = acquire_stats_lock(&context.statistics);
+    if !verbose {
+        let summary = final_stats.generate_summary(context.total_repos, context.start_time.elapsed());
+        println!();
+        println!("{summary}");
+    }
     let detailed_summary = final_stats.generate_detailed_summary(show_changes);
     if !detailed_summary.is_empty() {
         println!("\n{}", "━".repeat(70));

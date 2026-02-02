@@ -17,6 +17,7 @@ use std::time::Duration;
 pub struct SyncStatistics {
     // Atomic counters for lock-free access
     pub synced_repos: AtomicU64,
+    pub pushed_repos: AtomicU64,
     pub total_commits_pushed: AtomicU64,
     pub skipped_repos: AtomicU64,
     pub error_repos: AtomicU64,
@@ -40,6 +41,7 @@ impl SyncStatistics {
     pub fn new() -> Self {
         Self {
             synced_repos: AtomicU64::new(0),
+            pushed_repos: AtomicU64::new(0),
             total_commits_pushed: AtomicU64::new(0),
             skipped_repos: AtomicU64::new(0),
             error_repos: AtomicU64::new(0),
@@ -63,6 +65,7 @@ impl SyncStatistics {
         match status {
             Status::Pushed => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
+                self.pushed_repos.fetch_add(1, Ordering::Relaxed);
                 // Extract number of commits from message (e.g., "3 commits pushed")
                 if let Ok(commits) = message
                     .split_whitespace()
@@ -76,16 +79,6 @@ impl SyncStatistics {
             }
             Status::Pulled => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
-                // Extract number of commits from message (e.g., "3 commits pulled")
-                if let Ok(commits) = message
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("0")
-                    .parse::<u64>()
-                {
-                    self.total_commits_pushed
-                        .fetch_add(commits, Ordering::Relaxed);
-                }
             }
             Status::Synced
             | Status::ConfigSynced
@@ -160,7 +153,8 @@ impl SyncStatistics {
 
         // Load atomic values
         let synced = self.synced_repos.load(Ordering::Relaxed);
-        let pushed = self.total_commits_pushed.load(Ordering::Relaxed);
+        let pushed_repos = self.pushed_repos.load(Ordering::Relaxed);
+        let pushed_commits = self.total_commits_pushed.load(Ordering::Relaxed);
         let errors = self.error_repos.load(Ordering::Relaxed);
 
         let mut summary = String::new();
@@ -168,11 +162,11 @@ impl SyncStatistics {
         // Main summary line
         if errors > 0 {
             summary.push_str(&format!(
-                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed} pushed • {errors} failed"
+                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed_repos} pushed ({pushed_commits} commits) • {errors} failed"
             ));
         } else {
             summary.push_str(&format!(
-                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed} pushed"
+                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed_repos} pushed ({pushed_commits} commits)"
             ));
         }
 

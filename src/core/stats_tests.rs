@@ -171,6 +171,7 @@ mod tests {
         stats.update("repo3", "/p3", &Status::Error, "failed", false);
 
         assert_eq!(stats.synced_repos.load(Ordering::Relaxed), 2); // Both Synced and Pushed increment synced_repos
+        assert_eq!(stats.pushed_repos.load(Ordering::Relaxed), 1);
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 3);
         assert_eq!(stats.error_repos.load(Ordering::Relaxed), 1);
     }
