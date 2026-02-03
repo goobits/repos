@@ -123,35 +123,48 @@ async fn process_push_repositories(
         (None, None)
     };
 
-    let repo_progress_bars: Vec<Option<indicatif::ProgressBar>> = if verbose {
-        context
-            .repositories
-            .iter()
-            .map(|(repo_name, _)| {
-                let pb = create_progress_bar(
-                    &context.multi_progress,
-                    &context.progress_style,
-                    repo_name,
-                );
-                pb.set_message("processing...");
-                Some(pb)
-            })
-            .collect()
-    } else {
-        vec![None; context.repositories.len()]
-    };
-
-    let footer_pb = if verbose {
-        let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
-        let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
-        footer_pb.set_message(
-            "✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
-        );
-        let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
-        Some(footer_pb)
-    } else {
-        None
-    };
+    let (repo_progress_bars, footer_pb): (Vec<Option<indicatif::ProgressBar>>, Option<indicatif::ProgressBar>) =
+        if verbose {
+            let bars = context
+                .repositories
+                .iter()
+                .map(|(repo_name, _)| {
+                    let pb = create_progress_bar(
+                        &context.multi_progress,
+                        &context.progress_style,
+                        repo_name,
+                    );
+                    pb.set_message("processing...");
+                    Some(pb)
+                })
+                .collect();
+            let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
+            let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
+            footer_pb.set_message(
+                "✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+            );
+            let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
+            (bars, Some(footer_pb))
+        } else {
+            use indicatif::{ProgressBar, ProgressStyle};
+            let single_pb = context
+                .multi_progress
+                .add(ProgressBar::new(context.total_repos as u64));
+            if let Ok(style) = ProgressStyle::default_bar().template("[{pos}/{len}] {msg}") {
+                single_pb.set_style(style);
+            }
+            single_pb.set_message("📤 Processing...");
+            let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
+            let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
+            footer_pb.set_message(
+                "✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+            );
+            let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
+            (
+                vec![Some(single_pb); context.repositories.len()],
+                Some(footer_pb),
+            )
+        };
 
     let max_name_length = context.max_name_length;
     let start_time = context.start_time;
@@ -327,6 +340,9 @@ async fn process_push_repositories(
                     ));
                     progress_bar.finish();
                 }
+            } else if let Some(progress_bar) = progress_bar.as_ref() {
+                progress_bar.set_message(format!("{} {} ({})", status.symbol(), repo_name, status.text()));
+                progress_bar.inc(1);
             }
 
             let stats_guard = acquire_stats_lock(&stats_clone);
@@ -346,6 +362,22 @@ async fn process_push_repositories(
                 }
             }
             drop(stats_guard);
+            if !verbose_clone {
+                if let Some(footer_clone) = footer_clone.as_ref() {
+                    use std::sync::atomic::Ordering;
+                    let stats_locked = stats_clone.lock().unwrap();
+                    let no_upstream_len = stats_locked.no_upstream_repos.lock().unwrap().len();
+                    let live_counters = format!(
+                        "✅ {} Pushed  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
+                        stats_locked.pushed_repos.load(Ordering::Relaxed),
+                        stats_locked.synced_repos.load(Ordering::Relaxed),
+                        stats_locked.error_repos.load(Ordering::Relaxed),
+                        no_upstream_len,
+                        stats_locked.skipped_repos.load(Ordering::Relaxed)
+                    );
+                    footer_clone.set_message(live_counters);
+                }
+            }
             if let Some(coordinator) = coordinator_clone.as_ref() {
                 coordinator.set_status(repo_name, status, &message);
             }
@@ -514,35 +546,48 @@ async fn process_pull_repositories(
         (None, None)
     };
 
-    let repo_progress_bars: Vec<Option<indicatif::ProgressBar>> = if verbose {
-        context
-            .repositories
-            .iter()
-            .map(|(repo_name, _)| {
-                let pb = create_progress_bar(
-                    &context.multi_progress,
-                    &context.progress_style,
-                    repo_name,
-                );
-                pb.set_message("processing...");
-                Some(pb)
-            })
-            .collect()
-    } else {
-        vec![None; context.repositories.len()]
-    };
-
-    let footer_pb = if verbose {
-        let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
-        let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
-        footer_pb.set_message(
-            "🔽 0 Pulled  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
-        );
-        let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
-        Some(footer_pb)
-    } else {
-        None
-    };
+    let (repo_progress_bars, footer_pb): (Vec<Option<indicatif::ProgressBar>>, Option<indicatif::ProgressBar>) =
+        if verbose {
+            let bars = context
+                .repositories
+                .iter()
+                .map(|(repo_name, _)| {
+                    let pb = create_progress_bar(
+                        &context.multi_progress,
+                        &context.progress_style,
+                        repo_name,
+                    );
+                    pb.set_message("processing...");
+                    Some(pb)
+                })
+                .collect();
+            let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
+            let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
+            footer_pb.set_message(
+                "🔽 0 Pulled  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+            );
+            let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
+            (bars, Some(footer_pb))
+        } else {
+            use indicatif::{ProgressBar, ProgressStyle};
+            let single_pb = context
+                .multi_progress
+                .add(ProgressBar::new(context.total_repos as u64));
+            if let Ok(style) = ProgressStyle::default_bar().template("[{pos}/{len}] {msg}") {
+                single_pb.set_style(style);
+            }
+            single_pb.set_message("🔽 Processing...");
+            let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
+            let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
+            footer_pb.set_message(
+                "🔽 0 Pulled  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+            );
+            let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
+            (
+                vec![Some(single_pb); context.repositories.len()],
+                Some(footer_pb),
+            )
+        };
 
     let max_name_length = context.max_name_length;
     let start_time = context.start_time;
@@ -735,6 +780,9 @@ async fn process_pull_repositories(
                     ));
                     progress_bar.finish();
                 }
+            } else if let Some(progress_bar) = progress_bar.as_ref() {
+                progress_bar.set_message(format!("{} {} ({})", status.symbol(), repo_name, status.text()));
+                progress_bar.inc(1);
             }
 
             let stats_guard = acquire_stats_lock(&stats_clone);
@@ -754,6 +802,22 @@ async fn process_pull_repositories(
                 }
             }
             drop(stats_guard);
+            if !verbose_clone {
+                if let Some(footer_clone) = footer_clone.as_ref() {
+                    use std::sync::atomic::Ordering;
+                    let stats_locked = stats_clone.lock().unwrap();
+                    let no_upstream_len = stats_locked.no_upstream_repos.lock().unwrap().len();
+                    let live_counters = format!(
+                        "🔽 {} Pulled  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
+                        total_commits_pulled_clone.load(Ordering::Relaxed),
+                        stats_locked.synced_repos.load(Ordering::Relaxed),
+                        stats_locked.error_repos.load(Ordering::Relaxed),
+                        no_upstream_len,
+                        stats_locked.skipped_repos.load(Ordering::Relaxed)
+                    );
+                    footer_clone.set_message(live_counters);
+                }
+            }
             if let Some(coordinator) = coordinator_clone.as_ref() {
                 coordinator.set_status(repo_name, status, &message);
             }
