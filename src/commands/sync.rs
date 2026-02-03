@@ -29,6 +29,7 @@ pub async fn handle_push_command(
     set_terminal_title("🚀 repos");
 
     let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    println!();
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
@@ -123,7 +124,11 @@ async fn process_push_repositories(
         (None, None)
     };
 
-    let (repo_progress_bars, footer_pb): (Vec<Option<indicatif::ProgressBar>>, Option<indicatif::ProgressBar>) =
+    let (repo_progress_bars, footer_pb, single_pb): (
+        Vec<Option<indicatif::ProgressBar>>,
+        Option<indicatif::ProgressBar>,
+        Option<indicatif::ProgressBar>,
+    ) =
         if verbose {
             let bars = context
                 .repositories
@@ -144,7 +149,7 @@ async fn process_push_repositories(
                 "✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
             );
             let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
-            (bars, Some(footer_pb))
+            (bars, Some(footer_pb), None)
         } else {
             use indicatif::{ProgressBar, ProgressStyle};
             let single_pb = context
@@ -161,8 +166,9 @@ async fn process_push_repositories(
             );
             let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
             (
-                vec![Some(single_pb); context.repositories.len()],
+                vec![None; context.repositories.len()],
                 Some(footer_pb),
+                Some(single_pb),
             )
         };
 
@@ -183,6 +189,7 @@ async fn process_push_repositories(
         let push_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let stats_clone = std::sync::Arc::clone(&context.statistics);
         let footer_clone = footer_pb.clone();
+        let single_pb_clone = single_pb.clone();
         let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
         let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
         let coordinator_clone = coordinator.clone();
@@ -340,7 +347,7 @@ async fn process_push_repositories(
                     ));
                     progress_bar.finish();
                 }
-            } else if let Some(progress_bar) = progress_bar.as_ref() {
+            } else if let Some(progress_bar) = single_pb_clone.as_ref() {
                 progress_bar.set_message(format!("{} {} ({})", status.symbol(), repo_name, status.text()));
                 progress_bar.inc(1);
             }
@@ -449,6 +456,7 @@ pub async fn handle_pull_command(
     set_terminal_title("🔽 repos");
 
     let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    println!();
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
@@ -546,7 +554,11 @@ async fn process_pull_repositories(
         (None, None)
     };
 
-    let (repo_progress_bars, footer_pb): (Vec<Option<indicatif::ProgressBar>>, Option<indicatif::ProgressBar>) =
+    let (repo_progress_bars, footer_pb, single_pb): (
+        Vec<Option<indicatif::ProgressBar>>,
+        Option<indicatif::ProgressBar>,
+        Option<indicatif::ProgressBar>,
+    ) =
         if verbose {
             let bars = context
                 .repositories
@@ -567,7 +579,7 @@ async fn process_pull_repositories(
                 "🔽 0 Pulled  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
             );
             let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
-            (bars, Some(footer_pb))
+            (bars, Some(footer_pb), None)
         } else {
             use indicatif::{ProgressBar, ProgressStyle};
             let single_pb = context
@@ -584,8 +596,9 @@ async fn process_pull_repositories(
             );
             let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
             (
-                vec![Some(single_pb); context.repositories.len()],
+                vec![None; context.repositories.len()],
                 Some(footer_pb),
+                Some(single_pb),
             )
         };
 
@@ -609,6 +622,7 @@ async fn process_pull_repositories(
         let pull_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
         let stats_clone = std::sync::Arc::clone(&context.statistics);
         let footer_clone = footer_pb.clone();
+        let single_pb_clone = single_pb.clone();
         let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
         let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
         let total_commits_pulled_clone = std::sync::Arc::clone(&total_commits_pulled);
@@ -780,7 +794,7 @@ async fn process_pull_repositories(
                     ));
                     progress_bar.finish();
                 }
-            } else if let Some(progress_bar) = progress_bar.as_ref() {
+            } else if let Some(progress_bar) = single_pb_clone.as_ref() {
                 progress_bar.set_message(format!("{} {} ({})", status.symbol(), repo_name, status.text()));
                 progress_bar.inc(1);
             }
