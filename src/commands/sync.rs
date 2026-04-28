@@ -146,7 +146,8 @@ async fn process_push_repositories(
             let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
             let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
             footer_pb.set_message(
-                "✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+                "✅ 0 Pushed / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
+                    .to_string(),
             );
             let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
             (bars, Some(footer_pb), None)
@@ -162,7 +163,8 @@ async fn process_push_repositories(
             let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
             let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
             footer_pb.set_message(
-                "✅ 0 Pushed  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+                "✅ 0 Pushed / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
+                    .to_string(),
             );
             let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
             (
@@ -375,8 +377,9 @@ async fn process_push_repositories(
                     let stats_locked = stats_clone.lock().unwrap();
                     let no_upstream_len = stats_locked.no_upstream_repos.lock().unwrap().len();
                     let live_counters = format!(
-                        "✅ {} Pushed  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
+                        "✅ {} Pushed / {} Commits  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
                         stats_locked.pushed_repos.load(Ordering::Relaxed),
+                        stats_locked.total_commits_pushed.load(Ordering::Relaxed),
                         stats_locked.synced_repos.load(Ordering::Relaxed),
                         stats_locked.error_repos.load(Ordering::Relaxed),
                         no_upstream_len,

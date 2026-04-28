@@ -232,8 +232,39 @@ pub struct FetchResult {
     pub current_branch: String,
     pub ahead_count: u32,
     pub upstream_exists: bool,
+    pub upstream_remote: Option<String>,
+    pub upstream_branch: Option<String>,
     pub status: Status,
     pub message: String,
+}
+
+/// Resolve the configured upstream remote + branch for the current branch.
+async fn get_upstream_push_target(
+    path: &Path,
+    current_branch: &str,
+) -> Result<Option<(String, String)>> {
+    let remote_key = format!("branch.{current_branch}.remote");
+    let merge_key = format!("branch.{current_branch}.merge");
+
+    let remote_name = get_git_config(path, &remote_key).await?;
+    let merge_ref = get_git_config(path, &merge_key).await?;
+
+    if let (Some(remote_name), Some(merge_ref)) = (remote_name, merge_ref) {
+        let upstream_branch = merge_ref
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&merge_ref)
+            .to_string();
+        return Ok(Some((remote_name, upstream_branch)));
+    }
+
+    let upstream_ref = run_git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await?;
+    if upstream_ref.0 {
+        if let Some((remote_name, upstream_branch)) = upstream_ref.1.split_once('/') {
+            return Ok(Some((remote_name.to_string(), upstream_branch.to_string())));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
@@ -260,6 +291,8 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
                 current_branch: String::new(),
                 ahead_count: 0,
                 upstream_exists: false,
+                upstream_remote: None,
+                upstream_branch: None,
                 status: Status::NoRemote,
                 message: STATUS_NO_REMOTE.to_string(),
             };
@@ -272,6 +305,8 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             current_branch: String::new(),
             ahead_count: 0,
             upstream_exists: false,
+            upstream_remote: None,
+            upstream_branch: None,
             status: Status::NoRemote,
             message: STATUS_NO_REMOTE.to_string(),
         };
@@ -286,6 +321,8 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
                 current_branch: String::new(),
                 ahead_count: 0,
                 upstream_exists: false,
+                upstream_remote: None,
+                upstream_branch: None,
                 status: Status::Skip,
                 message: STATUS_DETACHED_HEAD.to_string(),
             };
@@ -299,6 +336,8 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             current_branch: String::new(),
             ahead_count: 0,
             upstream_exists: false,
+            upstream_remote: None,
+            upstream_branch: None,
             status: Status::Skip,
             message: STATUS_DETACHED_HEAD.to_string(),
         };
@@ -317,6 +356,8 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             current_branch,
             ahead_count: 0,
             upstream_exists: false,
+            upstream_remote: None,
+            upstream_branch: None,
             status: Status::Error,
             message: final_message,
         };
@@ -334,10 +375,18 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             current_branch,
             ahead_count: 0,
             upstream_exists: false,
+            upstream_remote: None,
+            upstream_branch: None,
             status,
             message: STATUS_NO_UPSTREAM.to_string(),
         };
     }
+
+    let (upstream_remote, upstream_branch) = match get_upstream_push_target(path, &current_branch).await
+    {
+        Ok(Some((remote, branch))) => (Some(remote), Some(branch)),
+        _ => (None, None),
+    };
 
     // Check if local is ahead of remote
     let ahead_check = run_git(path, &["rev-list", "--count", "HEAD", "^@{upstream}"]).await;
@@ -360,6 +409,8 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             current_branch,
             ahead_count,
             upstream_exists: true,
+            upstream_remote,
+            upstream_branch,
             status: Status::Error,
             message: format!(
                 "diverged: {ahead_count} ahead, {behind_count} behind (pull required before push)"
@@ -373,6 +424,8 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             current_branch,
             ahead_count: 0,
             upstream_exists: true,
+            upstream_remote,
+            upstream_branch,
             status: Status::Synced,
             message: STATUS_SYNCED.to_string(),
         }
@@ -382,6 +435,8 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
             current_branch,
             ahead_count,
             upstream_exists: true,
+            upstream_remote,
+            upstream_branch,
             status: Status::Synced, // Will be pushed in phase 2
             message: format!("{ahead_count} commits ahead"),
         }
@@ -407,18 +462,26 @@ pub async fn push_if_needed(
     }
 
     // Detect remote name for LFS and push operations
-    let remote_name = match run_git(path, GIT_REMOTE_ARGS).await {
+    let default_remote_name = match run_git(path, GIT_REMOTE_ARGS).await {
         Ok((true, remotes, _)) => remotes.lines().next().unwrap_or("origin").to_string(),
         _ => "origin".to_string(),
     };
+    let remote_name = fetch_result
+        .upstream_remote
+        .clone()
+        .unwrap_or_else(|| default_remote_name.clone());
+    let target_branch = fetch_result
+        .upstream_branch
+        .clone()
+        .unwrap_or_else(|| fetch_result.current_branch.clone());
 
     // Check if repo uses Git LFS and push LFS objects FIRST
     let uses_lfs = check_uses_git_lfs(path).await;
     if uses_lfs && has_pending_lfs_objects(path).await {
-        let branch = if fetch_result.current_branch.is_empty() {
+        let branch = if target_branch.is_empty() {
             "HEAD".to_string()
         } else {
-            fetch_result.current_branch.clone()
+            target_branch.clone()
         };
 
         let (lfs_success, lfs_error) = push_lfs_objects(path, &remote_name, &branch).await;
@@ -473,7 +536,12 @@ pub async fn push_if_needed(
     }
 
     // Push changes - use explicit remote and branch to match LFS push
-    let push_args = vec!["push", &remote_name, &fetch_result.current_branch];
+    let push_refspec = if target_branch == fetch_result.current_branch {
+        fetch_result.current_branch.clone()
+    } else {
+        format!("{}:{}", fetch_result.current_branch, target_branch)
+    };
+    let push_args = vec!["push", &remote_name, &push_refspec];
     match run_git(path, &push_args).await {
         Ok((true, _, _)) => {
             let commits_word = if fetch_result.ahead_count == 1 {

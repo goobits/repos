@@ -16,8 +16,11 @@ use goobits_repos::commands::staging::{
     handle_unstage_command,
 };
 use goobits_repos::commands::sync::{handle_pull_command, handle_push_command};
+use goobits_repos::git::{fetch_and_analyze, push_if_needed, Status};
 use std::env;
 use std::fs;
+use std::process::Command;
+use tempfile::TempDir;
 
 // ==============================================================================
 // SYNC COMMAND TESTS (commands/sync.rs)
@@ -211,6 +214,136 @@ async fn test_push_command_with_force_flag() {
         result.is_ok(),
         "Force push command should complete without panicking: {:?}",
         result
+    );
+}
+
+#[tokio::test]
+async fn test_push_if_needed_uses_upstream_remote_for_current_branch() {
+    let _lock = common::lock_test();
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create temp directory");
+    let wrong_remote = root.path().join("aaa-remote.git");
+    let upstream_remote = root.path().join("origin-remote.git");
+
+    for remote in [&wrong_remote, &upstream_remote] {
+        let output = Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(root.path())
+            .arg(remote)
+            .output()
+            .expect("Failed to init bare remote");
+        assert!(
+            output.status.success(),
+            "Failed to init bare remote: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let repo = TestRepoBuilder::new("test-push-upstream-remote")
+        .build()
+        .expect("Failed to create test repo");
+
+    for (name, path) in [
+        ("aaa", wrong_remote.to_string_lossy().to_string()),
+        ("origin", upstream_remote.to_string_lossy().to_string()),
+    ] {
+        let output = Command::new("git")
+            .args(["remote", "add", name, &path])
+            .current_dir(repo.path())
+            .output()
+            .expect("Failed to add remote");
+        assert!(
+            output.status.success(),
+            "Failed to add remote: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output = Command::new("git")
+        .args(["checkout", "-b", "feature/music"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to create feature branch");
+    assert!(
+        output.status.success(),
+        "Failed to create feature branch: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = Command::new("git")
+        .args(["push", "-u", "origin", "feature/music"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to push initial branch");
+    assert!(
+        output.status.success(),
+        "Failed to push initial branch: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::write(repo.path().join("feature.txt"), "new commit").expect("Failed to write test file");
+    let output = Command::new("git")
+        .args(["add", "feature.txt"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to stage file");
+    assert!(
+        output.status.success(),
+        "Failed to stage file: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new("git")
+        .args(["commit", "-m", "Feature update"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to commit file");
+    assert!(
+        output.status.success(),
+        "Failed to commit file: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let head_commit = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to get HEAD");
+    assert!(head_commit.status.success(), "Failed to get HEAD");
+    let head_commit = String::from_utf8_lossy(&head_commit.stdout).trim().to_string();
+
+    let fetch_result = fetch_and_analyze(repo.path(), false).await;
+    assert!(fetch_result.upstream_exists);
+    assert_eq!(fetch_result.upstream_remote.as_deref(), Some("origin"));
+    assert_eq!(fetch_result.upstream_branch.as_deref(), Some("feature/music"));
+    assert_eq!(fetch_result.ahead_count, 1);
+
+    let (status, _message, _has_uncommitted) = push_if_needed(repo.path(), &fetch_result, false).await;
+    assert_eq!(status, Status::Pushed);
+
+    let origin_head = Command::new("git")
+        .args(["rev-parse", "feature/music"])
+        .current_dir(&upstream_remote)
+        .output()
+        .expect("Failed to read origin remote head");
+    assert!(
+        origin_head.status.success(),
+        "Origin remote missing feature branch: {}",
+        String::from_utf8_lossy(&origin_head.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&origin_head.stdout).trim(), head_commit);
+
+    let wrong_head = Command::new("git")
+        .args(["rev-parse", "feature/music"])
+        .current_dir(&wrong_remote)
+        .output()
+        .expect("Failed to read wrong remote head");
+    assert!(
+        !wrong_head.status.success(),
+        "Wrong remote should not receive pushed branch"
     );
 }
 
