@@ -35,7 +35,8 @@ pub use super::config::{
 // Additional operations for command modules and tests
 pub use super::operations::{
     commit_changes, create_and_push_tag, get_repo_visibility, get_staging_status,
-    has_staged_changes, has_uncommitted_changes, stage_files, unstage_files,
+    has_staged_changes, has_uncommitted_changes, stage_all_changes, stage_files,
+    stage_tracked_changes, unstage_files,
 };
 
 // LFS functions - used internally by push_if_needed, exported for integration tests

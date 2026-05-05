@@ -16,14 +16,12 @@ cd affected-repo && git push --force-with-lease
 
 **Bulk documentation update**
 ```bash
-repos stage "*.md" "*.txt"
-repos commit "docs: Update README files"
-repos push
+repos save "docs: Update README files"
 ```
 
 **Sync config across all repos**
 ```bash
-repos config --from-global --force             # No prompts
+repos config --from-global --yes               # No prompts
 ```
 
 **Release and publish**
@@ -33,10 +31,10 @@ repos publish --tag --all                      # Publish + create tags
 repos push                                     # Push commits
 ```
 
-**Fix diverged subrepo instances**
+**Fix diverged nested repositories**
 ```bash
-repos subrepo status                           # Show drift
-repos subrepo sync shared-lib --to abc1234 --stash
+repos nested status                            # Show drift
+repos nested sync shared-lib --to abc1234 --stash
 ```
 
 **Pre-push security check**
@@ -140,23 +138,23 @@ cd ~/repos/my-repo
 git push --force-with-lease
 ```
 
-### Subrepo Synchronization
+### Nested Repository Synchronization
 
 ```bash
 # 1. Detect drift
-repos subrepo status
+repos nested status
 
 # 2. Review full status (including synced repos)
-repos subrepo status --all
+repos nested status --all
 
 # 3. Sync to specific commit (safe, with stash)
-repos subrepo sync shared-lib --to abc1234 --stash
+repos nested sync shared-lib --to abc1234 --stash
 
 # 4. Update to latest from remote
-repos subrepo update shared-lib
+repos nested update shared-lib
 
 # 5. Verify synchronization
-repos subrepo status
+repos nested status
 ```
 
 ### Config Synchronization
@@ -174,8 +172,8 @@ repos config --from-global
 # 4. Or set specific values
 repos config --name "Alice Developer" --email "alice@example.com"
 
-# 5. Force sync without prompts
-repos config --from-global --force
+# 5. Sync without prompts
+repos config --from-global --yes
 ```
 
 ## Shell Scripts
@@ -193,11 +191,11 @@ repos status
 
 echo ""
 echo "🔄 Pulling latest changes..."
-repos pull
+repos sync
 
 echo ""
 echo "⚙️  Syncing git config..."
-repos config --from-global --force
+repos config --from-global --yes
 
 echo ""
 echo "🔒 Running security audit..."

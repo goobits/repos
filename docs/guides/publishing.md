@@ -91,7 +91,7 @@ Learn more about [credential configuration](credentials_setup.md).
 
 | Error | Solution |
 |-------|----------|
-| **"uncommitted changes"** | Commit first: `git add . && git commit -m "Release v1.2.3"` |
+| **"uncommitted changes"** | Commit first: `repos save "Release v1.2.3"` or stage explicitly |
 | **"not authenticated"** | Configure [publishing credentials](credentials_setup.md) |
 | **"tag already exists"** | Delete tag: `git tag -d v1.2.3 && git push origin :refs/tags/v1.2.3` |
 

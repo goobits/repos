@@ -53,7 +53,7 @@ pub enum ConfigSource {
 pub enum ConfigCommand {
     /// Interactive mode - detect conflicts and prompt for resolution
     Interactive(ConfigSource),
-    /// Force mode - overwrite all configs without prompting
+    /// Apply mode - overwrite all configs without prompting
     Force(ConfigSource),
     /// Dry run mode - show what would be changed without making changes
     DryRun(ConfigSource),
@@ -118,7 +118,7 @@ pub fn validate_user_config(config: &UserConfig) -> Result<()> {
 /// - `path`: Path to the repository
 /// - `repo_name`: Display name of the repository
 /// - `target_config`: Desired configuration values
-/// - `command`: Config command mode (Interactive, Force, or `DryRun`)
+/// - `command`: Config command mode (Interactive, Apply, or `DryRun`)
 /// - `prompt_fn`: Optional function to prompt user for interactive mode conflicts
 ///
 /// Returns `(Status, message)` tuple indicating the result

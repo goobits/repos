@@ -99,7 +99,7 @@ pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
     let synced: Vec<_> = statuses.iter().filter(|s| !s.has_drift).collect();
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("🔴 SUBREPO DRIFT ({})", drifted.len());
+    println!("🔴 NESTED DRIFT ({})", drifted.len());
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
     for status in &drifted {
@@ -107,9 +107,9 @@ pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
     }
 
     if !synced.is_empty() {
-        println!("💡 {} subrepos are fully synced.", synced.len());
+        println!("💡 {} nested repositories are fully synced.", synced.len());
     }
-    println!("💡 Run 'repos subrepo status' for a detailed analysis.");
+    println!("💡 Run 'repos nested status' for a detailed analysis.");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 }
 
@@ -182,7 +182,7 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
     // Show sync command
     let target_commit = latest_clean.map_or(&latest.short_hash, |t| &t.short_hash);
     println!(
-        "    Sync: repos subrepo sync {} --to {}",
+        "    Sync: repos nested sync {} --to {}",
         status.name, target_commit
     );
     println!();
@@ -191,20 +191,23 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
 /// Display subrepo status (problem-first by default)
 pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
     if statuses.is_empty() {
-        println!("\n✅ No shared subrepos found.");
-        println!("   Run 'repos validate' to see all nested repositories.\n");
+        println!("\n✅ No shared nested repositories found.");
+        println!("   Run 'repos nested validate' to see all nested repositories.\n");
         return;
     }
 
     let drifted: Vec<_> = statuses.iter().filter(|s| s.has_drift).collect();
     let synced: Vec<_> = statuses.iter().filter(|s| !s.has_drift).collect();
 
-    println!("\n🔍 Analyzing {} shared subrepos...\n", statuses.len());
+    println!(
+        "\n🔍 Analyzing {} shared nested repositories...\n",
+        statuses.len()
+    );
 
     // Show drifted subrepos
     if !drifted.is_empty() {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("🔴 SUBREPO DRIFT ({})", drifted.len());
+        println!("🔴 NESTED DRIFT ({})", drifted.len());
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
         for status in &drifted {
@@ -215,7 +218,7 @@ pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
     // Show synced subrepos if requested
     if show_all && !synced.is_empty() {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("🟢 SYNCED SUBREPOS ({})", synced.len());
+        println!("🟢 SYNCED NESTED REPOS ({})", synced.len());
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
         for status in synced {
@@ -223,7 +226,7 @@ pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
         }
     } else if !synced.is_empty() {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("💡 {} subrepos fully synced (100%)", synced.len());
+        println!("💡 {} nested repositories fully synced (100%)", synced.len());
         println!("   Use --all to see them");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
@@ -232,7 +235,7 @@ pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
     if !drifted.is_empty() {
         println!();
         println!("🔧 To update a drifted repo to its 'origin/main' branch instead, run:");
-        println!("   repos subrepo update <name>  (e.g., 'repos subrepo update docs-engine')");
+        println!("   repos nested update <name>  (e.g., 'repos nested update docs-engine')");
     }
 
     println!();
@@ -365,16 +368,12 @@ fn display_drift_status(status: &SubrepoStatus) {
 
             println!("  💡 EASY FIX (Recommended):");
             println!(
-                "     repos subrepo sync {} --to {} --stash",
+                "     repos nested sync {} --to {} --stash",
                 status.name, target_commit
             );
             println!("     (Stashes uncommitted changes in {repos_desc})");
             println!();
-            println!("  🔥 FORCE FIX (Discards all local changes):");
-            println!(
-                "     repos subrepo sync {} --to {} --force",
-                status.name, target_commit
-            );
+            println!("  Manual alternative: commit or discard local changes, then rerun sync.");
         }
 
         UncommittedState::Mixed => {
@@ -410,17 +409,13 @@ fn display_drift_status(status: &SubrepoStatus) {
 
             println!("  💡 EASY FIX (Recommended):");
             println!(
-                "     repos subrepo sync {} --to {} --stash",
+                "     repos nested sync {} --to {} --stash",
                 status.name, target_commit
             );
             println!("     (Syncs {dirty_list} to the clean commit from '{target_repo}')");
             println!();
 
-            println!("  🔥 FORCE FIX (Discards changes in {dirty_list}):");
-            println!(
-                "     repos subrepo sync {} --to {} --force",
-                status.name, target_commit
-            );
+            println!("  Manual alternative: commit or discard changes in {dirty_list}, then rerun sync.");
         }
 
         UncommittedState::AllClean => {
@@ -433,7 +428,7 @@ fn display_drift_status(status: &SubrepoStatus) {
 
             println!("  🔧 SYNC to latest commit:");
             println!(
-                "     repos subrepo sync {} --to {}",
+                "     repos nested sync {} --to {}",
                 status.name, latest_commit.short_hash
             );
         }

@@ -27,7 +27,7 @@ repos push --jobs 4
 **Cause:** Sending too many requests to the git host in a short period.
 
 **Solution:**
-1. Reduce concurrency: `repos pull --jobs 2`
+1. Reduce concurrency: `repos sync --jobs 2`
 2. Ensure you are authenticated (anonymous requests have lower limits).
 3. Wait a few minutes before retrying.
 
@@ -60,17 +60,17 @@ git pull --rebase
 git rebase --continue
 ```
 
-## Subrepos
+## Nested Repositories
 
 ### "Uncommitted changes" during sync
 
-**Symptoms:** `repos subrepo sync` skips a repo.
+**Symptoms:** `repos nested sync` skips a repo.
 
-**Cause:** You have modified files in the subrepo. Syncing would overwrite them.
+**Cause:** You have modified files in the nested repo. Syncing would overwrite them.
 
 **Solution:**
-- **Safe:** Use `--stash` to auto-stash changes: `repos subrepo sync name --to commit --stash`
-- **Destructive:** Use `--force` to discard changes: `repos subrepo sync name --to commit --force`
+- **Safe:** Use `--stash` to auto-stash changes: `repos nested sync name --to commit --stash`
+- **Manual:** Commit or discard local changes, then rerun `repos nested sync name --to commit`
 
 ## Security Audit
 
@@ -95,6 +95,6 @@ Or your system package manager.
 
 **Solution:**
 ```bash
-repos push --force
+git push --force-with-lease
 ```
-**Warning:** This will overwrite history on the remote. Coordinate with your team.
+**Warning:** This rewrites remote history. Coordinate with your team.

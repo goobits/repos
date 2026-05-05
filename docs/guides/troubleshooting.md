@@ -33,7 +33,7 @@ Common issues and solutions for the repos tool.
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Slow on large monorepos | Expected behavior with many subrepos | Normal operation; tool processes repos concurrently with internal limits |
+| Slow on large monorepos | Expected behavior with many nested repos | Normal operation; tool processes repos concurrently with internal limits |
 | Timeout errors after 3 minutes | Repo operation exceeds timeout | Split into smaller operations or check for hanging processes |
 | High memory usage | Processing many repos simultaneously | Expected with large repo counts; reduce concurrency if needed |
 
@@ -46,22 +46,22 @@ Common issues and solutions for the repos tool.
 | Need to recover from history rewrite | Used history rewriting options (`--fix-large`, `--fix-secrets`, or `--fix-all`) | Use `git reflog` to find previous commit and reset: `git reset --hard HEAD@{N}` |
 | Scan takes too long | Large repository history | Normal for first scan; subsequent scans are faster with verified findings |
 
-## Subrepo Issues
+## Nested Repository Issues
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| Subrepos not detected | Missing `.git` directory | Subrepos must have their own `.git` directory (not submodules) |
-| Drift false positives | Different remote URLs | Normal if subrepo uses different remote; verify URLs match expectations |
-| Sync failures | Uncommitted changes in subrepo | Commit or stash changes in subrepo before syncing |
-| `not a valid subrepo` | Directory is git submodule, not subrepo | Subrepos must be independent git repos, not submodules |
+| Nested repos not detected | Missing `.git` directory | Nested repos must have their own `.git` directory |
+| Drift false positives | Different remote URLs | Normal if a nested repo uses a different remote; verify URLs match expectations |
+| Sync failures | Uncommitted changes in nested repo | Commit or stash changes before syncing |
+| `not a valid nested repo` | Directory is Git submodule, not nested repo | Use `git submodule` commands for submodules |
 
 ## Git Issues
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `push failed: no upstream branch` | Upstream branch not configured | Set upstream: `git push -u origin <branch>` or use `--force` flag |
-| `push rejected: non-fast-forward` | Remote has commits not in local | Pull first: `git pull --rebase` or use `repos push --force` (caution) |
-| Submodule conflicts | Mixed submodules and subrepos | Use `git submodule` commands for submodules; repos tool handles subrepos |
+| `push failed: no upstream branch` | Upstream branch not configured | Set upstream: `git push -u origin <branch>` or use `repos push --auto-upstream` |
+| `push rejected: non-fast-forward` | Remote has commits not in local | Pull first: `git pull --rebase` or use `repos sync` |
+| Submodule conflicts | Mixed submodules and nested repos | Use `git submodule` commands for submodules; repos handles nested repos |
 | Worktree detection issues | Git worktree not recognized | Ensure worktree is properly configured: `git worktree list` |
 | `not a git repository` | Command run outside git repo | Navigate to git repository root directory |
 

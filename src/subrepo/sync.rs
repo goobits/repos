@@ -172,7 +172,7 @@ pub fn sync_subrepo_with_report(
             } else if !force {
                 // No stash, no force - skip
                 println!(
-                    "  ⚠️  {} (uncommitted changes, use --stash or --force)",
+                    "  ⚠️  {} (uncommitted changes, use --stash or clean the repo first)",
                     instance.parent_repo
                 );
                 skip_count += 1;
@@ -254,10 +254,7 @@ pub fn update_subrepo_with_report(
 
         // Check for uncommitted changes
         if !force && has_uncommitted_changes(&instance.subrepo_path) {
-            println!(
-                "  ⚠️  {} (uncommitted changes, use --force)",
-                instance.parent_repo
-            );
+            println!("  ⚠️  {} (uncommitted changes)", instance.parent_repo);
             skip_count += 1;
             continue;
         }

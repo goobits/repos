@@ -36,7 +36,7 @@ for repo in $(repos status | grep "$REPOS_PATTERN" | awk '{print $2}'); do
 done
 
 # 3. Push all new branches
-repos push --force
+repos push --auto-upstream
 ```
 
 ## Example: CI/CD integration for massive monorepos

@@ -1,6 +1,6 @@
 # repos
 
-Batch git operations across multiple repositories. One command instead of dozens of `cd` + `git` loops.
+Fleet-scale Git orchestration for humans. One command instead of dozens of `cd` + `git` loops.
 
 ## Quick Start
 
@@ -14,18 +14,19 @@ cd repos
 cargo install goobits-repos
 
 # Usage
-repos stage "*.md"              # Stage files by pattern
-repos commit "Update docs"      # Commit across all repos
-repos push                      # Push all + drift check
+repos status                    # Understand fleet state
+repos save "Update docs"        # Stage tracked changes, commit, push
+repos sync                      # Fetch, rebase, and report drift
 ```
 
 [Full installation guide →](docs/installation.md)
 
 ## Key Features
 
-- **Batch Operations** - Push, pull, commit, stage across all repositories concurrently (CPU cores + 2)
+- **Humane Daily Workflow** - `status`, `save`, and `sync` cover common fleet work
+- **Batch Operations** - Push, pull, commit, stage across all repositories concurrently
 - **Git LFS Support** - Automatic detection and handling of Large File Storage in push/pull operations
-- **Subrepo Drift Detection** - Track and sync nested repos at different commits
+- **Nested Drift Detection** - Track and sync nested repos at different commits
 - **Package Publishing** - Publish to npm/Cargo/PyPI with visibility filtering
 - **Config Sync** - Synchronize git user.name/email across projects
 - **Security Auditing** - Scan for secrets with TruffleHog; automated fixes
@@ -33,12 +34,15 @@ repos push                      # Push all + drift check
 ## Quick Reference
 
 ```bash
-# Git Operations
+# Everyday
+repos status                    # Understand fleet state
+repos save "Update docs"        # Stage tracked changes, commit, push
+repos sync                      # Fetch, rebase, and report drift
+
+# Git Control
 repos push                      # Push all + drift check
-repos pull                      # Pull all repos
-repos pull --rebase             # Pull with rebase
-repos push --force              # Auto-create upstream branches
-repos push --jobs 4             # Limit concurrency
+repos push --auto-upstream      # Set upstream for new branches
+repos pull --rebase             # Granular pull with rebase
 
 # Staging & Commits
 repos stage "pattern"           # Stage by pattern
@@ -53,10 +57,11 @@ repos publish --all             # Include private repos
 # Security
 repos audit --verify            # Scan for active secrets
 repos audit --fix-gitignore     # Safe fixes only
+repos doctor                    # Diagnose common blockers
 
-# Subrepos
-repos subrepo status            # Show drift
-repos subrepo sync lib --to abc1234 --stash  # Safe sync
+# Nested repos
+repos nested status             # Show drift
+repos nested sync lib --to abc1234 --stash  # Safe sync
 
 # Config
 repos config --from-global      # Copy from global config
@@ -64,7 +69,7 @@ repos config --from-global      # Copy from global config
 
 ## Commands
 
-`repos push` • `repos pull` • `repos stage` • `repos unstage` • `repos status` • `repos commit` • `repos publish` • `repos audit` • `repos subrepo` • `repos config`
+`repos status` • `repos save` • `repos sync` • `repos push` • `repos pull` • `repos stage` • `repos unstage` • `repos commit` • `repos publish` • `repos audit` • `repos doctor` • `repos nested` • `repos config`
 
 See [Commands Reference](docs/guides/commands.md) for complete flag documentation.
 
@@ -78,7 +83,7 @@ See [Commands Reference](docs/guides/commands.md) for complete flag documentatio
 - **[Commands Reference](docs/guides/commands.md)** - All commands, flags, and workflows
 - **[Publishing](docs/guides/publishing.md)** - Package publishing workflows
 - **[Security Auditing](docs/guides/security_auditing.md)** - Secret scanning and fixes
-- **[Subrepo Management](docs/guides/subrepo_management.md)** - Drift detection and sync
+- **[Nested Repository Management](docs/guides/subrepo_management.md)** - Drift detection and sync
 - **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
 
 **Reference**

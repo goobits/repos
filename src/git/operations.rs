@@ -269,7 +269,7 @@ async fn get_upstream_push_target(
 
 /// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
 /// Returns `FetchResult` with repository state after fetching
-pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
+pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult {
     use crate::core::clean_error_message;
 
     // Refresh the index to ensure accurate diff-index results
@@ -368,7 +368,7 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
     let upstream_exists = upstream_check.as_ref().is_ok_and(|result| result.0);
 
     if !upstream_exists {
-        // Will be pushed in phase 2 (with or without force flag)
+        // May be pushed in phase 2 if the caller opted into setting upstreams.
         let status = Status::NoUpstream;
         return FetchResult {
             has_uncommitted,
@@ -448,7 +448,7 @@ pub async fn fetch_and_analyze(path: &Path, _force_push: bool) -> FetchResult {
 pub async fn push_if_needed(
     path: &Path,
     fetch_result: &FetchResult,
-    force_push: bool,
+    auto_upstream: bool,
 ) -> (Status, String, bool) {
     use crate::core::clean_error_message;
 
@@ -498,7 +498,7 @@ pub async fn push_if_needed(
 
     // Handle no upstream case
     if !fetch_result.upstream_exists {
-        if force_push {
+        if auto_upstream {
             let push_args = vec!["push", "-u", &remote_name, &fetch_result.current_branch];
             match run_git(path, &push_args).await {
                 Ok((true, _, _)) => {
@@ -578,6 +578,19 @@ pub async fn push_if_needed(
             (Status::Error, final_message, fetch_result.has_uncommitted)
         }
     }
+}
+
+/// Stages tracked modifications and deletions only.
+///
+/// This intentionally does not stage untracked files. It is the safe default for
+/// fleet-wide workflows such as `repos save`.
+pub async fn stage_tracked_changes(path: &Path) -> Result<(bool, String, String)> {
+    run_git(path, &["add", "-u"]).await
+}
+
+/// Stages all non-ignored changes, including untracked files.
+pub async fn stage_all_changes(path: &Path) -> Result<(bool, String, String)> {
+    run_git(path, &["add", "-A"]).await
 }
 
 /// Stages files matching the given pattern in the specified repository
@@ -858,6 +871,14 @@ pub async fn pull_if_needed(
         );
     }
 
+    if fetch_result.has_uncommitted {
+        return (
+            Status::Skip,
+            "dirty worktree; commit or stash before sync".to_string(),
+            true,
+        );
+    }
+
     // Pre-fetch LFS objects if repo uses LFS (avoids delays during checkout)
     let uses_lfs = check_uses_git_lfs(path).await;
     if uses_lfs {
@@ -867,8 +888,7 @@ pub async fn pull_if_needed(
 
     // Pull changes with appropriate strategy
     let pull_args = if use_rebase {
-        // Use --autostash to safely stash uncommitted changes during rebase
-        vec!["pull", "--rebase", "--autostash"]
+        vec!["pull", "--rebase"]
     } else {
         vec!["pull", "--ff-only"]
     };

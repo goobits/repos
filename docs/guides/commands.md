@@ -1,316 +1,315 @@
 # Command Reference
 
-Quick reference for all `repos` commands.
+`repos` manages a fleet of Git repositories from one directory tree.
 
-## Common Workflows
+The CLI is intent-first for daily work and keeps granular Git controls available
+when you need them.
 
-Typical command combinations for everyday tasks:
+## Overview
 
-**Daily Git Operations**
+```text
+repos - Fleet-scale Git orchestration for humans
+
+USAGE:
+  repos <command> [options]
+
+EVERYDAY:
+  status      Understand repository state
+  save        Stage tracked changes, commit, and push
+  sync        Fetch, rebase safe repositories, and report nested drift
+
+CONTROL:
+  stage       Stage matching files
+  unstage     Unstage matching files
+  commit      Commit currently staged changes
+  push        Push unpushed commits
+  pull        Pull remote changes
+
+MAINTENANCE:
+  audit       Scan for secrets and hygiene issues
+  publish     Publish detected packages
+  doctor      Diagnose remotes, upstreams, worktrees, and nested drift
+
+ADVANCED:
+  nested      Manage nested repository drift
+  config      Sync Git identity/config
+```
+
+## Everyday
+
+### `repos status`
+
+Show repository state across the fleet.
+
+```bash
+repos status
+```
+
+Reports staged, unstaged, and untracked changes per repository.
+
+### `repos save`
+
+Stage tracked changes, commit, and push in one command.
+
+```bash
+repos save "Update docs"
+```
+
+Safe default:
+
+- Stages tracked modifications and deletions only.
+- Does not stage untracked files by default.
+- Commits repositories with staged changes.
+- Pushes successful commits.
+- Skips branches without upstream unless `--auto-upstream` is passed.
+
+Options:
+
+| Option | Description |
+|---|---|
+| `-u`, `--include-untracked` | Include untracked files |
+| `-a`, `--all` | Stage all non-ignored changes |
+| `--auto-upstream` | Set upstream for branches without tracking |
+| `--dry-run` | Print planned save actions without mutating repositories |
+
+Examples:
+
+```bash
+repos save "Update docs"
+repos save "Add assets" --include-untracked
+repos save "Initial project state" --all
+repos save "Publish branch" --auto-upstream
+repos save "Preview save" --dry-run
+```
+
+### `repos sync`
+
+Fetch and pull safe repositories using rebase.
+
+```bash
+repos sync
+```
+
+Default behavior:
+
+- Fetches remotes.
+- Pulls with rebase.
+- Skips dirty repositories instead of stashing implicitly.
+- Reports nested repository drift.
+- Leaves granular pull behavior available through `repos pull`.
+
+Options:
+
+| Option | Description |
+|---|---|
+| `-v`, `--verbose` | Show detailed progress |
+| `-c`, `--show-changes` | Show file changes in dirty repositories |
+| `--no-drift-check` | Skip nested drift check |
+
+Advanced options are hidden from main help but still available:
+
+| Option | Description |
+|---|---|
+| `-j`, `--jobs <N>` | Limit concurrency |
+| `--sequential` | Run one repository at a time |
+
+## Control
+
+### `repos stage`
+
+Stage files matching a pattern across repositories.
+
 ```bash
 repos stage "*.md"
-repos commit "Update docs"
-repos push
+repos stage "README.md"
+repos stage "*"
 ```
 
-**Package Release**
+### `repos unstage`
+
+Unstage files matching a pattern across repositories.
+
 ```bash
-repos publish --dry-run      # Preview
-repos publish --tag          # Publish + create git tags
-repos push                   # Push commits and tags
+repos unstage "*.md"
+repos unstage "*"
 ```
 
-**Security Maintenance**
-```bash
-repos audit --verify         # Scan for active secrets
-repos audit --fix-gitignore  # Fix safe issues
-```
+### `repos commit`
 
-**Concurrent Operations Control**
-```bash
-repos push --jobs 4          # Limit to 4 operations
-repos push --sequential      # Debug with serial execution
-```
-
----
-
-## Table of Contents
-
-- [Command Overview](#command-overview)
-- [repos push](#repos-push)
-- [repos pull](#repos-pull)
-- [repos stage](#repos-stage)
-- [repos unstage](#repos-unstage)
-- [repos status](#repos-status)
-- [repos commit](#repos-commit)
-- [repos config](#repos-config)
-- [repos publish](#repos-publish)
-- [repos audit](#repos-audit)
-- [repos subrepo](#repos-subrepo)
-  - [repos subrepo validate](#repos-subrepo-validate)
-  - [repos subrepo status](#repos-subrepo-status)
-  - [repos subrepo sync](#repos-subrepo-sync)
-  - [repos subrepo update](#repos-subrepo-update)
-
-## Command Overview
-
-| Command | Purpose |
-|---------|---------|
-| `push` | Push unpushed commits to remotes |
-| `pull` | Pull changes from remotes |
-| `stage` | Stage files matching pattern |
-| `unstage` | Unstage files matching pattern |
-| `status` | Show staging status across repos |
-| `commit` | Commit staged changes |
-| `config` | Sync git user.name and email |
-| `publish` | Publish packages to registries |
-| `audit` | Security scanning and hygiene |
-| `subrepo` | Manage nested repositories |
-
----
-
-## repos push
-
-Push unpushed commits to remotes across all repositories.
-
-`repos push` automatically checks for subrepo drift after pushing, giving you a complete repository health check in one command.
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Auto-push branches with no upstream |
-| `--verbose`, `-v` | Show detailed progress for all repos |
-| `--show-changes`, `-c` | Display file changes in repos with uncommitted changes |
-| `--no-drift-check` | Skip subrepo drift check (faster but less complete) |
-| `--jobs N`, `-j N` | Set number of concurrent operations (default: CPU cores + 2) |
-| `--sequential` | Run one operation at a time (useful for debugging) |
+Commit currently staged changes.
 
 ```bash
-repos push                     # Push all unpushed commits + check drift
-repos push --force             # Auto-create upstream for new branches
-repos push --verbose           # Show live progress with tally
-repos push --show-changes      # Show what files changed in dirty repos
-repos push -vc                 # Combine verbose + show changes
-repos push --no-drift-check    # Skip drift check for speed
-repos push --jobs 4            # Limit to 4 concurrent operations
-repos push --sequential        # Run operations one at a time
-```
-
-**Integrated Health Check**: After pushing, `repos push` automatically checks for subrepo drift and displays a concise summary if any drifted subrepos are found. This gives you a complete picture of your repository health in one command.
-
----
-
-## repos pull
-
-Pull changes from remotes across all repositories.
-
-| Flag | Description |
-|------|-------------|
-| `--rebase` | Use rebase instead of merge (git pull --rebase) |
-| `--verbose`, `-v` | Show detailed progress for all repos |
-| `--show-changes`, `-c` | Display file changes in repos with uncommitted changes |
-| `--no-drift-check` | Skip subrepo drift check (faster but less complete) |
-| `--jobs N`, `-j N` | Set number of concurrent operations (default: CPU cores + 2) |
-| `--sequential` | Run one operation at a time (useful for debugging) |
-
-```bash
-repos pull                     # Pull changes
-repos pull --rebase            # Pull with rebase
-repos pull --verbose           # Show live progress
-repos pull --jobs 4            # Limit concurrency
-```
-
----
-
-## repos stage
-
-Stage files matching pattern across all repositories.
-
-```bash
-repos stage "*.md"        # Stage all markdown files
-repos stage "README.md"   # Stage specific file
-repos stage "*"           # Stage all changes
-```
-
----
-
-## repos unstage
-
-Unstage files matching pattern across all repositories.
-
-```bash
-repos unstage "*.md"      # Unstage markdown files
-repos unstage "*"         # Unstage everything
-```
-
----
-
-## repos status
-
-Show staging status across all repositories.
-
-```bash
-repos status              # Show what's staged
-```
-
----
-
-## repos commit
-
-Commit staged changes across all repositories.
-
-| Flag | Description |
-|------|-------------|
-| `--include-empty` | Include repos with no staged changes (empty commits) |
-
-```bash
-repos commit "Fix typos"           # Commit staged changes
+repos commit "Fix typos"
 repos commit "Bump version" --include-empty
 ```
 
----
+Options:
 
-## repos config
+| Option | Description |
+|---|---|
+| `--include-empty` | Create empty commits in repositories without staged changes |
 
-Sync git user.name and email across repositories.
+### `repos push`
 
-| Flag | Description |
-|------|-------------|
-| `--name <name>` | Set user name |
-| `--email <email>` | Set user email |
-| `--from-global` | Use global git config as source |
-| `--from-current` | Use current repo's config as source |
-| `--force` | Overwrite without prompting |
-| `--dry-run` | Preview changes without applying |
-
-**Mutually exclusive:** `--from-global`, `--from-current`, `--name/--email`
+Push unpushed commits.
 
 ```bash
-repos config --from-global              # Sync from global config
-repos config --from-current             # Sync from current repo
-repos config --name "Alice" --email "alice@example.com"
-repos config --from-global --dry-run    # Preview
-repos config --from-global --force      # No prompts
+repos push
+repos push --auto-upstream
 ```
 
----
+Options:
 
-## repos publish
+| Option | Description |
+|---|---|
+| `--auto-upstream` | Set upstream for branches without tracking |
+| `-v`, `--verbose` | Show detailed progress |
+| `-c`, `--show-changes` | Show file changes in dirty repositories |
+| `--no-drift-check` | Skip nested drift check |
 
-Publish packages to npm, Cargo, or PyPI with optional git tagging.
+Advanced options are hidden from main help but still available:
 
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Preview without publishing |
-| `--tag` | Create and push git tags (e.g., v1.2.3) |
-| `--allow-dirty` | Skip clean state check |
-| `--all` | Publish all repos (public + private) |
-| `--public-only` | Only public repos (default) |
-| `--private-only` | Only private repos |
+| Option | Description |
+|---|---|
+| `-j`, `--jobs <N>` | Limit concurrency |
+| `--sequential` | Run one repository at a time |
 
-**Mutually exclusive:** `--all`, `--public-only`, `--private-only`
+### `repos pull`
+
+Granular pull command.
 
 ```bash
-repos publish                     # Public repos only
-repos publish --dry-run           # Preview
-repos publish --tag               # Publish + create tags
-repos publish my-app my-lib       # Specific repos
-repos publish --all --tag         # All repos with tags
+repos pull
+repos pull --rebase
 ```
 
-Learn more in [publishing.md](publishing.md).
+Options:
 
----
+| Option | Description |
+|---|---|
+| `--rebase` | Use `git pull --rebase` |
+| `-v`, `--verbose` | Show detailed progress |
+| `-c`, `--show-changes` | Show file changes in dirty repositories |
+| `--no-drift-check` | Skip nested drift check |
 
-## repos audit
+Advanced options are hidden from main help but still available:
 
-Security scanning and hygiene checking for repositories.
+| Option | Description |
+|---|---|
+| `-j`, `--jobs <N>` | Limit concurrency |
+| `--sequential` | Run one repository at a time |
 
-| Flag | Description |
-|------|-------------|
-| `--install-tools` | Auto-install TruffleHog without prompting |
+## Maintenance
+
+### `repos audit`
+
+Scan for secrets and repository hygiene issues.
+
+```bash
+repos audit
+repos audit --verify
+repos audit --json
+repos audit --fix-gitignore
+repos audit --fix-all --dry-run
+```
+
+Options:
+
+| Option | Description |
+|---|---|
+| `--install-tools` | Install required tools without prompting |
 | `--verify` | Verify discovered secrets are active |
-| `--json` | Output results in JSON format |
+| `--json` | Output JSON |
 | `--interactive` | Choose fixes interactively |
-| `--fix-gitignore` | Add .gitignore entries for violations |
-| `--fix-large` | Remove large files from history (requires git-filter-repo) |
+| `--fix-gitignore` | Add missing `.gitignore` entries |
+| `--fix-large` | Remove large files from history |
 | `--fix-secrets` | Remove secrets from history |
-| `--fix-all` | Apply all available fixes automatically |
-| `--dry-run` | Preview fixes without applying |
-| `--repos <repo1,repo2>` | Target specific repositories (comma-separated) |
+| `--fix-all` | Apply all available fixes |
+| `--dry-run` | Preview fixes |
+| `--repos <repo1,repo2>` | Target specific repositories |
+
+### `repos publish`
+
+Publish detected packages to registries.
 
 ```bash
-repos audit                           # Scan all repos
-repos audit --install-tools           # Auto-install tools
-repos audit --verify                  # Verify secrets are active
-repos audit --json                    # JSON output
-repos audit --interactive             # Choose fixes
-repos audit --fix-gitignore           # Fix gitignore issues
-repos audit --fix-all --dry-run       # Preview all fixes
-repos audit --repos my-app,my-lib     # Specific repos
+repos publish
+repos publish --dry-run
+repos publish --tag
+repos publish my-app my-lib
 ```
 
----
+Options:
 
-## repos subrepo
+| Option | Description |
+|---|---|
+| `--dry-run` | Preview without publishing |
+| `--tag` | Create and push Git tags after publish |
+| `--allow-dirty` | Allow publishing dirty repositories |
+| `--all` | Publish public and private repositories |
+| `--public-only` | Publish public repositories only |
+| `--private-only` | Publish private repositories only |
 
-Manage nested repository synchronization.
+### `repos doctor`
 
-### repos subrepo validate
-
-Discover and validate nested repositories.
+Diagnose common fleet blockers without mutating anything.
 
 ```bash
-repos subrepo validate    # Show all nested repos
+repos doctor
 ```
 
-### repos subrepo status
+Checks:
 
-Show drift detection for subrepos.
+- Detached HEADs.
+- Missing remotes.
+- Missing upstream tracking.
+- Dirty worktrees.
+- Conflicts.
+- Nested repository drift.
 
-| Flag | Description |
-|------|-------------|
-| `--all` | Show all subrepos, not just drifted ones |
+## Advanced
+
+### `repos nested`
+
+Manage nested repository drift.
 
 ```bash
-repos subrepo status           # Show drifted subrepos
-repos subrepo status --all     # Show all subrepos
+repos nested validate
+repos nested status
+repos nested status --all
+repos nested sync my-lib --to abc1234
+repos nested sync my-lib --to abc1234 --stash
+repos nested update my-lib
 ```
 
-### repos subrepo sync
+Subcommands:
 
-Sync a subrepo to specific commit across all parents.
+| Subcommand | Description |
+|---|---|
+| `validate` | Validate nested repository setup |
+| `status` | Show nested drift |
+| `sync` | Sync a nested repository to a commit |
+| `update` | Update a nested repository to latest remote commit |
 
-| Flag | Description |
-|------|-------------|
-| `--to <commit>` | Target commit hash (required) |
-| `--stash` | Stash uncommitted changes (safe, reversible) |
-| `--force` | Force sync, discarding uncommitted changes |
+### `repos config`
 
-**Note:** If both `--stash` and `--force` are provided, `--stash` takes precedence.
+Sync Git identity across repositories.
 
 ```bash
-repos subrepo sync my-lib --to abc1234           # Sync to commit
-repos subrepo sync my-lib --to abc1234 --stash   # Safe sync
-repos subrepo sync my-lib --to abc1234 --force   # Force sync
+repos config --from-global
+repos config --from-current
+repos config --name "Alice" --email "alice@example.com"
+repos config --from-global --dry-run
+repos config --from-global --yes
 ```
 
-### repos subrepo update
+Options:
 
-Update a subrepo to latest origin/main across all parents.
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Force update with uncommitted changes |
-
-```bash
-repos subrepo update my-lib         # Update to origin/main
-repos subrepo update my-lib --force # Force update
-```
-
----
-
-**Related Documentation:**
-- [Documentation Index](../README.md)
-- [Getting Started](../getting_started.md)
-- [Publishing Guide](publishing.md)
-- [Security Auditing](security_auditing.md)
+| Option | Description |
+|---|---|
+| `--name <name>` | Set Git user name |
+| `--email <email>` | Set Git user email |
+| `--from-global` | Use global Git config as source |
+| `--from-current` | Use current repository config as source |
+| `--yes` | Apply without prompting |
+| `--dry-run` | Preview changes |

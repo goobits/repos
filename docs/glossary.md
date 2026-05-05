@@ -1,210 +1,75 @@
 # Glossary
 
-Quick reference for all `repos` terminology, flags, and concepts. Use this page to look up unfamiliar terms while reading other documentation, or browse by category to learn what `repos` can do.
-
-Entries link to detailed guides for deeper learning.
-
----
+Quick reference for `repos` commands, flags, and concepts.
 
 ## Commands
 
-### Core Commands
+**`repos status`** - Show fleet state: worktree changes, branch, and upstream state.
 
-**`repos push`** - Push unpushed commits to remotes across all repositories
-→ [Commands Reference](guides/commands.md#repos-push)
+**`repos save`** - Stage tracked changes, commit, and push in one step.
 
-**`repos stage`** - Stage files matching pattern across all repositories
-→ [Commands Reference](guides/commands.md#repos-stage)
+**`repos sync`** - Fetch, rebase safe repositories, and report nested drift.
 
-**`repos commit`** - Commit staged changes across all repositories
-→ [Commands Reference](guides/commands.md#repos-commit)
+**`repos stage`** - Stage files matching a pattern.
 
-**`repos config`** - Synchronize git user.name and email across repositories
-→ [Commands Reference](guides/commands.md#repos-config)
+**`repos unstage`** - Unstage files matching a pattern.
 
-**`repos publish`** - Publish packages to registries (npm, Cargo, PyPI)
-→ [Publishing Guide](guides/publishing.md)
+**`repos commit`** - Commit already staged changes.
 
-**`repos audit`** - Security scanning and repository hygiene checking
-→ [Security Auditing](guides/security_auditing.md)
+**`repos push`** - Push unpushed commits.
 
-**`repos subrepo`** - Manage nested repository synchronization
-→ [Subrepo Management](guides/subrepo_management.md)
+**`repos pull`** - Granular Git-shaped pull command.
+
+**`repos audit`** - Scan for secrets and hygiene issues.
+
+**`repos publish`** - Publish detected packages.
+
+**`repos doctor`** - Diagnose remotes, upstreams, dirty worktrees, conflicts, and nested drift.
+
+**`repos nested`** - Manage nested repository drift.
+
+**`repos config`** - Sync Git identity/config across repositories.
 
 ## Common Flags
 
-### Universal Flags
+**`--dry-run`** - Preview planned changes without mutating repositories.
 
-**`--dry-run`** - Preview changes without applying them
-Used by: `config`, `publish`, `audit`
+**`--auto-upstream`** - Set upstream automatically for branches without tracking.
 
-**`--force`** - Force operation, bypassing safety checks
-Used by: `push`, `config`, `subrepo sync`, `subrepo update`
+**`--include-untracked`** - Include untracked files in `repos save`.
 
-**`--no-drift-check`** - Skip subrepo drift check in push (faster but less complete)
-Used by: `push`
+**`--all`** - Include all non-ignored changes for `repos save`, or show all nested repos for `repos nested status`.
 
-**`--verbose` / `-v`** - Show detailed operation logs
-Used by: Most commands
+**`--no-drift-check`** - Skip nested drift checks in `sync`, `push`, or `pull`.
 
-**`--repos <repo1,repo2>`** - Target specific repositories (comma-separated)
-Used by: `audit`
+**`--verbose` / `-v`** - Show detailed operation logs.
 
-### Publishing Flags
+**`--repos <repo1,repo2>`** - Target specific repositories for audit.
 
-**`--tag`** - Create and push git tags after successful publish
-→ [Publishing Guide](guides/publishing.md#flags)
+## Nested Repository Terms
 
-**`--allow-dirty`** - Skip clean working directory check
-→ [Publishing Guide](guides/publishing.md#flags)
+**Nested repository** - A Git repository inside another repository, with its own `.git` directory.
 
-**`--all`** - Publish all repos (public + private)
-→ [Publishing Guide](guides/publishing.md#flags)
+**Drift** - The same nested repository exists at different commits across parent repositories.
 
-**`--public-only`** - Only publish public repos (default behavior)
-→ [Publishing Guide](guides/publishing.md#flags)
+**Sync target** - The commit suggested for bringing drifted nested repositories back together.
 
-**`--private-only`** - Only publish private repos
-→ [Publishing Guide](guides/publishing.md#flags)
+## Git Terms
 
-### Config Flags
+**Tracked change** - A modification or deletion to a file Git already tracks.
 
-**`--from-global`** - Use global git config as source
-→ [Commands Reference](guides/commands.md#repos-config)
+**Untracked file** - A file Git does not track yet. `repos save` does not include these by default.
 
-**`--from-current`** - Use current repo's config as source
-→ [Commands Reference](guides/commands.md#repos-config)
+**Upstream branch** - The remote branch a local branch tracks.
 
-**`--name <name>`** - Set user name
-→ [Commands Reference](guides/commands.md#repos-config)
-
-**`--email <email>`** - Set user email
-→ [Commands Reference](guides/commands.md#repos-config)
-
-### Audit Flags
-
-**`--install-tools`** - Auto-install TruffleHog without prompting
-→ [Security Auditing](guides/security_auditing.md#trufflehog-secret-scanning)
-
-**`--verify`** - Verify discovered secrets are active (exits 1 if found)
-→ [Security Auditing](guides/security_auditing.md#secret-detection)
-
-**`--fix-gitignore`** - Add .gitignore entries for violations (safe)
-→ [Security Auditing](guides/security_auditing.md#automated-fixes)
-
-**`--fix-large`** - Remove large files from history (destructive)
-→ [Security Auditing](guides/security_auditing.md#automated-fixes)
-
-**`--fix-secrets`** - Remove secrets from history (destructive)
-→ [Security Auditing](guides/security_auditing.md#automated-fixes)
-
-**`--fix-all`** - Apply all available fixes automatically
-→ [Security Auditing](guides/security_auditing.md#automated-fixes)
-
-**`--interactive`** - Choose fixes interactively
-→ [Security Auditing](guides/security_auditing.md#interactive-mode)
-
-**`--json`** - Output results in JSON format
-→ [Security Auditing](guides/security_auditing.md#json-output)
-
-### Subrepo Flags
-
-**`--to <commit>`** - Target commit hash for sync (required for `sync`)
-→ [Subrepo Management](guides/subrepo_management.md#repos-subrepo-sync)
-
-**`--stash`** - Stash uncommitted changes (safe, reversible)
-→ [Subrepo Management](guides/subrepo_management.md#repos-subrepo-sync)
-
-**`--all`** - Show all subrepos, not just drifted ones
-→ [Subrepo Management](guides/subrepo_management.md#repos-subrepo-status)
-
-## Concepts
-
-### Subrepo Terms
-
-**Subrepo** - Nested Git repository within a parent repo (has its own `.git` directory)
-→ [Subrepo Management](guides/subrepo_management.md#what-are-subrepos)
-
-**Drift** - When the same subrepo is at different commits across parent repositories
-→ [Subrepo Management](guides/subrepo_management.md#drift-detection)
-
-**Sync Score** - Percentage (0-100%) showing how well synchronized subrepo instances are
-→ [Subrepo Management](guides/subrepo_management.md#sync-score)
-
-**Sync Target** - Latest clean commit recommended for synchronization (indicated by → arrow)
-→ [Subrepo Management](guides/subrepo_management.md#visual-indicators)
-
-### Security Terms
-
-**Secret Scanning** - Detecting exposed credentials and API keys in git history
-→ [Security Auditing](guides/security_auditing.md#trufflehog-secret-scanning)
-
-**Hygiene Checking** - Detecting improperly committed files (gitignore violations, large files)
-→ [Security Auditing](guides/security_auditing.md#hygiene-checking)
-
-**Gitignore Violation** - Files tracked by git that match `.gitignore` patterns
-→ [Security Auditing](guides/security_auditing.md#1-gitignore-violations)
-
-**Universal Bad Patterns** - Commonly ignored files that should never be committed
-→ [Security Auditing](guides/security_auditing.md#2-universal-bad-patterns)
-
-**Large Files** - Files exceeding 1MB threshold in git history
-→ [Security Auditing](guides/security_auditing.md#3-large-files)
-
-**History Rewriting** - Permanently modifying git history to remove files/secrets
-→ [Security Auditing](guides/security_auditing.md#destructive-history-rewriting)
-
-**Verification Mode** - Testing if secrets are currently active (slower, exits 1 if found)
-→ [Security Auditing](guides/security_auditing.md#secret-detection)
-
-### Publishing Terms
-
-**Visibility Filtering** - Only publishing public repos by default (configurable with flags)
-→ [Publishing Guide](guides/publishing.md#flags)
-
-**Package Manager** - npm (JavaScript), Cargo (Rust), or PyPI (Python)
-→ [Publishing Guide](guides/publishing.md#how-it-works)
-
-**Registry** - Package hosting service (npmjs.org, crates.io, pypi.org, or private)
-→ [Credentials Setup](guides/credentials_setup.md#private-registries)
-
-**Token Authentication** - Using API tokens instead of passwords for publishing
-→ [Credentials Setup](guides/credentials_setup.md)
-
-### Git Terms
-
-**Working Directory** - Current state of files in repository
-→ [Troubleshooting](guides/troubleshooting.md#publishing-issues)
-
-**Upstream Branch** - Remote branch that local branch tracks
-→ [Troubleshooting](guides/troubleshooting.md#git-issues)
-
-**Force Push** - Overwriting remote history (use `--force-with-lease` for safety)
-→ [Security Auditing](guides/security_auditing.md#destructive-history-rewriting)
-
-**Staged Changes** - Files marked for inclusion in next commit
-→ [Commands Reference](guides/commands.md#repos-stage)
+**Force push** - Rewriting remote history. Use `git push --force-with-lease` manually when history rewrite tools require it.
 
 ## Output Indicators
 
-### Status Indicators
+**🟢** - Success or clean state.
 
-**🟢** - Success / Clean state / Published
-**🟡** - Warning / Uncommitted changes / Skipped
-**🟠** - Already published / Up-to-date
-**🔴** - Error / Failed / Verified secrets found
+**🟡** - Warning, dirty state, or missing upstream.
 
-### Subrepo Indicators
+**🟠** - Skipped or no-op.
 
-**→** - Arrow pointing to recommended sync target (latest clean commit)
-**✅ clean** - No uncommitted changes
-**⚠️ uncommitted** - Has uncommitted changes
-**⬆️ LATEST** - Absolute newest commit
-**(outdated)** - Commit is older than the latest
-
----
-
-**Related Documentation:**
-- [Documentation Index](README.md)
-- [Getting Started](getting_started.md)
-- [Commands Reference](guides/commands.md)
+**🔴** - Error or failed operation.

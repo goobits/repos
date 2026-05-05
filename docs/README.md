@@ -1,10 +1,10 @@
 # repos Documentation
 
-**repos** is a CLI tool for batch git operations across multiple repositories. One command instead of dozens of `cd` + `git` loops.
+**repos** is a CLI tool for fleet-scale Git orchestration across multiple repositories. One command instead of dozens of `cd` + `git` loops.
 
 **Core capabilities:**
-- Push, commit, and stage across all repositories in one command
-- Automatic subrepo drift detection and synchronization
+- `status`, `save`, and `sync` workflows for daily fleet work
+- Automatic nested repository drift detection and synchronization
 - Package publishing to npm, Cargo, and PyPI with one line
 - Built-in security scanning for secrets and credential leaks
 
@@ -28,7 +28,7 @@ Perfect for monorepo management, multi-project workflows, and keeping nested rep
 
 ### Advanced Topics (Power Users)
 
-- **[Subrepo Management](guides/subrepo_management.md)** - Nested repository drift detection and sync
+- **[Nested Repository Management](guides/subrepo_management.md)** - Nested repository drift detection and sync
 - **[Security Auditing](guides/security_auditing.md)** - Secret scanning and automated fixes
 - **[Architecture](architecture.md)** - Technical internals and concurrency model
 

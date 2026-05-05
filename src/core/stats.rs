@@ -88,7 +88,7 @@ impl SyncStatistics {
             | Status::Committed => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
             }
-            Status::Skip | Status::ConfigSkipped | Status::NoChanges => {
+            Status::Skip | Status::ConfigSkipped | Status::NoChanges | Status::Dirty => {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
             }
             Status::NoUpstream => {

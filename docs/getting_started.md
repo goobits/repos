@@ -1,6 +1,8 @@
 # Getting Started
 
-Batch Git operations across multiple repositories. Instead of manually visiting each repo to run the same git commands, run one `repos` command across all repositories simultaneously.
+Fleet-scale Git orchestration across multiple repositories. Instead of manually
+visiting each repo to run the same Git commands, run one intent-driven `repos`
+command across the fleet.
 
 ## Installation
 
@@ -10,156 +12,149 @@ Batch Git operations across multiple repositories. Instead of manually visiting 
 
 ## Quick Tour
 
-Run `repos` in a directory to discover and operate on all Git repositories:
+Run `repos` in a directory tree that contains Git repositories.
+
+### Understand State
 
 ```bash
-repos                           # Discover repos
+repos status
 ```
 
-Output:
-```
-📦 Discovered 5 repositories
-  my-app
-  my-lib
-  frontend
-  backend
-  docs
-```
+Use this first when you want to know which repositories are clean, dirty, staged,
+or untracked.
 
-### Push All Repos
+### Save Work
 
 ```bash
-repos push                      # Push + drift check
+repos save "Update docs"
 ```
 
-Output:
-```
-✅ 3 repos pushed  ⚠️  2 already up-to-date
+This stages tracked modifications and deletions, commits them, and pushes the
+result. It does not stage untracked files unless you opt in:
 
-🔴 SUBREPO DRIFT (1)
+```bash
+repos save "Add new docs" --include-untracked
+```
+
+### Sync Repositories
+
+```bash
+repos sync
+```
+
+This fetches remotes, pulls with rebase where safe, and reports nested repository
+drift.
+
+Example drift summary:
+
+```text
+🔴 NESTED DRIFT (1)
 auth: 2 instances at different commits
-  → 105ce4e  beheremeow-app  ✅ clean  ⬆️ LATEST
-    2f13c23  quest-keeper    ✅ clean  (outdated)
-    Sync: repos subrepo sync auth --to 105ce4e
+  → 105ce4e  app       ✅ clean  ⬆️ LATEST
+    2f13c23  website   ✅ clean  (outdated)
+    Sync: repos nested sync auth --to 105ce4e
 ```
 
-**Integrated Health Check**: `repos push` automatically checks for subrepo drift, showing you all repository health issues in one command.
-
-### Stage Files Across Repos
+### Granular Git Control
 
 ```bash
-repos stage "*.md"              # Stage markdown files
-repos stage "README.md"         # Stage specific file
+repos stage "*.md"
+repos commit "Update docs"
+repos push
+repos pull --rebase
 ```
 
-### Commit Changes
-
-```bash
-repos commit "Update docs"      # Commit staged changes
-```
-
-Output:
-```
-✅ 3 repos committed  ⚠️  2 skipped (no staged changes)
-```
+Use these when you need explicit Git-shaped operations instead of the daily
+`save` and `sync` workflows.
 
 ### Sync Git Config
 
 ```bash
-repos config --from-global      # Copy from global config
-repos config --name "Alice" --email "alice@example.com"  # Set directly
+repos config --from-global
+repos config --name "Alice" --email "alice@example.com"
 ```
 
 ## Common Workflows
 
-### Bulk Updates
-
-Stage, commit, and push across all repos:
+### Daily Save
 
 ```bash
-repos stage "*"                 # Stage all changes
-repos commit "Bulk update"      # Commit everything
-repos push                      # Push + drift check
+repos status
+repos save "Update docs"
 ```
 
-### Release Workflow
-
-Publish packages with git tags:
+### Include New Files
 
 ```bash
-repos publish --dry-run         # Preview first
-repos publish --tag             # Publish + create tags (v1.2.3)
+repos save "Add examples" --include-untracked
 ```
 
-**Note:** Publishing requires authentication. See [credentials setup](guides/credentials_setup.md) to configure npm, Cargo, or PyPI credentials.
-
-### Config Sync
-
-Set name/email across all repos:
+### Publish Packages
 
 ```bash
-repos config --from-global --force    # No prompts
+repos publish --dry-run
+repos publish --tag
 ```
 
-## Frequently Asked Questions
+Publishing requires authentication. See [credentials setup](guides/credentials_setup.md)
+to configure npm, Cargo, or PyPI credentials.
 
-### When should I use `repos` instead of manual git commands?
+### Diagnose Blockers
 
-Use `repos` when you need to perform the same operation across multiple repositories. Instead of running `cd repo1 && git push && cd ../repo2 && git push...`, run `repos push` once.
+```bash
+repos doctor
+```
 
-### Does `repos` work with git submodules?
+`doctor` checks detached HEADs, missing remotes, missing upstreams, dirty
+worktrees, conflicts, and nested drift.
 
-`repos` treats submodules as separate repositories. The `subrepo` commands are for nested repos (independent `.git` directories), not git submodules. Use `git submodule` commands for submodule management.
+## FAQ
+
+### When should I use `repos` instead of manual Git commands?
+
+Use `repos` when you need the same operation across multiple repositories.
+Instead of running `cd repo1 && git push && cd ../repo2 && git push`, run one
+fleet command.
+
+### Should I use `sync` or `pull`?
+
+Use `repos sync` for daily work. It fetches, rebases safe repositories, and
+reports nested drift. Use `repos pull` when you specifically want the granular
+Git-shaped command.
+
+### Does `repos` work with Git submodules?
+
+`repos` treats submodules as separate repositories. The `nested` commands are
+for nested repos with independent `.git` directories, not Git submodules. Use
+`git submodule` commands for submodule management.
 
 ### Can I use `repos` in a monorepo?
 
-Yes. `repos` works with any directory structure containing multiple git repositories. It discovers all repos recursively and operates on them concurrently.
-
-### Does `repos` have a pull command?
-
-Not yet. Use standard `git pull` directly in each repository. `repos` currently focuses on push operations, staging, commits, and publishing.
+Yes. `repos` works with any directory structure containing multiple Git
+repositories. It discovers all repos recursively and operates on them
+concurrently.
 
 ### How do I target specific repositories instead of all of them?
 
-Most commands accept repository names as arguments:
-```bash
-repos publish my-app my-lib        # Only these repos
-repos audit --repos my-app,my-lib  # Comma-separated for audit
-```
+Some commands support explicit repository arguments or filters:
 
-**More questions?** See [Publishing Guide](guides/publishing.md), [Security Auditing](guides/security_auditing.md), [Subrepo Management](guides/subrepo_management.md), or [Troubleshooting](guides/troubleshooting.md).
+```bash
+repos publish my-app my-lib
+repos audit --repos my-app,my-lib
+```
 
 ## Migrating from Shell Scripts
 
-Common shell script patterns and their `repos` equivalents:
-
-| Task | Shell Script | repos | Advantage |
-|------|--------------|-------|-----------|
-| Push all repos | `for d in */; do (cd "$d" && git push); done` | `repos push` | Concurrent + drift check |
-| Stage files | `for d in */; do (cd "$d" && git add "*.md"); done` | `repos stage "*.md"` | Pattern matching, atomic |
-| Commit all | `find . -name .git -execdir git commit -m "msg" \;` | `repos commit "msg"` | Staged-only, summary |
-| Git config | `for d in */; do (cd "$d" && git config user.name "Alice"); done` | `repos config --name "Alice"` | Sync from global |
-
-### Quick Migration Steps
-
-1. **Identify your scripts** - Find all git automation in your workflow
-2. **Map to repos commands** - Use table above for common patterns
-3. **Test with dry-run** - Use `repos publish --dry-run` to preview
-4. **Replace gradually** - One workflow at a time, keep scripts as backup
-
-### Migrating from Other Tools
-
-**From git-multi:**
-- repos adds: concurrent operations, drift detection, publishing support, security scanning
-- Automatic repository discovery (no manual config)
-
-**From Google's repo tool:**
-- repos uses auto-discovery instead of manifests
-- No XML configuration needed
-- Cross-language package publishing built-in
+| Task | Shell Script | repos |
+|---|---|---|
+| Save all tracked work | `for d in */; do (cd "$d" && git add -u && git commit -m "msg" && git push); done` | `repos save "msg"` |
+| Push all repos | `for d in */; do (cd "$d" && git push); done` | `repos push` |
+| Stage files | `for d in */; do (cd "$d" && git add "*.md"); done` | `repos stage "*.md"` |
+| Commit all staged work | `find . -name .git -execdir git commit -m "msg" \;` | `repos commit "msg"` |
+| Git config | `for d in */; do (cd "$d" && git config user.name "Alice"); done` | `repos config --name "Alice"` |
 
 ## Next Steps
 
-- **[Full command reference](guides/commands.md)** - All commands, flags, and workflows
-- **[Package publishing guide](guides/publishing.md)** - Publishing workflows
-- **[Advanced nested repo features](guides/subrepo_management.md)** - Drift detection and sync
+- [Full command reference](guides/commands.md)
+- [Package publishing guide](guides/publishing.md)
+- [Nested repository management](guides/subrepo_management.md)

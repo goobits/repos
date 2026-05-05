@@ -256,7 +256,7 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     };
     let mode_text = match resolved_args.command {
         ConfigCommand::DryRun(_) => "(dry run)",
-        ConfigCommand::Force(_) => "(force)",
+        ConfigCommand::Force(_) => "(yes)",
         _ => "",
     };
     print!(

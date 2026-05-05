@@ -3,6 +3,7 @@
 //! This tool scans for git repositories and provides commands to:
 //! - Push any unpushed commits to their upstream remotes
 //! - Sync user configuration (name/email) across repositories
+#![allow(clippy::large_enum_variant)]
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -17,7 +18,9 @@ mod utils;
 
 use commands::audit::handle_audit_command;
 use commands::config::{handle_config_command, parse_config_command};
+use commands::doctor::handle_doctor_command;
 use commands::publish::handle_publish_command;
+use commands::save::handle_save_command;
 use commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
     handle_unstage_command,
@@ -27,25 +30,60 @@ use git::ConfigArgs;
 
 #[derive(Subcommand, Clone)]
 enum Commands {
-    /// Push unpushed commits to remotes across all repositories
-    Push {
-        /// Automatically push branches with no upstream tracking
+    /// Stage tracked changes, commit, and push in one step
+    Save {
+        /// Commit message
+        message: String,
+        /// Include untracked files in the save
+        #[arg(long, short = 'u', conflicts_with = "all")]
+        include_untracked: bool,
+        /// Stage all non-ignored changes, including untracked files
+        #[arg(long, short = 'a', conflicts_with = "include_untracked")]
+        all: bool,
+        /// Set upstream automatically for branches without tracking
         #[arg(long)]
-        force: bool,
+        auto_upstream: bool,
+        /// Print the save plan without mutating repositories
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Fetch, pull with rebase, and report nested drift
+    Sync {
         /// Show detailed progress for all repositories
         #[arg(long, short)]
         verbose: bool,
         /// Show file changes in repos with uncommitted changes
         #[arg(long, short = 'c')]
         show_changes: bool,
-        /// Skip subrepo drift check (faster but less complete health check)
+        /// Skip nested repository drift check
         #[arg(long)]
         no_drift_check: bool,
-        /// Number of concurrent operations (default: CPU cores + 2)
-        #[arg(long, short = 'j', conflicts_with = "sequential")]
+        /// Number of concurrent operations (advanced)
+        #[arg(long, short = 'j', conflicts_with = "sequential", hide = true)]
         jobs: Option<usize>,
-        /// Run one operation at a time (useful for debugging or very slow connections)
+        /// Run one operation at a time (advanced)
+        #[arg(long, hide = true)]
+        sequential: bool,
+    },
+    /// Push unpushed commits to remotes across all repositories
+    Push {
+        /// Set upstream automatically for branches without tracking
         #[arg(long)]
+        auto_upstream: bool,
+        /// Show detailed progress for all repositories
+        #[arg(long, short)]
+        verbose: bool,
+        /// Show file changes in repos with uncommitted changes
+        #[arg(long, short = 'c')]
+        show_changes: bool,
+        /// Skip nested repository drift check
+        #[arg(long)]
+        no_drift_check: bool,
+        /// Number of concurrent operations (advanced)
+        #[arg(long, short = 'j', conflicts_with = "sequential", hide = true)]
+        jobs: Option<usize>,
+        /// Run one operation at a time (advanced)
+        #[arg(long, hide = true)]
         sequential: bool,
     },
     /// Pull changes from remotes across all repositories
@@ -59,14 +97,14 @@ enum Commands {
         /// Show file changes in repos with uncommitted changes
         #[arg(long, short = 'c')]
         show_changes: bool,
-        /// Skip subrepo drift check (faster but less complete health check)
+        /// Skip nested repository drift check
         #[arg(long)]
         no_drift_check: bool,
-        /// Number of concurrent operations (default: CPU cores + 2, capped at 12)
-        #[arg(long, short = 'j', conflicts_with = "sequential")]
+        /// Number of concurrent operations (advanced)
+        #[arg(long, short = 'j', conflicts_with = "sequential", hide = true)]
         jobs: Option<usize>,
-        /// Run one operation at a time (useful for debugging or very slow connections)
-        #[arg(long)]
+        /// Run one operation at a time (advanced)
+        #[arg(long, hide = true)]
         sequential: bool,
     },
     /// Manage git configuration across repositories
@@ -83,9 +121,9 @@ enum Commands {
         /// Use current repository's config as source
         #[arg(long, conflicts_with_all = ["name", "email", "from_global"])]
         from_current: bool,
-        /// Force overwrite all configs without prompting
+        /// Apply without prompting
         #[arg(long)]
-        force: bool,
+        yes: bool,
         /// Show what would be changed without making changes
         #[arg(long)]
         dry_run: bool,
@@ -167,27 +205,29 @@ enum Commands {
         repos: Option<Vec<String>>,
     },
     /// Manage nested repository synchronization
-    Subrepo {
+    Nested {
         #[command(subcommand)]
-        subcommand: SubrepoCommand,
+        subcommand: NestedCommand,
     },
+    /// Diagnose auth, remotes, nested state, and common blockers
+    Doctor,
 }
 
 #[derive(Subcommand, Clone)]
-enum SubrepoCommand {
-    /// Validate subrepo setup and show all nested repos
+enum NestedCommand {
+    /// Validate nested repository setup and show all nested repos
     Validate,
 
-    /// Show subrepo sync status (drift detection)
+    /// Show nested repository sync status (drift detection)
     Status {
-        /// Show all subrepos, not just drifted ones
+        /// Show all nested repositories, not just drifted ones
         #[arg(long)]
         all: bool,
     },
 
-    /// Sync a subrepo to specific commit across all parents
+    /// Sync a nested repository to specific commit across all parents
     Sync {
-        /// Subrepo name
+        /// Nested repository name
         name: String,
         /// Target commit hash
         #[arg(long)]
@@ -195,54 +235,41 @@ enum SubrepoCommand {
         /// Stash uncommitted changes before syncing (safe, reversible)
         #[arg(long)]
         stash: bool,
-        /// Force sync even with uncommitted changes (discards changes)
-        #[arg(long)]
-        force: bool,
     },
 
-    /// Update a subrepo to latest commit across all parents
+    /// Update a nested repository to latest commit across all parents
     Update {
-        /// Subrepo name
+        /// Nested repository name
         name: String,
-        /// Force update even with uncommitted changes
-        #[arg(long)]
-        force: bool,
     },
 }
 
 #[derive(Parser)]
 #[command(name = "repos")]
-#[command(about = "A tool for managing and synchronizing multiple git repositories")]
+#[command(about = "Fleet-scale Git orchestration for humans")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
-    /// Automatically push branches with no upstream tracking (for push)
-    #[arg(long, global = true)]
-    force: bool,
-
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
-/// Handles subrepo subcommands
-fn handle_subrepo_command(subcommand: SubrepoCommand) -> Result<()> {
+/// Handles nested repository subcommands.
+fn handle_nested_command(subcommand: NestedCommand) -> Result<()> {
     match subcommand {
-        SubrepoCommand::Validate => {
+        NestedCommand::Validate => {
             let report = subrepo::validation::validate_subrepos()?;
             subrepo::validation::display_report(&report);
             Ok(())
         }
-        SubrepoCommand::Status { all } => {
+        NestedCommand::Status { all } => {
             let statuses = subrepo::status::analyze_subrepos()?;
             subrepo::status::display_status(&statuses, all);
             Ok(())
         }
-        SubrepoCommand::Sync {
-            name,
-            to,
-            stash,
-            force,
-        } => subrepo::sync::sync_subrepo(&name, &to, stash, force),
-        SubrepoCommand::Update { name, force } => subrepo::sync::update_subrepo(&name, force),
+        NestedCommand::Sync { name, to, stash } => {
+            subrepo::sync::sync_subrepo(&name, &to, stash, false)
+        }
+        NestedCommand::Update { name } => subrepo::sync::update_subrepo(&name, false),
     }
 }
 
@@ -252,17 +279,49 @@ async fn main() -> Result<()> {
 
     // Determine the operation mode and handle commands
     match &cli.command {
-        Some(Commands::Push {
-            force,
+        Some(Commands::Save {
+            message,
+            include_untracked,
+            all,
+            auto_upstream,
+            dry_run,
+        }) => {
+            handle_save_command(
+                message.clone(),
+                *include_untracked,
+                *all,
+                *auto_upstream,
+                *dry_run,
+            )
+            .await
+        }
+        Some(Commands::Sync {
             verbose,
             show_changes,
             no_drift_check,
             jobs,
             sequential,
         }) => {
-            let force_push = *force || cli.force;
+            handle_pull_command(
+                true,
+                *verbose,
+                *show_changes,
+                *no_drift_check,
+                *jobs,
+                *sequential,
+            )
+            .await
+        }
+        Some(Commands::Push {
+            auto_upstream,
+            verbose,
+            show_changes,
+            no_drift_check,
+            jobs,
+            sequential,
+        }) => {
             handle_push_command(
-                force_push,
+                *auto_upstream,
                 *verbose,
                 *show_changes,
                 *no_drift_check,
@@ -321,7 +380,7 @@ async fn main() -> Result<()> {
             email,
             from_global,
             from_current,
-            force,
+            yes,
             dry_run,
         }) => {
             let config_args = ConfigArgs {
@@ -330,7 +389,7 @@ async fn main() -> Result<()> {
                     email.clone(),
                     *from_global,
                     *from_current,
-                    *force,
+                    *yes,
                     *dry_run,
                 )?,
             };
@@ -362,7 +421,8 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Some(Commands::Subrepo { subcommand }) => handle_subrepo_command(subcommand.clone()),
+        Some(Commands::Nested { subcommand }) => handle_nested_command(subcommand.clone()),
+        Some(Commands::Doctor) => handle_doctor_command().await,
         None => {
             // Default behavior - show help
             use clap::CommandFactory;

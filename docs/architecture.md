@@ -17,7 +17,7 @@ repos/
 │   ├── core/                # Core functionality
 │   ├── package/             # Package manager integrations
 │   ├── git/                 # Git operations
-│   ├── subrepo/             # Subrepo management
+│   ├── subrepo/             # Nested repository management internals
 │   ├── audit/               # Security auditing
 │   └── utils/               # Utility functions
 ├── tests/
@@ -42,7 +42,7 @@ Command implementations for each CLI subcommand. Each command module:
 - `config.rs` - Git config synchronization
 - `publish.rs` - Package publishing orchestration
 - `audit.rs` - Security scanning coordination
-- `subrepo.rs` - Nested repository management
+- `subrepo.rs` - Nested repository management internals
 
 ### Core (`src/core/`)
 
@@ -85,13 +85,13 @@ Low-level git functionality abstraction:
 - Handles edge cases (missing upstreams, dirty working trees)
 - Provides consistent error handling
 
-### Subrepo Management (`src/subrepo/`)
+### Nested Repository Management (`src/subrepo/`)
 
 Nested repository detection and synchronization:
 - **Discovery** - Finding nested `.git` directories
-- **Grouping** - Matching subrepos by remote URL
+- **Grouping** - Matching nested repositories by remote URL
 - **Drift Detection** - Comparing commits across instances
-- **Synchronization** - Updating subrepos to target commits
+- **Synchronization** - Updating nested repositories to target commits
 
 **Key algorithms:**
 - Sync score calculation: `(total_instances - unique_commits) / (total_instances - 1) × 100`

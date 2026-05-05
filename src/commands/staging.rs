@@ -294,50 +294,7 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let status_result = get_staging_status(repo_path).await;
-            let (status, message) = match status_result {
-                Ok((stdout, _)) => {
-                    if stdout.trim().is_empty() {
-                        (Status::NoChanges, "no changes".to_string())
-                    } else {
-                        let lines: Vec<&str> = stdout.trim().lines().collect();
-                        let staged_count = lines
-                            .iter()
-                            .filter(|line| {
-                                let chars: Vec<char> = line.chars().collect();
-                                chars.len() >= 2 && chars[0] != ' ' && chars[0] != '?'
-                            })
-                            .count();
-                        let unstaged_count = lines
-                            .iter()
-                            .filter(|line| {
-                                let chars: Vec<char> = line.chars().collect();
-                                chars.len() >= 2 && chars[1] != ' '
-                            })
-                            .count();
-                        let untracked_count =
-                            lines.iter().filter(|line| line.starts_with("??")).count();
-
-                        let mut parts = Vec::new();
-                        if staged_count > 0 {
-                            parts.push(format!("{staged_count} staged"));
-                        }
-                        if unstaged_count > 0 {
-                            parts.push(format!("{unstaged_count} unstaged"));
-                        }
-                        if untracked_count > 0 {
-                            parts.push(format!("{untracked_count} untracked"));
-                        }
-
-                        if parts.is_empty() {
-                            (Status::NoChanges, "no changes".to_string())
-                        } else {
-                            (Status::Synced, parts.join(", "))
-                        }
-                    }
-                }
-                Err(e) => (Status::StagingError, format!("error: {e}")),
-            };
+            let (status, message) = get_fleet_status(repo_path).await;
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
@@ -357,6 +314,116 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
 
     // Add final spacing
     println!();
+}
+
+async fn get_fleet_status(repo_path: &std::path::Path) -> (Status, String) {
+    use crate::git::operations::run_git;
+
+    let status_result = get_staging_status(repo_path).await;
+    let (working_status, mut parts) = match status_result {
+        Ok((stdout, _)) => summarize_worktree(&stdout),
+        Err(e) => return (Status::StagingError, format!("status failed: {e}")),
+    };
+
+    let branch = match run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
+        Ok((true, branch, _)) => branch,
+        _ => "unknown".to_string(),
+    };
+    parts.insert(0, format!("branch {branch}"));
+
+    match summarize_upstream(repo_path).await {
+        Some(remote) => parts.push(remote),
+        None => parts.push("no upstream".to_string()),
+    }
+
+    (working_status, parts.join(" | "))
+}
+
+fn summarize_worktree(stdout: &str) -> (Status, Vec<String>) {
+    if stdout.trim().is_empty() {
+        return (Status::Synced, vec!["clean".to_string()]);
+    }
+
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    let staged_count = lines
+        .iter()
+        .filter(|line| {
+            let chars: Vec<char> = line.chars().collect();
+            chars.len() >= 2 && chars[0] != ' ' && chars[0] != '?'
+        })
+        .count();
+    let unstaged_count = lines
+        .iter()
+        .filter(|line| {
+            let chars: Vec<char> = line.chars().collect();
+            chars.len() >= 2 && chars[1] != ' '
+        })
+        .count();
+    let untracked_count = lines.iter().filter(|line| line.starts_with("??")).count();
+
+    let mut parts = Vec::new();
+    if staged_count > 0 {
+        parts.push(format!("{staged_count} staged"));
+    }
+    if unstaged_count > 0 {
+        parts.push(format!("{unstaged_count} unstaged"));
+    }
+    if untracked_count > 0 {
+        parts.push(format!("{untracked_count} untracked"));
+    }
+
+    if parts.is_empty() {
+        (Status::Synced, vec!["clean".to_string()])
+    } else {
+        (Status::Dirty, parts)
+    }
+}
+
+async fn summarize_upstream(repo_path: &std::path::Path) -> Option<String> {
+    use crate::git::operations::run_git;
+
+    let upstream = run_git(repo_path, &["rev-parse", "--abbrev-ref", "@{upstream}"])
+        .await
+        .ok()?;
+    if !upstream.0 {
+        return None;
+    }
+
+    let ahead = run_git(repo_path, &["rev-list", "--count", "HEAD", "^@{upstream}"])
+        .await
+        .ok()
+        .and_then(|(success, count, _)| {
+            if success {
+                count.parse::<u32>().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    let behind = run_git(repo_path, &["rev-list", "--count", "@{upstream}", "^HEAD"])
+        .await
+        .ok()
+        .and_then(|(success, count, _)| {
+            if success {
+                count.parse::<u32>().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    let remote = if ahead > 0 && behind > 0 {
+        format!("diverged ({ahead} ahead, {behind} behind)")
+    } else if ahead > 0 {
+        format!("ahead {ahead}")
+    } else if behind > 0 {
+        format!("behind {behind}")
+    } else {
+        format!("synced with {}", upstream.1)
+    };
+
+    Some(remote)
 }
 
 /// Handles the repository commit command

@@ -39,6 +39,8 @@ pub enum Status {
     Pulled,
     /// Pull failed due to conflicts or other errors
     PullError,
+    /// Repository has local worktree changes
+    Dirty,
 }
 
 impl Status {
@@ -55,7 +57,7 @@ impl Status {
             | Status::Committed
             | Status::Pulled => "🟢",
             Status::Skip | Status::NoRemote | Status::ConfigSkipped | Status::NoChanges => "🟠",
-            Status::NoUpstream => "🟡",
+            Status::NoUpstream | Status::Dirty => "🟡",
             Status::Error
             | Status::ConfigError
             | Status::StagingError
@@ -86,6 +88,7 @@ impl Status {
             Status::CommitError => "failed",
             Status::Pulled => "pulled",
             Status::PullError => "pull-failed",
+            Status::Dirty => "dirty",
         }
     }
 }

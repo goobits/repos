@@ -16,7 +16,7 @@ const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 
 /// Handles the repository push command
 pub async fn handle_push_command(
-    force_push: bool,
+    auto_upstream: bool,
     verbose: bool,
     show_changes: bool,
     no_drift_check: bool,
@@ -69,9 +69,9 @@ pub async fn handle_push_command(
         };
 
     // Process all repositories concurrently
-    process_push_repositories(context, force_push, verbose, show_changes).await;
+    process_push_repositories(context, auto_upstream, verbose, show_changes).await;
 
-    // Check for subrepo drift unless explicitly skipped
+    // Check for nested repository drift unless explicitly skipped
     if !no_drift_check {
         check_and_display_drift();
     }
@@ -88,7 +88,7 @@ pub async fn handle_push_command(
 /// Fetch uses high concurrency (2x), push uses standard concurrency with rate limit protection
 async fn process_push_repositories(
     context: crate::core::ProcessingContext,
-    force_push: bool,
+    auto_upstream: bool,
     verbose: bool,
     show_changes: bool,
 ) {
@@ -242,7 +242,7 @@ async fn process_push_repositories(
             if let Some(coordinator) = coordinator_clone.as_ref() {
                 coordinator.set_stage(repo_name, Stage::Checking, "git fetch --quiet");
             }
-            let fetch_result = fetch_and_analyze(repo_path, force_push).await;
+            let fetch_result = fetch_and_analyze(repo_path, auto_upstream).await;
             drop(_fetch_permit); // Fetch permit released here
 
             // PHASE 2: Push with standard concurrency + rate limit protection
@@ -291,7 +291,7 @@ async fn process_push_repositories(
             let result = loop {
                 attempt += 1;
                 let (status, message, has_uncommitted) =
-                    push_if_needed(repo_path, &fetch_result, force_push).await;
+                    push_if_needed(repo_path, &fetch_result, auto_upstream).await;
 
                 // Check for rate limit error
                 if message.contains("⚠️ RATE LIMIT") {
@@ -433,9 +433,9 @@ async fn process_push_repositories(
     println!();
 }
 
-/// Check for subrepo drift and display concise summary
+/// Check for nested repository drift and display concise summary
 fn check_and_display_drift() {
-    // Try to analyze subrepos - if it fails (e.g., no subrepos), silently skip
+    // Try to analyze nested repos - if it fails (e.g., none found), silently skip.
     if let Ok(statuses) = crate::subrepo::status::analyze_subrepos() {
         // Only display if there's drift to report
         if statuses.iter().any(|s| s.has_drift) {
@@ -504,7 +504,7 @@ pub async fn handle_pull_command(
     // Process all repositories concurrently
     process_pull_repositories(context, use_rebase, verbose, show_changes).await;
 
-    // Check for subrepo drift unless explicitly skipped
+    // Check for nested repository drift unless explicitly skipped
     if !no_drift_check {
         check_and_display_drift();
     }
@@ -718,7 +718,7 @@ async fn process_pull_repositories(
             };
             if let Some(coordinator) = coordinator_clone.as_ref() {
                 let pull_op = if use_rebase {
-                    "git pull --rebase --autostash"
+                    "git pull --rebase"
                 } else {
                     "git pull --ff-only"
                 };
@@ -858,7 +858,7 @@ async fn process_pull_repositories(
     if has_rate_limit.load(std::sync::atomic::Ordering::Acquire) {
         let count = rate_limit_count.load(std::sync::atomic::Ordering::Acquire);
         eprintln!("\n⚠️  Rate limit detected on {count} operation(s).");
-        eprintln!("💡 Try reducing concurrency: repos pull --jobs 3");
+        eprintln!("💡 Try reducing concurrency: repos sync --jobs 3");
     }
 
     if let Some(footer_pb) = footer_pb {
