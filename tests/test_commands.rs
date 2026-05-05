@@ -313,15 +313,21 @@ async fn test_push_if_needed_uses_upstream_remote_for_current_branch() {
         .output()
         .expect("Failed to get HEAD");
     assert!(head_commit.status.success(), "Failed to get HEAD");
-    let head_commit = String::from_utf8_lossy(&head_commit.stdout).trim().to_string();
+    let head_commit = String::from_utf8_lossy(&head_commit.stdout)
+        .trim()
+        .to_string();
 
     let fetch_result = fetch_and_analyze(repo.path(), false).await;
     assert!(fetch_result.upstream_exists);
     assert_eq!(fetch_result.upstream_remote.as_deref(), Some("origin"));
-    assert_eq!(fetch_result.upstream_branch.as_deref(), Some("feature/music"));
+    assert_eq!(
+        fetch_result.upstream_branch.as_deref(),
+        Some("feature/music")
+    );
     assert_eq!(fetch_result.ahead_count, 1);
 
-    let (status, _message, _has_uncommitted) = push_if_needed(repo.path(), &fetch_result, false).await;
+    let (status, _message, _has_uncommitted) =
+        push_if_needed(repo.path(), &fetch_result, false).await;
     assert_eq!(status, Status::Pushed);
 
     let origin_head = Command::new("git")
@@ -334,7 +340,10 @@ async fn test_push_if_needed_uses_upstream_remote_for_current_branch() {
         "Origin remote missing feature branch: {}",
         String::from_utf8_lossy(&origin_head.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&origin_head.stdout).trim(), head_commit);
+    assert_eq!(
+        String::from_utf8_lossy(&origin_head.stdout).trim(),
+        head_commit
+    );
 
     let wrong_head = Command::new("git")
         .args(["rev-parse", "feature/music"])

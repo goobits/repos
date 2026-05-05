@@ -382,11 +382,11 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
         };
     }
 
-    let (upstream_remote, upstream_branch) = match get_upstream_push_target(path, &current_branch).await
-    {
-        Ok(Some((remote, branch))) => (Some(remote), Some(branch)),
-        _ => (None, None),
-    };
+    let (upstream_remote, upstream_branch) =
+        match get_upstream_push_target(path, &current_branch).await {
+            Ok(Some((remote, branch))) => (Some(remote), Some(branch)),
+            _ => (None, None),
+        };
 
     // Check if local is ahead of remote
     let ahead_check = run_git(path, &["rev-list", "--count", "HEAD", "^@{upstream}"]).await;

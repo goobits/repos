@@ -55,8 +55,14 @@ pub async fn handle_save_command(
             }
         };
 
-    process_save_repositories(context, message, include_untracked || all, auto_upstream, dry_run)
-        .await;
+    process_save_repositories(
+        context,
+        message,
+        include_untracked || all,
+        auto_upstream,
+        dry_run,
+    )
+    .await;
 
     set_terminal_title_and_flush("✅ repos save");
     Ok(())
@@ -201,7 +207,13 @@ async fn save_one_repo(
     match has_staged_changes(repo_path).await {
         Ok(true) => {}
         Ok(false) => return (Status::NoChanges, "nothing staged".to_string(), true),
-        Err(e) => return (Status::StagingError, format!("stage check failed: {e}"), true),
+        Err(e) => {
+            return (
+                Status::StagingError,
+                format!("stage check failed: {e}"),
+                true,
+            )
+        }
     }
 
     match commit_changes(repo_path, commit_message, false).await {

@@ -143,7 +143,7 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     }
 
     // Sort by size (largest first) and limit to top 10
-    violations.sort_by(|a, b| b.size_bytes.unwrap_or(0).cmp(&a.size_bytes.unwrap_or(0)));
+    violations.sort_by_key(|violation| std::cmp::Reverse(violation.size_bytes.unwrap_or(0)));
     violations.truncate(LARGE_FILES_DISPLAY_LIMIT);
 
     Ok(violations)

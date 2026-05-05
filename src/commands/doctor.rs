@@ -61,7 +61,10 @@ async fn run_diagnostics(context: crate::core::ProcessingContext) {
             } else {
                 findings.join("; ")
             };
-            println!("{symbol} {repo_name:width$}  {message}", width = max_name_length);
+            println!(
+                "{symbol} {repo_name:width$}  {message}",
+                width = max_name_length
+            );
         };
 
         futures.push(future);
@@ -105,7 +108,10 @@ async fn diagnose_repo(path: &std::path::Path) -> Vec<String> {
 
     match run_git(path, &["status", "--porcelain"]).await {
         Ok((true, status, _)) => {
-            if status.lines().any(|line| line.starts_with("UU") || line.starts_with("AA")) {
+            if status
+                .lines()
+                .any(|line| line.starts_with("UU") || line.starts_with("AA"))
+            {
                 findings.push("conflicts".to_string());
             } else if !status.trim().is_empty() {
                 findings.push("dirty worktree".to_string());

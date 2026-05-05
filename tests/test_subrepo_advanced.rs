@@ -22,6 +22,20 @@ fn clone_repo(source: &Path, dest: &Path) -> Result<()> {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(dest)
+        .output()?;
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(dest)
+        .output()?;
+    Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(dest)
+        .output()?;
+
     Ok(())
 }
 

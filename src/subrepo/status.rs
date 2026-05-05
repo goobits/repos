@@ -226,7 +226,10 @@ pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
         }
     } else if !synced.is_empty() {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("💡 {} nested repositories fully synced (100%)", synced.len());
+        println!(
+            "💡 {} nested repositories fully synced (100%)",
+            synced.len()
+        );
         println!("   Use --all to see them");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
@@ -415,7 +418,9 @@ fn display_drift_status(status: &SubrepoStatus) {
             println!("     (Syncs {dirty_list} to the clean commit from '{target_repo}')");
             println!();
 
-            println!("  Manual alternative: commit or discard changes in {dirty_list}, then rerun sync.");
+            println!(
+                "  Manual alternative: commit or discard changes in {dirty_list}, then rerun sync."
+            );
         }
 
         UncommittedState::AllClean => {

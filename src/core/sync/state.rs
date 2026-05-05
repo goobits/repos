@@ -41,10 +41,7 @@ pub struct SyncState {
 }
 
 impl SyncState {
-    pub fn new(
-        repo_names: &[String],
-        total_repos: usize,
-    ) -> Self {
+    pub fn new(repo_names: &[String], total_repos: usize) -> Self {
         let now = Instant::now();
         let repos = repo_names
             .iter()
