@@ -1,8 +1,14 @@
 # Getting Started
 
-Fleet-scale Git orchestration across multiple repositories. Instead of manually
-visiting each repo to run the same Git commands, run one intent-driven `repos`
-command across the fleet.
+Fleet-scale Git orchestration across multiple repositories.
+
+Instead of acting as a human `for` loop, use intent-driven commands:
+
+```bash
+repos status
+repos save "Update docs"
+repos sync
+```
 
 ## Installation
 
@@ -21,7 +27,7 @@ repos status
 ```
 
 Use this first when you want to know which repositories are clean, dirty, staged,
-or untracked.
+untracked, ahead, or behind.
 
 ### Save Work
 
@@ -30,7 +36,8 @@ repos save "Update docs"
 ```
 
 This stages tracked modifications and deletions, commits them, and pushes the
-result. It does not stage untracked files unless you opt in:
+result. It does not stage untracked files unless you opt in, which prevents
+accidental commits of scratch files, generated output, secrets, or local config:
 
 ```bash
 repos save "Add new docs" --include-untracked
@@ -43,7 +50,7 @@ repos sync
 ```
 
 This fetches remotes, pulls with rebase where safe, and reports nested repository
-drift.
+drift. Dirty repositories are skipped instead of being stashed implicitly.
 
 Example drift summary:
 
@@ -81,6 +88,12 @@ repos config --name "Alice" --email "alice@example.com"
 ```bash
 repos status
 repos save "Update docs"
+```
+
+Preview first when you are unsure:
+
+```bash
+repos save "Update docs" --dry-run
 ```
 
 ### Include New Files

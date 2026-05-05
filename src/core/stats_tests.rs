@@ -16,6 +16,7 @@ mod tests {
         assert_eq!(stats.error_repos.load(Ordering::Relaxed), 0);
         assert_eq!(stats.uncommitted_count.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.total_commits_pulled.load(Ordering::Relaxed), 0);
         assert!(stats
             .no_upstream_repos
             .lock()
@@ -53,6 +54,22 @@ mod tests {
         stats.update("repo1", "/path/1", &Status::Synced, "up to date", false);
         assert_eq!(stats.synced_repos.load(Ordering::Relaxed), 1);
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.total_commits_pulled.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_update_with_pulled_status() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "repo1",
+            "/path/1",
+            &Status::Pulled,
+            "7 commits pulled",
+            false,
+        );
+        assert_eq!(stats.pulled_repos.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.total_commits_pulled.load(Ordering::Relaxed), 7);
+        assert_eq!(stats.synced_repos.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -160,6 +177,19 @@ mod tests {
         let summary = stats.generate_summary(10, duration);
 
         assert!(!summary.is_empty(), "Summary should not be empty");
+    }
+
+    #[test]
+    fn test_generate_pull_summary_mentions_pulled() {
+        let stats = SyncStatistics::new();
+        stats.synced_repos.store(3, Ordering::Relaxed);
+        stats.pulled_repos.store(2, Ordering::Relaxed);
+        stats.total_commits_pulled.store(12, Ordering::Relaxed);
+
+        let summary = stats.generate_pull_summary(Duration::from_secs(4));
+
+        assert!(summary.contains("2 pulled (12 commits)"));
+        assert!(!summary.contains("pushed"));
     }
 
     #[test]

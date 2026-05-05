@@ -12,13 +12,24 @@ use std::path::Path;
 
 /// Discover all nested repositories and generate a validation report
 pub fn validate_subrepos() -> Result<ValidationReport> {
+    validate_subrepos_with_output(true)
+}
+
+/// Discover all nested repositories without printing scan progress.
+pub fn validate_subrepos_quiet() -> Result<ValidationReport> {
+    validate_subrepos_with_output(false)
+}
+
+fn validate_subrepos_with_output(show_scan: bool) -> Result<ValidationReport> {
     let parent_repos = crate::core::discovery::find_repos();
     let mut all_nested = Vec::new();
 
-    println!(
-        "🔍 Scanning {} parent repositories for nested repos...\n",
-        parent_repos.len()
-    );
+    if show_scan {
+        println!(
+            "🔍 Scanning {} parent repositories for nested repos...\n",
+            parent_repos.len()
+        );
+    }
 
     for (parent_name, parent_path) in parent_repos {
         let nested = find_nested_in_parent(&parent_name, &parent_path)?;

@@ -180,7 +180,7 @@ async fn test_pull_command_with_single_repo() {
 }
 
 #[tokio::test]
-async fn test_push_command_with_force_flag() {
+async fn test_push_command_with_auto_upstream() {
     let _lock = common::lock_test();
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
@@ -204,7 +204,7 @@ async fn test_push_command_with_force_flag() {
     // Change to repo directory
     env::set_current_dir(repo.path()).expect("Failed to change dir");
 
-    // Run push command with force flag
+    // Run push command with automatic upstream creation enabled.
     let result = handle_push_command(true, false, false, true, None, false).await;
 
     // Restore original directory before repo cleanup
@@ -212,7 +212,7 @@ async fn test_push_command_with_force_flag() {
 
     assert!(
         result.is_ok(),
-        "Force push command should complete without panicking: {:?}",
+        "Auto-upstream push command should complete without panicking: {:?}",
         result
     );
 }

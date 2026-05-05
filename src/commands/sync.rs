@@ -145,7 +145,7 @@ async fn process_push_repositories(
         let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
         let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
         footer_pb.set_message(
-            "✅ 0 Pushed / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
+            "⬆️  0 Pushed / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
                 .to_string(),
         );
         let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
@@ -162,7 +162,7 @@ async fn process_push_repositories(
         let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
         let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
         footer_pb.set_message(
-            "✅ 0 Pushed / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
+            "⬆️  0 Pushed / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
                 .to_string(),
         );
         let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
@@ -175,7 +175,6 @@ async fn process_push_repositories(
 
     let max_name_length = context.max_name_length;
     let start_time = context.start_time;
-    let total_repos = context.total_repos;
 
     // Track rate limit errors for adaptive backoff
     let rate_limit_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -197,7 +196,6 @@ async fn process_push_repositories(
         let verbose_clone = verbose;
         let max_name_length_clone = max_name_length;
         let start_time_clone = start_time;
-        let total_repos_clone = total_repos;
 
         let future = async move {
             use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
@@ -370,26 +368,14 @@ async fn process_push_repositories(
             let duration = start_time_clone.elapsed();
             if verbose_clone {
                 if let Some(footer_clone) = footer_clone.as_ref() {
-                    footer_clone
-                        .set_message(stats_guard.generate_summary(total_repos_clone, duration));
+                    footer_clone.set_message(stats_guard.generate_push_summary(duration));
                 }
             }
             drop(stats_guard);
             if !verbose_clone {
                 if let Some(footer_clone) = footer_clone.as_ref() {
-                    use std::sync::atomic::Ordering;
                     let stats_locked = stats_clone.lock().unwrap();
-                    let no_upstream_len = stats_locked.no_upstream_repos.lock().unwrap().len();
-                    let live_counters = format!(
-                        "✅ {} Pushed / {} Commits  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
-                        stats_locked.pushed_repos.load(Ordering::Relaxed),
-                        stats_locked.total_commits_pushed.load(Ordering::Relaxed),
-                        stats_locked.synced_repos.load(Ordering::Relaxed),
-                        stats_locked.error_repos.load(Ordering::Relaxed),
-                        no_upstream_len,
-                        stats_locked.skipped_repos.load(Ordering::Relaxed)
-                    );
-                    footer_clone.set_message(live_counters);
+                    footer_clone.set_message(stats_locked.generate_push_live_summary());
                 }
             }
             if let Some(coordinator) = coordinator_clone.as_ref() {
@@ -424,8 +410,7 @@ async fn process_push_repositories(
 
     let final_stats = acquire_stats_lock(&context.statistics);
     if !verbose {
-        let summary =
-            final_stats.generate_summary(context.total_repos, context.start_time.elapsed());
+        let summary = final_stats.generate_push_summary(context.start_time.elapsed());
         println!();
         println!("{summary}");
     }
@@ -441,7 +426,7 @@ async fn process_push_repositories(
 /// Check for nested repository drift and display concise summary
 fn check_and_display_drift() {
     // Try to analyze nested repos - if it fails (e.g., none found), silently skip.
-    if let Ok(statuses) = crate::subrepo::status::analyze_subrepos() {
+    if let Ok(statuses) = crate::subrepo::status::analyze_subrepos_quiet() {
         // Only display if there's drift to report
         if statuses.iter().any(|s| s.has_drift) {
             crate::subrepo::status::display_drift_summary(&statuses);
@@ -583,7 +568,8 @@ async fn process_pull_repositories(
         let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
         let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
         footer_pb.set_message(
-            "🔽 0 Pulled  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+            "🔽 0 Pulled / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
+                .to_string(),
         );
         let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
         (bars, Some(footer_pb), None)
@@ -599,7 +585,8 @@ async fn process_pull_repositories(
         let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
         let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
         footer_pb.set_message(
-            "🔽 0 Pulled  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped".to_string(),
+            "🔽 0 Pulled / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
+                .to_string(),
         );
         let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
         (
@@ -611,14 +598,10 @@ async fn process_pull_repositories(
 
     let max_name_length = context.max_name_length;
     let start_time = context.start_time;
-    let total_repos = context.total_repos;
 
     // Track rate limit errors for adaptive backoff
     let rate_limit_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let has_rate_limit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-    // Track pull statistics
-    let total_commits_pulled = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     // Create pipelined futures: each does fetch → immediately pull
     let mut pipeline_futures = FuturesUnordered::new();
@@ -632,12 +615,10 @@ async fn process_pull_repositories(
         let single_pb_clone = single_pb.clone();
         let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
         let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
-        let total_commits_pulled_clone = std::sync::Arc::clone(&total_commits_pulled);
         let coordinator_clone = coordinator.clone();
         let verbose_clone = verbose;
         let max_name_length_clone = max_name_length;
         let start_time_clone = start_time;
-        let total_repos_clone = total_repos;
 
         let future = async move {
             use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
@@ -760,14 +741,6 @@ async fn process_pull_repositories(
 
             let (status, message, has_uncommitted_changes) = result;
 
-            // Track total commits pulled
-            if matches!(status, crate::git::Status::Pulled) {
-                total_commits_pulled_clone.fetch_add(
-                    fetch_result.behind_count as usize,
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-            }
-
             // Calculate elapsed time for this repo
             let repo_elapsed = repo_start_time.elapsed();
             let repo_elapsed_secs = repo_elapsed.as_secs_f32();
@@ -823,25 +796,14 @@ async fn process_pull_repositories(
             let duration = start_time_clone.elapsed();
             if verbose_clone {
                 if let Some(footer_clone) = footer_clone.as_ref() {
-                    footer_clone
-                        .set_message(stats_guard.generate_summary(total_repos_clone, duration));
+                    footer_clone.set_message(stats_guard.generate_pull_summary(duration));
                 }
             }
             drop(stats_guard);
             if !verbose_clone {
                 if let Some(footer_clone) = footer_clone.as_ref() {
-                    use std::sync::atomic::Ordering;
                     let stats_locked = stats_clone.lock().unwrap();
-                    let no_upstream_len = stats_locked.no_upstream_repos.lock().unwrap().len();
-                    let live_counters = format!(
-                        "🔽 {} Pulled  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
-                        total_commits_pulled_clone.load(Ordering::Relaxed),
-                        stats_locked.synced_repos.load(Ordering::Relaxed),
-                        stats_locked.error_repos.load(Ordering::Relaxed),
-                        no_upstream_len,
-                        stats_locked.skipped_repos.load(Ordering::Relaxed)
-                    );
-                    footer_clone.set_message(live_counters);
+                    footer_clone.set_message(stats_locked.generate_pull_live_summary());
                 }
             }
             if let Some(coordinator) = coordinator_clone.as_ref() {
@@ -876,8 +838,7 @@ async fn process_pull_repositories(
 
     let final_stats = acquire_stats_lock(&context.statistics);
     if !verbose {
-        let summary =
-            final_stats.generate_summary(context.total_repos, context.start_time.elapsed());
+        let summary = final_stats.generate_pull_summary(context.start_time.elapsed());
         println!();
         println!("{summary}");
     }

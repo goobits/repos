@@ -1,6 +1,10 @@
 # repos
 
-Fleet-scale Git orchestration for humans. One command instead of dozens of `cd` + `git` loops.
+Fleet-scale Git orchestration for humans.
+
+`repos` lets you manage a directory full of Git repositories like one project.
+The daily path is intent-first: understand state, save work, sync changes. The
+Git-shaped commands are still there when you need exact control.
 
 ## Quick Start
 
@@ -13,7 +17,7 @@ cd repos
 # Or install from crates.io
 cargo install goobits-repos
 
-# Usage
+# Daily usage
 repos status                    # Understand fleet state
 repos save "Update docs"        # Stage tracked changes, commit, push
 repos sync                      # Fetch, rebase, and report drift
@@ -23,7 +27,8 @@ repos sync                      # Fetch, rebase, and report drift
 
 ## Key Features
 
-- **Humane Daily Workflow** - `status`, `save`, and `sync` cover common fleet work
+- **Humane Daily Workflow** - `status`, `save`, and `sync` map to developer intent
+- **Safe Defaults** - `save` stages tracked changes only; untracked files require opt-in
 - **Batch Operations** - Push, pull, commit, stage across all repositories concurrently
 - **Git LFS Support** - Automatic detection and handling of Large File Storage in push/pull operations
 - **Nested Drift Detection** - Track and sync nested repos at different commits
@@ -47,7 +52,6 @@ repos pull --rebase             # Granular pull with rebase
 # Staging & Commits
 repos stage "pattern"           # Stage by pattern
 repos commit "message"          # Commit staged changes
-repos status                    # Show staging status
 
 # Publishing
 repos publish --dry-run         # Preview
@@ -72,6 +76,16 @@ repos config --from-global      # Copy from global config
 `repos status` • `repos save` • `repos sync` • `repos push` • `repos pull` • `repos stage` • `repos unstage` • `repos commit` • `repos publish` • `repos audit` • `repos doctor` • `repos nested` • `repos config`
 
 See [Commands Reference](docs/guides/commands.md) for complete flag documentation.
+
+## Safety Model
+
+`repos` is intent-first, not magic-first.
+
+- `repos save "message"` uses the equivalent of `git add -u`, so new files are not committed accidentally.
+- Use `repos save "message" --include-untracked` when you intentionally want new files.
+- Use `repos save "message" --dry-run` to preview the save plan.
+- `repos sync` skips dirty repositories instead of stashing or overwriting local work.
+- `repos push --auto-upstream` replaces the old “force” wording for publishing new branches.
 
 ## Documentation
 

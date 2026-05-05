@@ -413,7 +413,7 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             upstream_branch,
             status: Status::Error,
             message: format!(
-                "diverged: {ahead_count} ahead, {behind_count} behind (pull required before push)"
+                "diverged: {ahead_count} ahead, {behind_count} behind (run repos sync or resolve manually)"
             ),
         };
     }
@@ -822,7 +822,7 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
             behind_count,
             status: Status::PullError,
             message: format!(
-                "diverged: {ahead_count} ahead, {behind_count} behind (manual merge required)"
+                "diverged: {ahead_count} ahead, {behind_count} behind (run repos sync or resolve manually)"
             ),
         };
     }

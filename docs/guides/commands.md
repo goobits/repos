@@ -5,6 +5,21 @@
 The CLI is intent-first for daily work and keeps granular Git controls available
 when you need them.
 
+Daily model:
+
+```bash
+repos status
+repos save "message"
+repos sync
+```
+
+Safety model:
+
+- `save` stages tracked changes only unless you opt into untracked files.
+- `sync` skips dirty repositories instead of stashing implicitly.
+- branch publishing uses `--auto-upstream`, not overloaded force wording.
+- mutating daily workflows expose `--dry-run` where practical.
+
 ## Overview
 
 ```text
@@ -45,11 +60,12 @@ Show repository state across the fleet.
 repos status
 ```
 
-Reports staged, unstaged, and untracked changes per repository.
+Reports branch, worktree state, and upstream status per repository.
 
 ### `repos save`
 
-Stage tracked changes, commit, and push in one command.
+Stage tracked changes, commit, and push in one command. This is the humane
+replacement for the common `stage -> commit -> push` loop.
 
 ```bash
 repos save "Update docs"
@@ -84,7 +100,8 @@ repos save "Preview save" --dry-run
 
 ### `repos sync`
 
-Fetch and pull safe repositories using rebase.
+Fetch and pull safe repositories using rebase. This is the humane daily command
+for “bring my workspace up to date.”
 
 ```bash
 repos sync

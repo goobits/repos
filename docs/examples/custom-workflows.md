@@ -13,8 +13,8 @@ This script creates a new branch in all repositories matching a pattern, makes a
 BRANCH_NAME="feat/update-license"
 REPOS_PATTERN="goobits-"
 
-# 1. Pull latest changes
-repos pull --rebase
+# 1. Sync safe repositories first
+repos sync
 
 # 2. Iterate over discovered repos
 # Use repos status to get a list of repos (or find them yourself)
@@ -28,9 +28,9 @@ for repo in $(repos status | grep "$REPOS_PATTERN" | awk '{print $2}'); do
     # Apply change
     cp ../LICENSE ./LICENSE
     
-    # Stage and commit
-    repos stage LICENSE
-    repos commit "Update LICENSE file"
+    # Stage and commit this repository explicitly
+    git add LICENSE
+    git commit -m "Update LICENSE file"
     
     cd ..
 done

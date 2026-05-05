@@ -72,7 +72,7 @@ cargo build
 ## Verify Installation
 
 ```bash
-repos --version      # Should show: repos 2.1.0
+repos --version      # Should show the installed repos version
 which repos          # Should show: /home/user/.local/bin/repos
 repos --help         # Display command help
 ```

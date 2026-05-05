@@ -59,8 +59,8 @@ Common issues and solutions for the repos tool.
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `push failed: no upstream branch` | Upstream branch not configured | Set upstream: `git push -u origin <branch>` or use `repos push --auto-upstream` |
-| `push rejected: non-fast-forward` | Remote has commits not in local | Pull first: `git pull --rebase` or use `repos sync` |
+| `push failed: no upstream branch` | Upstream branch not configured | Use `repos push --auto-upstream` |
+| `push rejected: non-fast-forward` | Remote has commits not in local | Use `repos sync` or resolve the branch manually |
 | Submodule conflicts | Mixed submodules and nested repos | Use `git submodule` commands for submodules; repos handles nested repos |
 | Worktree detection issues | Git worktree not recognized | Ensure worktree is properly configured: `git worktree list` |
 | `not a git repository` | Command run outside git repo | Navigate to git repository root directory |

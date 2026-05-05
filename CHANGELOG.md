@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-05-05
+
+### Added
+- **Humane workflow commands:** Added intent-first daily commands for managing a fleet like one project.
+  - `repos save` stages tracked changes, commits, and pushes in one step.
+  - `repos sync` fetches and safely updates clean repositories with rebase semantics.
+  - `repos doctor` diagnoses auth, remotes, nested state, and required tooling.
+- **Nested repository UX:** Added the `repos nested` command surface for nested repo drift management.
+
+### Changed
+- **CLI command model:** Reframed the primary interface around `status`, `save`, and `sync`, with granular Git commands kept for explicit control.
+- **Safer push semantics:** Replaced ambiguous force-style upstream behavior with `repos push --auto-upstream`.
+- **Safer sync behavior:** Dirty repositories are skipped by default during sync instead of being mutated implicitly.
+- **Reporting parity:** Push and pull now use operation-aware summaries.
+  - Pull reports pulled repositories and pulled commits instead of showing push counters.
+  - Diverged repositories are grouped separately from generic failures.
+  - Email privacy failures are grouped as push policy blocks.
+  - Missing upstream guidance now points to `repos push --auto-upstream`.
+- **Documentation:** Rewrote README and core docs around humane intent, safety defaults, and day-to-day workflows.
+
+### Fixed
+- **Nested drift output:** Automatic post-run drift checks no longer print a stray nested scan line when there is no drift to report.
+- **Test isolation:** Fixed cwd restoration in blocking discovery tests so temporary directories cannot leak across tests.
+
+### Breaking Changes
+- **Subrepo command naming:** Public-facing nested repository workflows now use `nested` terminology instead of `subrepo`.
+- **Push upstream flag:** Use `--auto-upstream`; force-style naming is no longer the intended workflow.
+
 ## [3.1.0] - 2025-12-21
 
 ### Added

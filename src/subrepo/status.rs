@@ -68,8 +68,19 @@ impl SubrepoStatus {
 
 /// Analyze all subrepos and return status for shared ones
 pub fn analyze_subrepos() -> Result<Vec<SubrepoStatus>> {
-    let report = super::validation::validate_subrepos()?;
+    Ok(analyze_subrepos_from_report(
+        super::validation::validate_subrepos()?,
+    ))
+}
 
+/// Analyze all subrepos without printing scan progress.
+pub fn analyze_subrepos_quiet() -> Result<Vec<SubrepoStatus>> {
+    Ok(analyze_subrepos_from_report(
+        super::validation::validate_subrepos_quiet()?,
+    ))
+}
+
+fn analyze_subrepos_from_report(report: super::ValidationReport) -> Vec<SubrepoStatus> {
     let mut statuses = Vec::new();
     for (remote_url, instances) in report.by_remote {
         // Skip non-shared subrepos
@@ -85,7 +96,7 @@ pub fn analyze_subrepos() -> Result<Vec<SubrepoStatus>> {
     // Use total_cmp to handle NaN safely (treats NaN as less than all other values)
     statuses.sort_by(|a, b| a.sync_score.total_cmp(&b.sync_score));
 
-    Ok(statuses)
+    statuses
 }
 
 /// Display concise drift summary for use in repos push

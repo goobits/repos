@@ -1,10 +1,34 @@
 use goobits_repos::core::init_command;
 use std::fs;
+use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
+static CWD_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+struct CurrentDirGuard {
+    original: PathBuf,
+}
+
+impl CurrentDirGuard {
+    fn enter(path: &std::path::Path) -> Self {
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(path).unwrap();
+        Self { original }
+    }
+}
+
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.original);
+    }
+}
+
 #[tokio::test] // Default is single threaded scheduler
 async fn test_blocking_discovery() {
+    let _cwd_lock = CWD_LOCK.lock().await;
+
     // Setup - Create many repos to make discovery slow
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path();
@@ -16,9 +40,8 @@ async fn test_blocking_discovery() {
         fs::create_dir(repo_path.join(".git")).unwrap();
     }
 
-    // Change current directory to temp dir so init_command scans it
-    let _orig_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(root).unwrap();
+    // Change current directory to temp dir so init_command scans it.
+    let _cwd_guard = CurrentDirGuard::enter(root);
 
     let start = Instant::now();
 
@@ -77,6 +100,8 @@ fn test_blocking_discovery_measure() {
         .unwrap();
 
     rt.block_on(async {
+        let _cwd_lock = CWD_LOCK.lock().await;
+
         println!("Main thread: {:?}", std::thread::current().id());
         // Setup - Create many repos to make discovery slow
         let temp_dir = TempDir::new().unwrap();
@@ -88,8 +113,7 @@ fn test_blocking_discovery_measure() {
             fs::create_dir(repo_path.join(".git")).unwrap();
         }
 
-        let _orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(root).unwrap();
+        let _cwd_guard = CurrentDirGuard::enter(root);
 
         let start = Instant::now();
 
@@ -137,7 +161,6 @@ fn test_blocking_discovery_measure() {
         println!("Max heartbeat delay: {} ms", delay);
 
         heartbeat_handle.abort();
-        std::env::set_current_dir(_orig_dir).unwrap();
 
         if delay > 90 {
             println!("Confirmed: BLOCKING behavior detected.");

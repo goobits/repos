@@ -19,6 +19,8 @@ pub struct SyncStatistics {
     pub synced_repos: AtomicU64,
     pub pushed_repos: AtomicU64,
     pub total_commits_pushed: AtomicU64,
+    pub pulled_repos: AtomicU64,
+    pub total_commits_pulled: AtomicU64,
     pub skipped_repos: AtomicU64,
     pub error_repos: AtomicU64,
     pub uncommitted_count: AtomicU64,
@@ -43,6 +45,8 @@ impl SyncStatistics {
             synced_repos: AtomicU64::new(0),
             pushed_repos: AtomicU64::new(0),
             total_commits_pushed: AtomicU64::new(0),
+            pulled_repos: AtomicU64::new(0),
+            total_commits_pulled: AtomicU64::new(0),
             skipped_repos: AtomicU64::new(0),
             error_repos: AtomicU64::new(0),
             uncommitted_count: AtomicU64::new(0),
@@ -66,19 +70,18 @@ impl SyncStatistics {
             Status::Pushed => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
                 self.pushed_repos.fetch_add(1, Ordering::Relaxed);
-                // Extract number of commits from message (e.g., "3 commits pushed")
-                if let Ok(commits) = message
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("0")
-                    .parse::<u64>()
-                {
+                if let Some(commits) = parse_commit_count(message) {
                     self.total_commits_pushed
                         .fetch_add(commits, Ordering::Relaxed);
                 }
             }
             Status::Pulled => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
+                self.pulled_repos.fetch_add(1, Ordering::Relaxed);
+                if let Some(commits) = parse_commit_count(message) {
+                    self.total_commits_pulled
+                        .fetch_add(commits, Ordering::Relaxed);
+                }
             }
             Status::Synced
             | Status::ConfigSynced
@@ -149,28 +152,77 @@ impl SyncStatistics {
 
     /// Generates a summary string of the synchronization results with enhanced formatting
     pub fn generate_summary(&self, _total_repos: usize, duration: Duration) -> String {
+        self.generate_push_summary(duration)
+    }
+
+    /// Generates a push-specific completion summary.
+    pub fn generate_push_summary(&self, duration: Duration) -> String {
         let duration_secs = duration.as_secs_f64();
 
-        // Load atomic values
         let synced = self.synced_repos.load(Ordering::Relaxed);
         let pushed_repos = self.pushed_repos.load(Ordering::Relaxed);
         let pushed_commits = self.total_commits_pushed.load(Ordering::Relaxed);
         let errors = self.error_repos.load(Ordering::Relaxed);
 
-        let mut summary = String::new();
-
-        // Main summary line
         if errors > 0 {
-            summary.push_str(&format!(
+            format!(
                 "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed_repos} pushed ({pushed_commits} commits) • {errors} failed"
-            ));
+            )
         } else {
-            summary.push_str(&format!(
+            format!(
                 "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed_repos} pushed ({pushed_commits} commits)"
-            ));
+            )
         }
+    }
 
-        summary
+    /// Generates a pull/sync-specific completion summary.
+    pub fn generate_pull_summary(&self, duration: Duration) -> String {
+        let duration_secs = duration.as_secs_f64();
+
+        let synced = self.synced_repos.load(Ordering::Relaxed);
+        let pulled_repos = self.pulled_repos.load(Ordering::Relaxed);
+        let pulled_commits = self.total_commits_pulled.load(Ordering::Relaxed);
+        let errors = self.error_repos.load(Ordering::Relaxed);
+
+        if errors > 0 {
+            format!(
+                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pulled_repos} pulled ({pulled_commits} commits) • {errors} failed"
+            )
+        } else {
+            format!(
+                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pulled_repos} pulled ({pulled_commits} commits)"
+            )
+        }
+    }
+
+    /// Generates a compact live push footer.
+    pub fn generate_push_live_summary(&self) -> String {
+        format!(
+            "⬆️  {} Pushed / {} Commits  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
+            self.pushed_repos.load(Ordering::Relaxed),
+            self.total_commits_pushed.load(Ordering::Relaxed),
+            self.synced_repos.load(Ordering::Relaxed),
+            self.error_repos.load(Ordering::Relaxed),
+            self.no_upstream_count(),
+            self.skipped_repos.load(Ordering::Relaxed)
+        )
+    }
+
+    /// Generates a compact live pull/sync footer.
+    pub fn generate_pull_live_summary(&self) -> String {
+        format!(
+            "🔽 {} Pulled / {} Commits  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
+            self.pulled_repos.load(Ordering::Relaxed),
+            self.total_commits_pulled.load(Ordering::Relaxed),
+            self.synced_repos.load(Ordering::Relaxed),
+            self.error_repos.load(Ordering::Relaxed),
+            self.no_upstream_count(),
+            self.skipped_repos.load(Ordering::Relaxed)
+        )
+    }
+
+    fn no_upstream_count(&self) -> usize {
+        self.no_upstream_repos.lock().map_or(0, |repos| repos.len())
     }
 
     /// Generates detailed warning messages for repositories needing attention
@@ -203,11 +255,25 @@ impl SyncStatistics {
             return String::new();
         };
 
-        // Failed repos get priority
-        if !failed_repos.is_empty() {
-            lines.push(format!("🔴 FAILED REPOS ({})", failed_repos.len()));
-            for (i, (repo_name, repo_path, error)) in failed_repos.iter().enumerate() {
-                let tree_char = if i == failed_repos.len() - 1 {
+        let mut diverged_repos = Vec::new();
+        let mut push_blocked_repos = Vec::new();
+        let mut other_failed_repos = Vec::new();
+
+        for repo in failed_repos.iter() {
+            let error = repo.2.to_lowercase();
+            if error.contains("diverged") {
+                diverged_repos.push(repo);
+            } else if error.contains("email privacy") {
+                push_blocked_repos.push(repo);
+            } else {
+                other_failed_repos.push(repo);
+            }
+        }
+
+        if !diverged_repos.is_empty() {
+            lines.push(format!("🔴 DIVERGED ({})", diverged_repos.len()));
+            for (i, (repo_name, repo_path, error)) in diverged_repos.iter().enumerate() {
+                let tree_char = if i == diverged_repos.len() - 1 {
                     "└─"
                 } else {
                     "├─"
@@ -217,7 +283,39 @@ impl SyncStatistics {
                     "   {tree_char} {repo_name:20} {short_path:30} # {error}"
                 ));
             }
-            lines.push(String::new()); // Add blank line
+            lines.push(String::new());
+        }
+
+        if !push_blocked_repos.is_empty() {
+            lines.push(format!("⛔ PUSH BLOCKED ({})", push_blocked_repos.len()));
+            for (i, (repo_name, repo_path, error)) in push_blocked_repos.iter().enumerate() {
+                let tree_char = if i == push_blocked_repos.len() - 1 {
+                    "└─"
+                } else {
+                    "├─"
+                };
+                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
+                lines.push(format!(
+                    "   {tree_char} {repo_name:20} {short_path:30} # {error}"
+                ));
+            }
+            lines.push(String::new());
+        }
+
+        if !other_failed_repos.is_empty() {
+            lines.push(format!("🔴 FAILED REPOS ({})", other_failed_repos.len()));
+            for (i, (repo_name, repo_path, error)) in other_failed_repos.iter().enumerate() {
+                let tree_char = if i == other_failed_repos.len() - 1 {
+                    "└─"
+                } else {
+                    "├─"
+                };
+                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
+                lines.push(format!(
+                    "   {tree_char} {repo_name:20} {short_path:30} # {error}"
+                ));
+            }
+            lines.push(String::new());
         }
 
         // No upstream repos
@@ -231,7 +329,7 @@ impl SyncStatistics {
                 };
                 let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
-                    "   {tree_char} {repo_name:20} {short_path:30} # git push -u origin <branch>"
+                    "   {tree_char} {repo_name:20} {short_path:30} # repos push --auto-upstream"
                 ));
             }
             lines.push(String::new()); // Add blank line
@@ -304,6 +402,10 @@ impl SyncStatistics {
 
         lines.join("\n")
     }
+}
+
+fn parse_commit_count(message: &str) -> Option<u64> {
+    message.split_whitespace().next()?.parse::<u64>().ok()
 }
 
 /// Cleans and formats error messages for display

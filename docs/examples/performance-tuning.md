@@ -23,4 +23,4 @@ If you encounter `403 Forbidden` or `Secondary Rate Limit` errors from GitHub:
 
 If your repositories use Git LFS, `repos` handles them automatically. To speed up LFS operations:
 - Ensure `git-lfs` is installed and up-to-date.
-- `repos pull` pre-fetches LFS objects before checkout to avoid sequential blocking.
+- `repos sync` and `repos pull` pre-fetch LFS objects before checkout to avoid sequential blocking.
