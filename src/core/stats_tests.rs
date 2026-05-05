@@ -205,4 +205,42 @@ mod tests {
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 3);
         assert_eq!(stats.error_repos.load(Ordering::Relaxed), 1);
     }
+
+    #[test]
+    fn test_detailed_summary_keeps_full_actionable_paths() {
+        let stats = SyncStatistics::new();
+        let long_path = "./packages/deeply/nested/workspace/@goobits/auth";
+
+        stats.update(
+            "auth",
+            long_path,
+            &Status::Error,
+            "diverged: 1 ahead, 36 behind",
+            false,
+        );
+        stats.update(
+            "upstream",
+            "./vendor/resvg/upstream",
+            &Status::NoUpstream,
+            "no upstream",
+            false,
+        );
+        stats.update(
+            "missing",
+            "./services/missing-remote",
+            &Status::NoRemote,
+            "no remote",
+            false,
+        );
+
+        let detailed = stats.generate_detailed_summary(false);
+
+        assert!(detailed.contains(long_path));
+        assert!(detailed.contains("./vendor/resvg/upstream"));
+        assert!(detailed.contains("./services/missing-remote"));
+        assert!(
+            !detailed.contains("./..."),
+            "detailed summary paths should be directly usable"
+        );
+    }
 }

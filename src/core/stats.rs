@@ -1,8 +1,7 @@
 //! Statistics tracking for repository operations
 
 use crate::core::config::{
-    ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, PATH_DISPLAY_WIDTH,
-    TIMEOUT_SECONDS_DISPLAY,
+    ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, TIMEOUT_SECONDS_DISPLAY,
 };
 use crate::git::Status;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -278,9 +277,8 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
-                    "   {tree_char} {repo_name:20} {short_path:30} # {error}"
+                    "   {tree_char} {repo_name:20} {repo_path:30} # {error}"
                 ));
             }
             lines.push(String::new());
@@ -294,9 +292,8 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
-                    "   {tree_char} {repo_name:20} {short_path:30} # {error}"
+                    "   {tree_char} {repo_name:20} {repo_path:30} # {error}"
                 ));
             }
             lines.push(String::new());
@@ -310,9 +307,8 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
-                    "   {tree_char} {repo_name:20} {short_path:30} # {error}"
+                    "   {tree_char} {repo_name:20} {repo_path:30} # {error}"
                 ));
             }
             lines.push(String::new());
@@ -327,9 +323,8 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
                 lines.push(format!(
-                    "   {tree_char} {repo_name:20} {short_path:30} # repos push --auto-upstream"
+                    "   {tree_char} {repo_name:20} {repo_path:30} # repos push --auto-upstream"
                 ));
             }
             lines.push(String::new()); // Add blank line
@@ -347,11 +342,9 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
-
                 if show_changes {
                     // Show repo header with path
-                    lines.push(format!("   {tree_char} {repo_name:20} {short_path}"));
+                    lines.push(format!("   {tree_char} {repo_name:20} {repo_path}"));
 
                     // Get and display file changes
                     if let Ok(changes) = get_repo_changes(repo_path) {
@@ -375,7 +368,7 @@ impl SyncStatistics {
                         }
                     }
                 } else {
-                    lines.push(format!("   {tree_char} {repo_name:20} {short_path}"));
+                    lines.push(format!("   {tree_char} {repo_name:20} {repo_path}"));
                 }
             }
             lines.push(String::new()); // Add blank line
@@ -390,8 +383,7 @@ impl SyncStatistics {
                 } else {
                     "├─"
                 };
-                let short_path = crate::utils::shorten_path(repo_path, PATH_DISPLAY_WIDTH);
-                lines.push(format!("   {tree_char} {repo_name:20} {short_path}"));
+                lines.push(format!("   {tree_char} {repo_name:20} {repo_path}"));
             }
         }
 
