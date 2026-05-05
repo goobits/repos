@@ -15,6 +15,9 @@ vm:
   swappiness: 60
   timezone: auto
   user: developer
+versions:
+  node: '22'
+  python: '3.11'
 ports:
   _range: [3070, 3079]
 terminal:
@@ -26,6 +29,7 @@ terminal:
 host_sync:
   git_config: true
   ai_tools: true
+preset: vibe
 networking:
   networks:
   - spacebase
