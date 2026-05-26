@@ -659,6 +659,15 @@ pub async fn has_uncommitted_changes(path: &Path) -> bool {
     }
 }
 
+/// Returns true when the repository is on a detached HEAD.
+pub async fn is_detached_head(path: &Path) -> Result<bool> {
+    match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
+        Ok((true, branch, _)) => Ok(branch == DETACHED_HEAD_BRANCH),
+        Ok((false, _, stderr)) => Err(anyhow::anyhow!(stderr)),
+        Err(e) => Err(e),
+    }
+}
+
 /// Creates a git tag and pushes it to the remote
 /// Returns (success, message)
 pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) {

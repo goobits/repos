@@ -13,7 +13,8 @@ use crate::core::{
     GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
 use crate::git::{
-    commit_changes, get_staging_status, has_staged_changes, stage_files, unstage_files, Status,
+    commit_changes, get_staging_status, has_staged_changes, is_detached_head, stage_files,
+    unstage_files, Status,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -600,6 +601,25 @@ async fn perform_commit_operation(
     include_empty: bool,
 ) -> (Status, String) {
     use crate::core::clean_error_message;
+
+    match is_detached_head(repo_path).await {
+        Ok(true) => {
+            return (
+                Status::Skip,
+                "detached HEAD; checkout a branch before commit".to_string(),
+            );
+        }
+        Ok(false) => {}
+        Err(e) => {
+            return (
+                Status::CommitError,
+                format!(
+                    "branch check failed: {}",
+                    clean_error_message(&e.to_string())
+                ),
+            );
+        }
+    }
 
     // First check if there are staged changes (unless we're allowing empty commits)
     if !include_empty {

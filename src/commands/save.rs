@@ -12,8 +12,8 @@ use crate::core::{
     set_terminal_title, set_terminal_title_and_flush, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
 use crate::git::{
-    commit_changes, fetch_and_analyze, get_staging_status, has_staged_changes, push_if_needed,
-    stage_all_changes, stage_tracked_changes, Status,
+    commit_changes, fetch_and_analyze, get_staging_status, has_staged_changes, is_detached_head,
+    push_if_needed, stage_all_changes, stage_tracked_changes, Status,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -157,6 +157,24 @@ async fn save_one_repo(
     auto_upstream: bool,
     dry_run: bool,
 ) -> (Status, String, bool) {
+    match is_detached_head(repo_path).await {
+        Ok(true) => {
+            return (
+                Status::Skip,
+                "detached HEAD; checkout a branch before save".to_string(),
+                false,
+            );
+        }
+        Ok(false) => {}
+        Err(e) => {
+            return (
+                Status::StagingError,
+                format!("branch check failed: {e}"),
+                false,
+            )
+        }
+    }
+
     let status = match get_staging_status(repo_path).await {
         Ok((stdout, _)) => stdout,
         Err(e) => return (Status::StagingError, format!("status failed: {e}"), false),
