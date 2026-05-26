@@ -450,7 +450,12 @@ fn get_repo_changes(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
 
     let path = Path::new(repo_path);
     let output = Command::new("git")
-        .args(["status", "--porcelain"])
+        .args([
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=normal",
+            "--ignore-submodules=dirty",
+        ])
         .current_dir(path)
         .output()?;
 

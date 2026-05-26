@@ -13,14 +13,18 @@ use super::status::Status;
 const GIT_OPERATION_TIMEOUT_SECS: u64 = 180; // 3 minutes per repository
 
 // Git command arguments
-const GIT_DIFF_INDEX_ARGS: &[&str] = &["diff-index", "--quiet", "HEAD", "--"];
 const GIT_REMOTE_ARGS: &[&str] = &["remote"];
 const GIT_REV_PARSE_HEAD_ARGS: &[&str] = &["rev-parse", "--abbrev-ref", "HEAD"];
 const GIT_FETCH_ARGS: &[&str] = &["fetch", "--quiet"];
 const GIT_CONFIG_GET_ARGS: &[&str] = &["config", "--get"];
 const GIT_ADD_ARGS: &[&str] = &["add"];
 const GIT_RESTORE_STAGED_ARGS: &[&str] = &["restore", "--staged"];
-const GIT_STATUS_PORCELAIN_ARGS: &[&str] = &["status", "--porcelain"];
+const GIT_STATUS_PORCELAIN_ARGS: &[&str] = &[
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=normal",
+    "--ignore-submodules=dirty",
+];
 const GIT_COMMIT_ARGS: &[&str] = &["commit", "-m"];
 const GIT_DIFF_CACHED_ARGS: &[&str] = &["diff", "--cached", "--quiet"];
 const GIT_LFS_ENV_ARGS: &[&str] = &["lfs", "env"];
@@ -272,15 +276,7 @@ async fn get_upstream_push_target(
 pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult {
     use crate::core::clean_error_message;
 
-    // Refresh the index to ensure accurate diff-index results
-    let _ = run_git(path, &["update-index", "--refresh"]).await;
-
-    // Check if directory has uncommitted changes
-    let has_uncommitted = match run_git(path, GIT_DIFF_INDEX_ARGS).await {
-        Ok((false, _, _)) => true,
-        Ok((true, _, _)) => false,
-        Err(_) => false,
-    };
+    let has_uncommitted = has_uncommitted_changes(path).await;
 
     // Get list of remotes
     let remotes = match run_git(path, GIT_REMOTE_ARGS).await {
@@ -644,23 +640,22 @@ pub async fn commit_changes(
     run_git(path, &args).await
 }
 
-/// Checks if a repository has uncommitted changes (tracked files only)
+/// Checks if a repository has uncommitted changes.
 ///
-/// This checks only tracked files using `git diff-index --quiet HEAD`.
-/// Returns true if there are uncommitted changes, false otherwise.
+/// Uses stable porcelain status output so unborn repositories, detached heads,
+/// and submodule/worktree layouts are classified the same way Git presents
+/// them to users.
 ///
 /// Note: There are synchronous versions in subrepo/{mod.rs, sync.rs} for use
-/// in non-async contexts. The sync.rs version is more conservative and includes
-/// untracked files.
+/// in non-async contexts.
 pub async fn has_uncommitted_changes(path: &Path) -> bool {
-    // Refresh the index to ensure accurate diff-index results
+    // Refresh tracked file stat info first. Ignore failures because status below
+    // is authoritative and works for unborn repositories.
     let _ = run_git(path, &["update-index", "--refresh"]).await;
 
-    // Check if directory has uncommitted changes
-    match run_git(path, GIT_DIFF_INDEX_ARGS).await {
-        Ok((false, _, _)) => true, // Command failed means there are changes
-        Ok((true, _, _)) => false, // Command succeeded means no changes
-        Err(_) => false,           // Error checking, assume no changes
+    match run_git(path, GIT_STATUS_PORCELAIN_ARGS).await {
+        Ok((true, stdout, _)) => !stdout.is_empty(),
+        Ok((false, _, _)) | Err(_) => false,
     }
 }
 
@@ -717,15 +712,7 @@ pub struct PullFetchResult {
 pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     use crate::core::clean_error_message;
 
-    // Refresh the index to ensure accurate diff-index results
-    let _ = run_git(path, &["update-index", "--refresh"]).await;
-
-    // Check if directory has uncommitted changes
-    let has_uncommitted = match run_git(path, GIT_DIFF_INDEX_ARGS).await {
-        Ok((false, _, _)) => true,
-        Ok((true, _, _)) => false,
-        Err(_) => false,
-    };
+    let has_uncommitted = has_uncommitted_changes(path).await;
 
     // Get list of remotes
     let remotes = match run_git(path, GIT_REMOTE_ARGS).await {

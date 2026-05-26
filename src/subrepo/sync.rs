@@ -36,25 +36,32 @@ fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<S
     Ok(instances)
 }
 
-/// Check if a repository has uncommitted changes (including untracked files)
-///
-/// Note: This is more conservative than the versions in mod.rs and `git::operations`,
-/// which only check tracked files (diff-index). For sync operations, we want to be
-/// extra cautious and block syncing if there are ANY changes, including untracked files.
-/// Uses `git status --porcelain` to detect all modifications.
+/// Check if a repository has uncommitted changes.
 fn has_uncommitted_changes(path: &Path) -> bool {
     let path_str = match path_to_str(path) {
         Ok(s) => s,
         Err(_) => return false, // Treat invalid paths as no changes
     };
 
+    let _ = Command::new("git")
+        .args(["-C", path_str, "update-index", "--refresh"])
+        .output();
+
     let output = Command::new("git")
-        .args(["-C", path_str, "status", "--porcelain"])
+        .args([
+            "-C",
+            path_str,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=normal",
+            "--ignore-submodules=dirty",
+        ])
         .output();
 
     match output {
-        Ok(out) => !out.stdout.is_empty(),
+        Ok(out) if out.status.success() => !out.stdout.is_empty(),
         Err(_) => false,
+        _ => false,
     }
 }
 

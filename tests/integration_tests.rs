@@ -590,6 +590,25 @@ async fn test_has_uncommitted_changes() {
         .output()
         .expect("Failed to disable commit signing");
 
+    // An unborn repository with no files should be clean. `git diff-index HEAD`
+    // fails in this state, so this guards against treating Git errors as dirt.
+    let has_changes = has_uncommitted_changes(repo_path).await;
+    assert!(
+        !has_changes,
+        "Should not report changes in a clean repo with no commits"
+    );
+
+    let untracked_file = repo_path.join("untracked.txt");
+    fs::write(&untracked_file, "untracked content").expect("Failed to write untracked file");
+
+    let has_changes = has_uncommitted_changes(repo_path).await;
+    assert!(
+        has_changes,
+        "Should detect untracked changes before the first commit"
+    );
+
+    fs::remove_file(&untracked_file).expect("Failed to remove untracked file");
+
     // Create and commit a file
     let test_file = repo_path.join("test.txt");
     fs::write(&test_file, "initial content").expect("Failed to write test file");

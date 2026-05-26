@@ -105,25 +105,36 @@ fn normalize_remote_url(url: &str) -> String {
         .to_lowercase()
 }
 
-/// Check if repo has uncommitted changes (tracked files only)
+/// Check if repo has uncommitted changes.
 ///
 /// Note: This is a synchronous version for use in the validation module.
 /// There's an async version in `git::operations`, but this module requires
-/// sync operations. This only checks tracked files (diff-index vs HEAD).
-/// See subrepo/sync.rs for a more conservative version that includes untracked files.
+/// sync operations.
 fn has_uncommitted_changes(path: &Path) -> bool {
     let path_str = match path_to_str(path) {
         Ok(s) => s,
         Err(_) => return false, // Treat invalid paths as no changes
     };
 
+    let _ = Command::new("git")
+        .args(["-C", path_str, "update-index", "--refresh"])
+        .output();
+
     let output = Command::new("git")
-        .args(["-C", path_str, "diff-index", "--quiet", "HEAD", "--"])
+        .args([
+            "-C",
+            path_str,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=normal",
+            "--ignore-submodules=dirty",
+        ])
         .output();
 
     match output {
-        Ok(out) => !out.status.success(),
+        Ok(out) if out.status.success() => !out.stdout.is_empty(),
         Err(_) => false,
+        _ => false,
     }
 }
 
