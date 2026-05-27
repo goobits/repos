@@ -58,7 +58,13 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
 
         let result = tokio::time::timeout(
             timeout_duration,
-            Command::new("git").args(args).current_dir(path).output(),
+            Command::new("git")
+                .args(args)
+                .current_dir(path)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GCM_INTERACTIVE", "never")
+                .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+                .output(),
         )
         .await;
 
