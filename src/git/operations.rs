@@ -51,14 +51,25 @@ const STATUS_SYNCED: &str = "up to date";
 #[doc(hidden)]
 pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String)> {
     let mut last_error = None;
-    let max_retries = if is_network_operation(args) { 3 } else { 1 };
+    let is_network = is_network_operation(args);
+    let max_retries = if is_network { 3 } else { 1 };
 
     for attempt in 1..=max_retries {
         let timeout_duration = Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS);
+        let mut command = Command::new("git");
+
+        if is_network {
+            command.args([
+                "-c",
+                "url.git@github.com:.insteadOf=https://github.com/",
+                "-c",
+                "url.git@github.com:.insteadOf=http://github.com/",
+            ]);
+        }
 
         let result = tokio::time::timeout(
             timeout_duration,
-            Command::new("git")
+            command
                 .args(args)
                 .current_dir(path)
                 .env("GIT_TERMINAL_PROMPT", "0")
