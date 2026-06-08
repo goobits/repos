@@ -625,10 +625,27 @@ pub async fn unstage_files(path: &Path, pattern: &str) -> Result<(bool, String, 
 /// Gets the staging status of the repository
 /// Returns (stdout, stderr) with git status --porcelain output
 pub async fn get_staging_status(path: &Path) -> Result<(String, String)> {
-    match run_git(path, GIT_STATUS_PORCELAIN_ARGS).await {
-        Ok((_, stdout, stderr)) => Ok((stdout, stderr)),
-        Err(e) => Err(e),
-    }
+    let output = tokio::time::timeout(
+        Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS),
+        Command::new("git")
+            .args(GIT_STATUS_PORCELAIN_ARGS)
+            .current_dir(path)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GCM_INTERACTIVE", "never")
+            .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!("Git operation timed out after {GIT_OPERATION_TIMEOUT_SECS} seconds")
+    })??;
+
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    Ok((stdout, stderr))
 }
 
 /// Checks if repository has staged changes ready to commit

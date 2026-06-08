@@ -65,6 +65,7 @@ repos status ./packages/logger
 Pass one or more repository names or paths to inspect only those repositories.
 
 Reports branch, worktree state, and upstream status per repository.
+When exactly one repository is checked, dirty files are listed below the summary.
 
 ### `repos save`
 

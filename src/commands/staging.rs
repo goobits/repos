@@ -321,6 +321,22 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
     use crate::core::{acquire_semaphore_permit, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
+    if context.repositories.len() == 1 {
+        if let Some((repo_name, repo_path)) = context.repositories.first() {
+            let (status, message) = get_fleet_status(repo_path, true).await;
+            println!(
+                "{} {:width$} {:<12}   {}",
+                status.symbol(),
+                repo_name,
+                status.text(),
+                message,
+                width = context.max_name_length
+            );
+            println!();
+        }
+        return;
+    }
+
     let mut futures = FuturesUnordered::new();
 
     // First, create all repository progress bars
@@ -337,7 +353,6 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
 
     // Extract values we need in the async closures before moving context.repositories
     let max_name_length = context.max_name_length;
-
     for ((repo_name, repo_path), progress_bar) in
         context.repositories.iter().zip(repo_progress_bars)
     {
@@ -346,7 +361,7 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let (status, message) = get_fleet_status(repo_path).await;
+            let (status, message) = get_fleet_status(repo_path, false).await;
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
@@ -368,12 +383,12 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
     println!();
 }
 
-async fn get_fleet_status(repo_path: &std::path::Path) -> (Status, String) {
+async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> (Status, String) {
     use crate::git::operations::run_git;
 
     let status_result = get_staging_status(repo_path).await;
-    let (working_status, mut parts) = match status_result {
-        Ok((stdout, _)) => summarize_worktree(&stdout),
+    let (working_status, mut parts, details) = match status_result {
+        Ok((stdout, _)) => summarize_worktree(&stdout, show_details),
         Err(e) => return (Status::StagingError, format!("status failed: {e}")),
     };
 
@@ -388,15 +403,21 @@ async fn get_fleet_status(repo_path: &std::path::Path) -> (Status, String) {
         None => parts.push("no upstream".to_string()),
     }
 
-    (working_status, parts.join(" | "))
-}
-
-fn summarize_worktree(stdout: &str) -> (Status, Vec<String>) {
-    if stdout.trim().is_empty() {
-        return (Status::Synced, vec!["clean".to_string()]);
+    let mut message = parts.join(" | ");
+    if !details.is_empty() {
+        message.push('\n');
+        message.push_str(&details.join("\n"));
     }
 
-    let lines: Vec<&str> = stdout.trim().lines().collect();
+    (working_status, message)
+}
+
+fn summarize_worktree(stdout: &str, show_details: bool) -> (Status, Vec<String>, Vec<String>) {
+    if stdout.trim().is_empty() {
+        return (Status::Synced, vec!["clean".to_string()], Vec::new());
+    }
+
+    let lines: Vec<&str> = stdout.lines().filter(|line| !line.is_empty()).collect();
     let staged_count = lines
         .iter()
         .filter(|line| {
@@ -408,7 +429,7 @@ fn summarize_worktree(stdout: &str) -> (Status, Vec<String>) {
         .iter()
         .filter(|line| {
             let chars: Vec<char> = line.chars().collect();
-            chars.len() >= 2 && chars[1] != ' '
+            chars.len() >= 2 && chars[1] != ' ' && !line.starts_with("??")
         })
         .count();
     let untracked_count = lines.iter().filter(|line| line.starts_with("??")).count();
@@ -425,9 +446,44 @@ fn summarize_worktree(stdout: &str) -> (Status, Vec<String>) {
     }
 
     if parts.is_empty() {
-        (Status::Synced, vec!["clean".to_string()])
+        (Status::Synced, vec!["clean".to_string()], Vec::new())
     } else {
-        (Status::Dirty, parts)
+        let details = if show_details {
+            format_status_details(&lines)
+        } else {
+            Vec::new()
+        };
+        (Status::Dirty, parts, details)
+    }
+}
+
+fn format_status_details(lines: &[&str]) -> Vec<String> {
+    const MAX_FILES: usize = 20;
+
+    lines
+        .iter()
+        .take(MAX_FILES)
+        .map(|line| {
+            let status = line.get(..2).unwrap_or(line);
+            let path = line.get(3..).unwrap_or("").trim();
+            format!("    {} {}", status_detail_label(status), path)
+        })
+        .chain(
+            (lines.len() > MAX_FILES)
+                .then(|| format!("    · ... and {} more", lines.len() - MAX_FILES)),
+        )
+        .collect()
+}
+
+fn status_detail_label(status: &str) -> &'static str {
+    if status == "??" {
+        "· untracked"
+    } else if status.chars().next().is_some_and(|state| state != ' ') {
+        "✓ staged  "
+    } else if status.chars().nth(1).is_some_and(|state| state != ' ') {
+        "! unstaged"
+    } else {
+        "· changed "
     }
 }
 
@@ -752,7 +808,8 @@ async fn perform_unstaging_operation(
 
 #[cfg(test)]
 mod tests {
-    use super::filter_status_repositories;
+    use super::{filter_status_repositories, format_status_details, summarize_worktree};
+    use crate::git::Status;
     use std::path::PathBuf;
 
     #[test]
@@ -779,5 +836,29 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, "logger");
+    }
+
+    #[test]
+    fn summarizes_worktree_without_counting_untracked_as_unstaged() {
+        let (status, parts, details) = summarize_worktree(" M README.md\n?? notes.txt\n", false);
+
+        assert_eq!(status, Status::Dirty);
+        assert_eq!(parts, vec!["1 unstaged", "1 untracked"]);
+        assert!(details.is_empty());
+    }
+
+    #[test]
+    fn formats_single_repo_status_details() {
+        let details =
+            format_status_details(&["M  staged.txt", " M unstaged.txt", "?? new-file.txt"]);
+
+        assert_eq!(
+            details,
+            vec![
+                "    ✓ staged   staged.txt",
+                "    ! unstaged unstaged.txt",
+                "    · untracked new-file.txt",
+            ]
+        );
     }
 }
