@@ -41,7 +41,6 @@ version = "0.1.0"
         false,  // tag
         false,  // allow_dirty
         true,   // all (to ignore visibility check since test repo might be private/unknown)
-        false,  // public_only
         false,  // private_only
     )
     .await;
@@ -93,7 +92,6 @@ async fn test_publish_dry_run_npm() {
         false,  // tag
         false,  // allow_dirty
         true,   // all
-        false,  // public_only
         false,  // private_only
     )
     .await;

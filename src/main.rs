@@ -365,7 +365,7 @@ async fn main() -> Result<()> {
             tag,
             allow_dirty,
             all,
-            public_only,
+            public_only: _,
             private_only,
         }) => {
             handle_publish_command(
@@ -374,7 +374,6 @@ async fn main() -> Result<()> {
                 *tag,
                 *allow_dirty,
                 *all,
-                *public_only,
                 *private_only,
             )
             .await

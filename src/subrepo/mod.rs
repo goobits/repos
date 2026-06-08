@@ -3,6 +3,10 @@
 //! This module provides tools for finding and managing Git repositories nested
 //! within other Git repositories (subrepos). It can detect drift between
 //! subrepos that share the same remote URL.
+//!
+//! This is command plumbing for `repos nested`. The data types are public for
+//! tests and advanced automation, while the CLI remains the primary supported
+//! interface.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;

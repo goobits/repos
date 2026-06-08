@@ -2,6 +2,10 @@
 //!
 //! This module provides an extensible system for detecting and publishing packages
 //! across different ecosystems (npm, Cargo, PyPI).
+//!
+//! This is command plumbing for `repos publish`. It is public for integration
+//! tests and advanced automation, but the CLI remains the primary supported
+//! interface for publishing.
 
 pub mod cargo;
 pub mod npm;

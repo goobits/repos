@@ -11,6 +11,13 @@
 //! - **Security Auditing**: Secret scanning and repository hygiene checks.
 //! - **Subrepo Management**: Drift detection and synchronization for nested repositories.
 //!
+//! ## Public API Boundary
+//!
+//! `core` and `git` expose curated API modules for programmatic use. Other
+//! modules are public so integration tests and advanced CLI automation can reuse
+//! command plumbing, but those internals should be treated as command-oriented
+//! implementation details.
+//!
 //! ## Example
 //!
 //! ```rust,no_run

@@ -169,36 +169,10 @@ async fn test_staging_with_patterns() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let repo_path = temp_dir.path();
 
-    // Initialize git repo
-    let init_result = std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to run git init");
-
-    if !init_result.status.success() {
+    if let Err(error) = common::setup_git_repo(repo_path) {
+        eprintln!("{error}");
         return; // Skip if git not available
     }
-
-    // Configure git
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to set git user name");
-
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to set git user email");
-
-    // Disable commit signing for tests
-    std::process::Command::new("git")
-        .args(["config", "commit.gpgsign", "false"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to disable commit signing");
 
     // Create test files
     fs::write(repo_path.join("test1.md"), "# Test 1").expect("Failed to write test1.md");
@@ -353,36 +327,10 @@ async fn test_error_scenarios() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let repo_path = temp_dir.path();
 
-    // Initialize git repo
-    let init_result = std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to run git init");
-
-    if !init_result.status.success() {
+    if let Err(error) = common::setup_git_repo(repo_path) {
+        eprintln!("{error}");
         return; // Skip if git not available
     }
-
-    // Configure git
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to set git user name");
-
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to set git user email");
-
-    // Disable commit signing for tests
-    std::process::Command::new("git")
-        .args(["config", "commit.gpgsign", "false"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to disable commit signing");
 
     // Test staging non-existent file - should fail gracefully
     let stage_result = stage_files(repo_path, "nonexistent.txt").await;
@@ -559,36 +507,10 @@ async fn test_has_uncommitted_changes() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let repo_path = temp_dir.path();
 
-    // Initialize git repo
-    let init_result = std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to run git init");
-
-    if !init_result.status.success() {
+    if let Err(error) = common::setup_git_repo(repo_path) {
+        eprintln!("{error}");
         return; // Skip if git not available
     }
-
-    // Configure git
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to set git user name");
-
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to set git user email");
-
-    // Disable commit signing for tests
-    std::process::Command::new("git")
-        .args(["config", "commit.gpgsign", "false"])
-        .current_dir(repo_path)
-        .output()
-        .expect("Failed to disable commit signing");
 
     // An unborn repository with no files should be clean. `git diff-index HEAD`
     // fails in this state, so this guards against treating Git errors as dirt.

@@ -3,8 +3,10 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use goobits_repos::core::find_repos_from_path;
 use goobits_repos::git::fetch_and_analyze;
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
+
+mod common;
+use common::git::{add_git_remote, setup_git_repo};
 
 fn setup_many_repos(count: usize) -> TempDir {
     let temp_dir = TempDir::new().unwrap();
@@ -13,24 +15,8 @@ fn setup_many_repos(count: usize) -> TempDir {
     for i in 0..count {
         let repo_path = root.join(format!("repo-{}", i));
         fs::create_dir(&repo_path).unwrap();
-        Command::new("git")
-            .arg("init")
-            .arg("-q")
-            .current_dir(&repo_path)
-            .output()
-            .unwrap();
-
-        // Add a remote
-        Command::new("git")
-            .args([
-                "remote",
-                "add",
-                "origin",
-                "https://github.com/example/repo.git",
-            ])
-            .current_dir(&repo_path)
-            .output()
-            .unwrap();
+        setup_git_repo(&repo_path).unwrap();
+        add_git_remote(&repo_path, "origin", "https://github.com/example/repo.git").unwrap();
     }
 
     temp_dir

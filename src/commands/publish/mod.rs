@@ -19,7 +19,6 @@ pub async fn handle_publish_command(
     tag: bool,
     allow_dirty: bool,
     all: bool,
-    _public_only: bool, // unused but kept for signature compatibility if needed
     private_only: bool,
 ) -> Result<()> {
     set_terminal_title("📦 repos");

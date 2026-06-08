@@ -9,11 +9,59 @@ use anyhow::{anyhow, Result};
 use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use super::hygiene::{HygieneStatistics, HygieneViolation, ViolationType};
+
+struct PrivateTempFile {
+    path: PathBuf,
+}
+
+impl PrivateTempFile {
+    fn path_str(&self) -> Result<&str> {
+        self.path
+            .to_str()
+            .ok_or_else(|| anyhow!("Failed to convert temp file path to string"))
+    }
+}
+
+impl Drop for PrivateTempFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn write_private_temp_file(prefix: &str, contents: &str) -> Result<PrivateTempFile> {
+    let temp_dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+
+    for attempt in 0..100 {
+        let path = temp_dir.join(format!("{prefix}-{timestamp}-{pid}-{attempt}.txt"));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+
+        match options.open(&path) {
+            Ok(mut file) => {
+                file.write_all(contents.as_bytes())?;
+                return Ok(PrivateTempFile { path });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    Err(anyhow!("Failed to create private temp file"))
+}
 
 /// Configuration options for fix operations
 #[derive(Debug, Clone)]
@@ -493,8 +541,6 @@ async fn fix_large_files(
 
     println!("    Backup created at: {backup_ref}");
 
-    // Create a paths file for filter-repo
-    let paths_file = std::env::temp_dir().join(format!("filter-repo-paths-{timestamp}.txt"));
     let mut paths_content = String::new();
 
     for file in &large_files {
@@ -507,13 +553,10 @@ async fn fix_large_files(
         paths_content.push_str(&format!("literal:{}\n", file.file_path));
     }
 
-    // Write paths to temporary file
-    fs::write(&paths_file, paths_content)?;
+    let paths_file = write_private_temp_file("filter-repo-paths", &paths_content)?;
 
     // Run git filter-repo to remove the files
-    let paths_file_str = paths_file
-        .to_str()
-        .ok_or_else(|| anyhow!("Failed to convert temp file path to string"))?;
+    let paths_file_str = paths_file.path_str()?;
 
     let result = Command::new("git")
         .args([
@@ -526,9 +569,6 @@ async fn fix_large_files(
         .current_dir(repo_path)
         .output()
         .await?;
-
-    // Clean up temp file
-    let _ = fs::remove_file(paths_file);
 
     if !result.status.success() {
         let stderr = String::from_utf8_lossy(&result.stderr);
@@ -624,9 +664,6 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     println!("    Backup created at: {backup_ref}");
     println!("    Found {} files with secrets", secret_files.len());
 
-    // Create replacement file for filter-repo
-    let replacements_file =
-        std::env::temp_dir().join(format!("filter-repo-secrets-{timestamp}.txt"));
     let mut replacements_content = String::new();
 
     // Add patterns to be replaced with REDACTED
@@ -636,12 +673,11 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     }
 
     if !replacements_content.is_empty() {
-        fs::write(&replacements_file, replacements_content)?;
+        let replacements_file =
+            write_private_temp_file("filter-repo-secrets", &replacements_content)?;
 
         // Run git filter-repo to replace secrets with REDACTED
-        let replacements_file_str = replacements_file
-            .to_str()
-            .ok_or_else(|| anyhow!("Failed to convert replacements file path to string"))?;
+        let replacements_file_str = replacements_file.path_str()?;
 
         let result = Command::new("git")
             .args([
@@ -654,8 +690,6 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
             .output()
             .await?;
 
-        let _ = fs::remove_file(replacements_file);
-
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             return Err(anyhow!("git filter-repo failed: {stderr}"));
@@ -666,18 +700,14 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     if !secret_files.is_empty() && secret_patterns.is_empty() {
         println!("    Removing entire files containing secrets...");
 
-        let paths_file =
-            std::env::temp_dir().join(format!("filter-repo-secret-files-{timestamp}.txt"));
         let paths_content: String = secret_files
             .iter()
             .map(|f| format!("literal:{f}\n"))
             .collect();
 
-        fs::write(&paths_file, paths_content)?;
+        let paths_file = write_private_temp_file("filter-repo-secret-files", &paths_content)?;
 
-        let paths_file_str = paths_file
-            .to_str()
-            .ok_or_else(|| anyhow!("Failed to convert secret files path to string"))?;
+        let paths_file_str = paths_file.path_str()?;
 
         let result = Command::new("git")
             .args([
@@ -690,8 +720,6 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
             .current_dir(repo_path)
             .output()
             .await?;
-
-        let _ = fs::remove_file(paths_file);
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
