@@ -714,7 +714,7 @@ async fn test_staging_status_command_with_changes() {
     env::set_current_dir(repo.path()).expect("Failed to change dir");
 
     // Run status command
-    let result = handle_staging_status_command().await;
+    let result = handle_staging_status_command(Vec::new()).await;
 
     // Restore original directory before repo cleanup
     let _ = env::set_current_dir(&original_dir);
@@ -748,7 +748,7 @@ async fn test_staging_status_command_with_no_changes() {
     env::set_current_dir(repo.path()).expect("Failed to change dir");
 
     // Run status command
-    let result = handle_staging_status_command().await;
+    let result = handle_staging_status_command(Vec::new()).await;
 
     // Restore original directory before repo cleanup
     let _ = env::set_current_dir(&original_dir);

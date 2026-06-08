@@ -141,8 +141,11 @@ enum Commands {
         /// Pattern to match files (e.g., "*.md", "README.md", "*")
         pattern: String,
     },
-    /// Show staging status across all repositories
-    Status,
+    /// Show staging status across all repositories, or only specific repositories/paths
+    Status {
+        /// Repository names or paths to inspect
+        targets: Vec<String>,
+    },
     /// Commit staged changes across all repositories
     Commit {
         /// Commit message
@@ -354,7 +357,7 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Stage { pattern }) => handle_stage_command(pattern.clone()).await,
         Some(Commands::Unstage { pattern }) => handle_unstage_command(pattern.clone()).await,
-        Some(Commands::Status) => handle_staging_status_command().await,
+        Some(Commands::Status { targets }) => handle_staging_status_command(targets.clone()).await,
         Some(Commands::Commit {
             message,
             include_empty,

@@ -7,6 +7,7 @@
 //! - Commit staged changes across repositories
 
 use anyhow::Result;
+use std::path::{Path, PathBuf};
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
@@ -112,14 +113,19 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
 }
 
 /// Handles the repository staging status command
-pub async fn handle_staging_status_command() -> Result<()> {
+pub async fn handle_staging_status_command(targets: Vec<String>) -> Result<()> {
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos status");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, mut repos) = init_command(SCANNING_MESSAGE).await;
+    repos = filter_status_repositories(repos, &targets);
 
     if repos.is_empty() {
-        println!("\r{NO_REPOS_MESSAGE}");
+        if targets.is_empty() {
+            println!("\r{NO_REPOS_MESSAGE}");
+        } else {
+            println!("\rNo repositories matched: {}", targets.join(", "));
+        }
         // Set terminal title to green checkbox to indicate completion
         set_terminal_title_and_flush("✅ repos status");
         return Ok(());
@@ -153,6 +159,51 @@ pub async fn handle_staging_status_command() -> Result<()> {
     set_terminal_title_and_flush("✅ repos status");
 
     Ok(())
+}
+
+fn filter_status_repositories(
+    repos: Vec<(String, PathBuf)>,
+    targets: &[String],
+) -> Vec<(String, PathBuf)> {
+    if targets.is_empty() {
+        return repos;
+    }
+
+    let normalized_targets = targets
+        .iter()
+        .map(|target| normalize_target(target))
+        .collect::<Vec<_>>();
+
+    repos
+        .into_iter()
+        .filter(|(repo_name, repo_path)| {
+            normalized_targets.iter().any(|target| {
+                repo_name == target
+                    || repo_path_matches_target(repo_path, target)
+                    || repo_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name == target)
+            })
+        })
+        .collect()
+}
+
+fn normalize_target(target: &str) -> String {
+    target
+        .trim_end_matches('/')
+        .trim_start_matches("./")
+        .to_string()
+}
+
+fn repo_path_matches_target(repo_path: &Path, target: &str) -> bool {
+    let normalized_path = repo_path
+        .to_string_lossy()
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_string();
+
+    normalized_path == target || normalized_path.ends_with(&format!("/{target}"))
 }
 
 /// Processes all repositories concurrently for staging/unstaging operations
@@ -696,5 +747,37 @@ async fn perform_unstaging_operation(
             let error_message = clean_error_message(&e.to_string());
             (Status::StagingError, error_message)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filter_status_repositories;
+    use std::path::PathBuf;
+
+    #[test]
+    fn filters_status_repositories_by_name() {
+        let repos = vec![
+            ("frontdesk".to_string(), PathBuf::from("./frontdesk")),
+            ("tunajack.com".to_string(), PathBuf::from("./tunajack.com")),
+        ];
+
+        let filtered = filter_status_repositories(repos, &["tunajack.com".to_string()]);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, "tunajack.com");
+    }
+
+    #[test]
+    fn filters_status_repositories_by_relative_path() {
+        let repos = vec![
+            ("logger".to_string(), PathBuf::from("./packages/logger")),
+            ("frontdesk".to_string(), PathBuf::from("./frontdesk")),
+        ];
+
+        let filtered = filter_status_repositories(repos, &["packages/logger".to_string()]);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, "logger");
     }
 }

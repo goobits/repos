@@ -58,7 +58,11 @@ Show repository state across the fleet.
 
 ```bash
 repos status
+repos status tunajack.com
+repos status ./packages/logger
 ```
+
+Pass one or more repository names or paths to inspect only those repositories.
 
 Reports branch, worktree state, and upstream status per repository.
 

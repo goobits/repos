@@ -297,8 +297,9 @@ impl SyncStatistics {
                 local_only.push((repo_name.clone(), repo_path.clone()));
             }
         }
+        let local_issue_count = local_only.len();
 
-        let needs_work = issue_rows.len() + local_only.len() + extra_needs_work_count;
+        let needs_work = issue_rows.len() + local_issue_count + extra_needs_work_count;
         let mut lines = Vec::new();
         let pushed_repo_label = pluralize(pushed_repos, "repo", "repos");
         let pushed_commit_label = pluralize(pushed_commits, "commit", "commits");
@@ -353,7 +354,7 @@ impl SyncStatistics {
             lines.push(String::new());
         }
 
-        if !local_only.is_empty() {
+        if local_issue_count > 0 {
             lines.push(format!("{BOLD_PURPLE}▌ Local Changes{RESET}"));
             let local_names = local_only
                 .iter()
@@ -364,14 +365,19 @@ impl SyncStatistics {
                     "  {YELLOW}!{RESET} 1 repo has uncommitted changes: {}",
                     local_names[0]
                 ));
-            } else {
+            } else if local_names.len() > 1 {
                 lines.push(format!(
                     "  {YELLOW}!{RESET} {} {local_repo_label} {local_verb} uncommitted changes:",
-                    local_only.len()
+                    local_issue_count
                 ));
                 for repo_name in local_names {
                     lines.push(format!("    - {repo_name}"));
                 }
+            } else {
+                lines.push(format!(
+                    "  {YELLOW}!{RESET} {local_issue_count} {local_repo_label} {local_verb} uncommitted changes"
+                ));
+                lines.push(format!("    {DIM}↳ Run `repos status` for details.{RESET}"));
             }
             if show_changes {
                 lines.extend(format_local_changes(&local_only));
