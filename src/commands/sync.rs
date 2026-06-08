@@ -13,6 +13,27 @@ use crate::core::{
 use crate::git::Status;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
+const RESET: &str = "\x1b[0m";
+const GREEN: &str = "\x1b[1;38;5;114m";
+const YELLOW: &str = "\x1b[1;38;5;221m";
+const RED: &str = "\x1b[1;38;5;203m";
+const DIM: &str = "\x1b[2m";
+
+fn format_live_repo_status(repo_name: &str, status: Status) -> String {
+    let (color, marker, label) = match status {
+        Status::Pushed | Status::Pulled | Status::Synced => (GREEN, "✓", status.text()),
+        Status::NoUpstream | Status::NoRemote | Status::Dirty => (YELLOW, "!", "needs work"),
+        Status::Skip | Status::NoChanges | Status::ConfigSkipped => (DIM, "·", "skipped"),
+        Status::Error
+        | Status::ConfigError
+        | Status::StagingError
+        | Status::CommitError
+        | Status::PullError => (RED, "!", "failed"),
+        _ => (DIM, "·", status.text()),
+    };
+
+    format!("{repo_name}  {color}{marker}{RESET} {label}")
+}
 
 /// Handles the two-way repository sync command.
 ///
@@ -173,8 +194,11 @@ async fn process_push_repositories(
         let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
         let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
         footer_pb.set_message(
-            "⬆️  0 Pushed / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
-                .to_string(),
+            context
+                .statistics
+                .lock()
+                .unwrap()
+                .generate_push_live_summary(context.total_repos),
         );
         let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
         (bars, Some(footer_pb), None)
@@ -186,12 +210,15 @@ async fn process_push_repositories(
         if let Ok(style) = ProgressStyle::default_bar().template("[{pos}/{len}] {msg}") {
             single_pb.set_style(style);
         }
-        single_pb.set_message("📤 Processing...");
+        single_pb.set_message(format!("{DIM}processing...{RESET}"));
         let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
         let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
         footer_pb.set_message(
-            "⬆️  0 Pushed / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
-                .to_string(),
+            context
+                .statistics
+                .lock()
+                .unwrap()
+                .generate_push_live_summary(context.total_repos),
         );
         let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
         (
@@ -224,6 +251,7 @@ async fn process_push_repositories(
         let verbose_clone = verbose;
         let max_name_length_clone = max_name_length;
         let start_time_clone = start_time;
+        let total_repos_clone = context.total_repos;
 
         let future = async move {
             use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
@@ -375,12 +403,7 @@ async fn process_push_repositories(
                     progress_bar.finish();
                 }
             } else if let Some(progress_bar) = single_pb_clone.as_ref() {
-                progress_bar.set_message(format!(
-                    "{} {} ({})",
-                    status.symbol(),
-                    repo_name,
-                    status.text()
-                ));
+                progress_bar.set_message(format_live_repo_status(repo_name, status));
                 progress_bar.inc(1);
             }
 
@@ -403,7 +426,8 @@ async fn process_push_repositories(
             if !verbose_clone {
                 if let Some(footer_clone) = footer_clone.as_ref() {
                     let stats_locked = stats_clone.lock().unwrap();
-                    footer_clone.set_message(stats_locked.generate_push_live_summary());
+                    footer_clone
+                        .set_message(stats_locked.generate_push_live_summary(total_repos_clone));
                 }
             }
             if let Some(coordinator) = coordinator_clone.as_ref() {

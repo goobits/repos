@@ -193,6 +193,27 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_push_live_summary_is_compact_and_colored() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "clean",
+            "/repos/clean",
+            &Status::Synced,
+            "up to date",
+            false,
+        );
+        stats.update("skipped", "/repos/skipped", &Status::Skip, "skip", false);
+
+        let summary = stats.generate_push_live_summary(5);
+
+        assert!(summary.contains("\x1b["));
+        assert!(summary.contains("✓\x1b[0m 1 synced"));
+        assert!(summary.contains("↑\x1b[0m 0 pushed / 0 commits"));
+        assert!(summary.contains("·\x1b[0m 1 skipped"));
+        assert!(summary.contains("↳ scanning 3 remaining"));
+    }
+
+    #[test]
     fn test_generate_pull_summary_mentions_pulled() {
         let stats = SyncStatistics::new();
         stats.synced_repos.store(3, Ordering::Relaxed);

@@ -213,15 +213,20 @@ impl SyncStatistics {
     }
 
     /// Generates a compact live push footer.
-    pub fn generate_push_live_summary(&self) -> String {
+    pub fn generate_push_live_summary(&self, total_repos: usize) -> String {
+        let synced = self.synced_repos.load(Ordering::Relaxed);
+        let pushed_repos = self.pushed_repos.load(Ordering::Relaxed);
+        let pushed_commits = self.total_commits_pushed.load(Ordering::Relaxed);
+        let errors = self.error_repos.load(Ordering::Relaxed);
+        let skipped = self.skipped_repos.load(Ordering::Relaxed);
+        let needs_work = self.no_upstream_count() as u64
+            + self.no_remote_count() as u64
+            + self.uncommitted_count.load(Ordering::Relaxed);
+        let processed = synced.saturating_add(errors).saturating_add(skipped);
+        let remaining = (total_repos as u64).saturating_sub(processed);
+
         format!(
-            "⬆️  {} Pushed / {} Commits  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
-            self.pushed_repos.load(Ordering::Relaxed),
-            self.total_commits_pushed.load(Ordering::Relaxed),
-            self.synced_repos.load(Ordering::Relaxed),
-            self.error_repos.load(Ordering::Relaxed),
-            self.no_upstream_count(),
-            self.skipped_repos.load(Ordering::Relaxed)
+            "  {GREEN}✓{RESET} {synced} synced   {GREEN}↑{RESET} {pushed_repos} pushed / {pushed_commits} commits   {RED}!{RESET} {errors} failed   {YELLOW}!{RESET} {needs_work} needs work   {DIM}·{RESET} {skipped} skipped\n  {DIM}↳ scanning {remaining} remaining{RESET}",
         )
     }
 
@@ -406,6 +411,10 @@ impl SyncStatistics {
 
     fn no_upstream_count(&self) -> usize {
         self.no_upstream_repos.lock().map_or(0, |repos| repos.len())
+    }
+
+    fn no_remote_count(&self) -> usize {
+        self.no_remote_repos.lock().map_or(0, |repos| repos.len())
     }
 
     /// Generates detailed warning messages for repositories needing attention
