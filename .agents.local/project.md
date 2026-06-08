@@ -34,6 +34,7 @@ make aw-doctor                  # validate Agent Workspace repo setup
 
 - Git command policy: do not discard user changes; preserve dirty worktrees.
 - Commit command: use normal Git unless the user requests an AW commit workflow.
+- Agent-authored commits and AW commit requests should include `Co-authored-by: Miko Meow <101564+mudcube@users.noreply.github.com>`.
 - Package-manager mutation command: `cargo add`, `cargo rm`, or direct `Cargo.toml` edits as appropriate.
 - Submodule/worktree notes: initialize/update `infra/aw` with `git submodule update --init --recursive`; update via `make aw-update`.
 - Commands that require explicit approval: destructive Git commands, credential changes, publishing, or history rewrites.

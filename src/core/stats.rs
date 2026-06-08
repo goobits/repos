@@ -335,16 +335,24 @@ impl SyncStatistics {
 
         if !local_only.is_empty() {
             lines.push(format!("{BOLD_PURPLE}▌ Local Changes{RESET}"));
-            lines.push(format!(
-                "  {YELLOW}!{RESET} {} {local_repo_label} {local_verb} uncommitted changes",
-                local_only.len()
-            ));
-            lines.extend(format_repo_name_lines(
-                &local_only
-                    .iter()
-                    .map(|(repo_name, _)| repo_name.clone())
-                    .collect::<Vec<_>>(),
-            ));
+            let local_names = local_only
+                .iter()
+                .map(|(repo_name, _)| repo_name.as_str())
+                .collect::<Vec<_>>();
+            if local_names.len() == 1 {
+                lines.push(format!(
+                    "  {YELLOW}!{RESET} 1 repo has uncommitted changes: {}",
+                    local_names[0]
+                ));
+            } else {
+                lines.push(format!(
+                    "  {YELLOW}!{RESET} {} {local_repo_label} {local_verb} uncommitted changes:",
+                    local_only.len()
+                ));
+                for repo_name in local_names {
+                    lines.push(format!("    - {repo_name}"));
+                }
+            }
             if show_changes {
                 lines.extend(format_local_changes(&local_only));
             }
@@ -681,14 +689,6 @@ fn truncate_text(value: &str, width: usize) -> String {
     let mut truncated = value.chars().take(width - 1).collect::<String>();
     truncated.push('…');
     truncated
-}
-
-fn format_repo_name_lines(names: &[String]) -> Vec<String> {
-    const NAMES_PER_LINE: usize = 5;
-    names
-        .chunks(NAMES_PER_LINE)
-        .map(|chunk| format!("  {}", chunk.join(", ")))
-        .collect()
 }
 
 fn format_local_changes(repos: &[(String, String)]) -> Vec<String> {

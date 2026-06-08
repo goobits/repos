@@ -252,8 +252,27 @@ mod tests {
         let report = stats.generate_push_report(Duration::from_secs(3), false);
 
         assert!(report.contains("Needs work   1"));
-        assert!(report.contains("1 repo has uncommitted changes"));
+        assert!(report.contains("1 repo has uncommitted changes: repos"));
         assert!(report.contains("repos"));
+    }
+
+    #[test]
+    fn test_generate_push_report_bullets_multiple_local_change_repositories() {
+        let stats = SyncStatistics::new();
+        stats.update("repos", "/workspace", &Status::Synced, "up to date", true);
+        stats.update(
+            "docs",
+            "/workspace/docs",
+            &Status::Synced,
+            "up to date",
+            true,
+        );
+
+        let report = stats.generate_push_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("2 repos have uncommitted changes:"));
+        assert!(report.contains("    - repos"));
+        assert!(report.contains("    - docs"));
     }
 
     #[test]
