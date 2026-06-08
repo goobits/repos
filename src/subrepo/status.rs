@@ -153,21 +153,71 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
         target_commit
     );
 
-    let mut parents = status
+    let target_hash = latest_clean.map_or(&latest.commit_hash, |t| &t.commit_hash);
+    let mut rows = status
         .instances
         .iter()
-        .map(|instance| {
-            if instance.has_uncommitted {
-                format!("{} (dirty)", instance.parent_repo)
-            } else {
-                instance.parent_repo.clone()
-            }
+        .map(|instance| DriftRow {
+            rank: drift_rank(instance, target_hash),
+            state: drift_state(instance, target_hash),
+            location: instance_location(instance),
+            short_hash: instance.short_hash.clone(),
         })
         .collect::<Vec<_>>();
-    parents.sort();
+    rows.sort_by(|a, b| {
+        a.rank
+            .cmp(&b.rank)
+            .then_with(|| a.location.cmp(&b.location))
+            .then_with(|| a.short_hash.cmp(&b.short_hash))
+    });
 
-    for line in format_wrapped_list("      in: ", &parents) {
-        println!("{line}");
+    for row in rows {
+        println!(
+            "    {:8} {:30} {}",
+            row.state,
+            truncate_text(&row.location, 30),
+            row.short_hash
+        );
+    }
+}
+
+struct DriftRow {
+    rank: u8,
+    state: &'static str,
+    location: String,
+    short_hash: String,
+}
+
+fn drift_rank(instance: &SubrepoInstance, target_hash: &str) -> u8 {
+    if instance.has_uncommitted {
+        2
+    } else if instance.commit_hash == target_hash {
+        0
+    } else {
+        1
+    }
+}
+
+fn drift_state(instance: &SubrepoInstance, target_hash: &str) -> &'static str {
+    if instance.has_uncommitted {
+        "! dirty"
+    } else if instance.commit_hash == target_hash {
+        "✓ target"
+    } else {
+        "↓ update"
+    }
+}
+
+fn instance_location(instance: &SubrepoInstance) -> String {
+    match instance.relative_path.as_str() {
+        "" | "." => instance.parent_repo.clone(),
+        relative_path => {
+            if relative_path == instance.subrepo_name {
+                instance.parent_repo.clone()
+            } else {
+                format!("{}/{}", instance.parent_repo, relative_path)
+            }
+        }
     }
 }
 
@@ -184,37 +234,6 @@ fn truncate_text(value: &str, width: usize) -> String {
     let mut truncated = value.chars().take(width - 1).collect::<String>();
     truncated.push('…');
     truncated
-}
-
-fn format_wrapped_list(prefix: &str, values: &[String]) -> Vec<String> {
-    const MAX_WIDTH: usize = 100;
-
-    if values.is_empty() {
-        return Vec::new();
-    }
-
-    let continuation = " ".repeat(prefix.chars().count());
-    let mut lines = Vec::new();
-    let mut current = prefix.to_string();
-
-    for value in values {
-        let separator = if current.trim().ends_with(':') {
-            ""
-        } else {
-            ", "
-        };
-        let candidate = format!("{current}{separator}{value}");
-
-        if candidate.chars().count() > MAX_WIDTH && current != prefix {
-            lines.push(current);
-            current = format!("{continuation}{value}");
-        } else {
-            current = candidate;
-        }
-    }
-
-    lines.push(current);
-    lines
 }
 
 /// Display subrepo status (problem-first by default)

@@ -295,6 +295,25 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_push_report_uses_light_issue_table() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "assets",
+            "/workspace/assets",
+            &Status::NoUpstream,
+            "no upstream",
+            false,
+        );
+
+        let report = stats.generate_push_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("Repo                        Reason"));
+        assert!(report.contains("──────────────────────────"));
+        assert!(report.contains("assets                      no upstream"));
+        assert!(!report.contains("+--------------------------+"));
+    }
+
+    #[test]
     fn test_multiple_updates_accumulate() {
         let stats = SyncStatistics::new();
 

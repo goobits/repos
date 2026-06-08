@@ -644,35 +644,34 @@ fn next_for_push_error(error: &str) -> String {
 }
 
 fn format_issue_table(rows: &[IssueRow]) -> Vec<String> {
-    const REPO_WIDTH: usize = 24;
-    const REASON_WIDTH: usize = 34;
+    const REPO_WIDTH: usize = 26;
+    const REASON_WIDTH: usize = 36;
     const NEXT_WIDTH: usize = 34;
+    const GAP: &str = "  ";
 
-    let border = format!(
-        "  +{}+{}+{}+",
-        "-".repeat(REPO_WIDTH + 2),
-        "-".repeat(REASON_WIDTH + 2),
-        "-".repeat(NEXT_WIDTH + 2)
+    let rule = format!(
+        "  {}{GAP}{}{GAP}{}",
+        "─".repeat(REPO_WIDTH),
+        "─".repeat(REASON_WIDTH),
+        "─".repeat(NEXT_WIDTH)
     );
     let mut lines = vec![
-        border.clone(),
         format!(
-            "  | {:REPO_WIDTH$} | {:REASON_WIDTH$} | {:NEXT_WIDTH$} |",
+            "  {:REPO_WIDTH$}{GAP}{:REASON_WIDTH$}{GAP}{:NEXT_WIDTH$}",
             "Repo", "Reason", "Next"
         ),
-        border.clone(),
+        rule,
     ];
 
     for row in rows {
         lines.push(format!(
-            "  | {:REPO_WIDTH$} | {:REASON_WIDTH$} | {:NEXT_WIDTH$} |",
+            "  {:REPO_WIDTH$}{GAP}{:REASON_WIDTH$}{GAP}{:NEXT_WIDTH$}",
             truncate_text(&row.repo, REPO_WIDTH),
             truncate_text(&row.reason, REASON_WIDTH),
             truncate_text(&row.next, NEXT_WIDTH)
         ));
     }
 
-    lines.push(border);
     lines
 }
 
