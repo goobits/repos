@@ -204,6 +204,7 @@ async fn process_push_repositories(
         (bars, Some(footer_pb), None)
     } else {
         use indicatif::{ProgressBar, ProgressStyle};
+        let _top_separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
         let single_pb = context
             .multi_progress
             .add(ProgressBar::new(context.total_repos as u64));
@@ -211,7 +212,6 @@ async fn process_push_repositories(
             single_pb.set_style(style);
         }
         single_pb.set_message(format!("{DIM}processing...{RESET}"));
-        let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
         let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
         footer_pb.set_message(
             context
