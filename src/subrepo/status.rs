@@ -6,7 +6,9 @@ use std::collections::{HashMap, HashSet};
 
 const RESET: &str = "\x1b[0m";
 const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+const GREEN: &str = "\x1b[1;38;5;114m";
 const YELLOW: &str = "\x1b[1;38;5;221m";
+const RED: &str = "\x1b[1;38;5;203m";
 const DIM: &str = "\x1b[2m";
 
 /// Uncommitted changes state across instances
@@ -106,32 +108,58 @@ fn analyze_subrepos_from_report(report: super::ValidationReport) -> Vec<SubrepoS
 
 /// Display concise drift summary for use in repos push
 pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
+    for line in format_drift_summary_lines(statuses, true) {
+        println!("{line}");
+    }
+}
+
+/// Format nested drift as actionable work items for another report section.
+#[must_use]
+pub fn format_drift_work_items(statuses: &[SubrepoStatus]) -> (usize, Vec<String>) {
+    let drifted_count = statuses.iter().filter(|status| status.has_drift).count();
+    (drifted_count, format_drift_summary_lines(statuses, false))
+}
+
+fn format_drift_summary_lines(
+    statuses: &[SubrepoStatus],
+    include_section_header: bool,
+) -> Vec<String> {
     let drifted: Vec<_> = statuses.iter().filter(|s| s.has_drift).collect();
 
     if drifted.is_empty() {
-        return; // Don't show anything if no drift
+        return Vec::new();
     }
 
-    println!("{BOLD_PURPLE}▌ Nested Drift{RESET}");
+    let mut lines = Vec::new();
+    if include_section_header {
+        lines.push(format!("{BOLD_PURPLE}▌ Nested Drift{RESET}"));
+    } else {
+        lines.push(format!("{BOLD_PURPLE}  Nested Drift{RESET}"));
+        lines.push(paint(DIM, "  ────────────"));
+    }
+
     let group_label = if drifted.len() == 1 {
         "group is"
     } else {
         "groups are"
     };
-    println!(
+    lines.push(format!(
         "{YELLOW}!{RESET} {} nested repo {group_label} at different commits",
         drifted.len()
-    );
+    ));
 
     for status in &drifted {
-        display_drift_summary_item(status);
+        format_drift_summary_item(status, &mut lines);
     }
 
-    println!("{DIM}↳ Run `repos nested status` for per-copy details.{RESET}\n");
+    lines.push(format!(
+        "{DIM}↳ Run `repos nested status` for per-copy details.{RESET}"
+    ));
+    lines
 }
 
 /// Display a single drifted subrepo in concise format
-fn display_drift_summary_item(status: &SubrepoStatus) {
+fn format_drift_summary_item(status: &SubrepoStatus, lines: &mut Vec<String>) {
     // Find the latest clean commit (sync target)
     let latest_clean = status
         .instances
@@ -145,13 +173,13 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
     };
 
     let target_commit = latest_clean.map_or(&latest.short_hash, |t| &t.short_hash);
-    println!(
+    lines.push(format!(
         "  {:18} {:>2} copies  → repos nested sync {} --to {}",
         truncate_text(&status.name, 18),
         status.instances.len(),
         status.name,
         target_commit
-    );
+    ));
 
     let target_hash = latest_clean.map_or(&latest.commit_hash, |t| &t.commit_hash);
     let mut rows = status
@@ -159,7 +187,7 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
         .iter()
         .map(|instance| DriftRow {
             rank: drift_rank(instance, target_hash),
-            state: drift_state(instance, target_hash),
+            state: DriftState::from_instance(instance, target_hash),
             location: instance_location(instance),
             short_hash: instance.short_hash.clone(),
         })
@@ -172,20 +200,57 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
     });
 
     for row in rows {
-        println!(
-            "    {:8} {:30} {}",
-            row.state,
+        let state = row.state.label();
+        let state_cell = format!("{state:<8}");
+        lines.push(format!(
+            "    {} {:30} {}",
+            paint(row.state.color(), &state_cell),
             truncate_text(&row.location, 30),
             row.short_hash
-        );
+        ));
     }
 }
 
 struct DriftRow {
     rank: u8,
-    state: &'static str,
+    state: DriftState,
     location: String,
     short_hash: String,
+}
+
+#[derive(Clone, Copy)]
+enum DriftState {
+    Target,
+    Update,
+    Dirty,
+}
+
+impl DriftState {
+    fn from_instance(instance: &SubrepoInstance, target_hash: &str) -> Self {
+        if instance.has_uncommitted {
+            DriftState::Dirty
+        } else if instance.commit_hash == target_hash {
+            DriftState::Target
+        } else {
+            DriftState::Update
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            DriftState::Target => "✓ target",
+            DriftState::Update => "↓ update",
+            DriftState::Dirty => "! dirty",
+        }
+    }
+
+    fn color(self) -> &'static str {
+        match self {
+            DriftState::Target => GREEN,
+            DriftState::Update => YELLOW,
+            DriftState::Dirty => RED,
+        }
+    }
 }
 
 fn drift_rank(instance: &SubrepoInstance, target_hash: &str) -> u8 {
@@ -195,16 +260,6 @@ fn drift_rank(instance: &SubrepoInstance, target_hash: &str) -> u8 {
         0
     } else {
         1
-    }
-}
-
-fn drift_state(instance: &SubrepoInstance, target_hash: &str) -> &'static str {
-    if instance.has_uncommitted {
-        "! dirty"
-    } else if instance.commit_hash == target_hash {
-        "✓ target"
-    } else {
-        "↓ update"
     }
 }
 
@@ -219,6 +274,10 @@ fn instance_location(instance: &SubrepoInstance) -> String {
             }
         }
     }
+}
+
+fn paint(color: &str, value: &str) -> String {
+    format!("{color}{value}{RESET}")
 }
 
 fn truncate_text(value: &str, width: usize) -> String {

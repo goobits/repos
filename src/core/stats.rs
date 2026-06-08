@@ -5,6 +5,7 @@ use crate::core::config::{
 };
 use crate::git::Status;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -226,6 +227,17 @@ impl SyncStatistics {
 
     /// Generates the final push report without repeating the live footer details.
     pub fn generate_push_report(&self, duration: Duration, show_changes: bool) -> String {
+        self.generate_push_report_with_needs_work(duration, show_changes, 0, &[])
+    }
+
+    /// Generates the final push report with additional actionable work lines.
+    pub fn generate_push_report_with_needs_work(
+        &self,
+        duration: Duration,
+        show_changes: bool,
+        extra_needs_work_count: usize,
+        extra_needs_work_lines: &[String],
+    ) -> String {
         let duration_secs = duration.as_secs_f64();
         let synced = self.synced_repos.load(Ordering::Relaxed);
         let pushed_repos = self.pushed_repos.load(Ordering::Relaxed);
@@ -286,7 +298,7 @@ impl SyncStatistics {
             }
         }
 
-        let needs_work = issue_rows.len() + local_only.len();
+        let needs_work = issue_rows.len() + local_only.len() + extra_needs_work_count;
         let mut lines = Vec::new();
         let pushed_repo_label = pluralize(pushed_repos, "repo", "repos");
         let pushed_commit_label = pluralize(pushed_commits, "commit", "commits");
@@ -327,9 +339,17 @@ impl SyncStatistics {
         }
         lines.push(String::new());
 
-        if !issue_rows.is_empty() {
+        if !issue_rows.is_empty() || !extra_needs_work_lines.is_empty() {
             lines.push(format!("{BOLD_PURPLE}▌ Needs Work{RESET}"));
-            lines.extend(format_issue_table(&issue_rows));
+            if !issue_rows.is_empty() {
+                lines.extend(format_issue_table(&issue_rows));
+            }
+            if !extra_needs_work_lines.is_empty() {
+                if !issue_rows.is_empty() {
+                    lines.push(String::new());
+                }
+                lines.extend(extra_needs_work_lines.iter().cloned());
+            }
             lines.push(String::new());
         }
 
@@ -557,6 +577,7 @@ impl SyncStatistics {
 #[derive(Debug)]
 struct IssueRow {
     repo: String,
+    path: String,
     reason: String,
     next: String,
 }
@@ -585,30 +606,33 @@ fn build_issue_rows(
     let mut rows = Vec::new();
     let mut seen = HashSet::new();
 
-    for (repo_name, _repo_path, error) in failed_repos {
+    for (repo_name, repo_path, error) in failed_repos {
         if seen.insert(repo_name.clone()) {
             rows.push(IssueRow {
                 repo: repo_name.clone(),
+                path: repo_path.clone(),
                 reason: compact_push_error(error),
                 next: next_for_push_error(error),
             });
         }
     }
 
-    for (repo_name, _repo_path) in no_upstream_repos {
+    for (repo_name, repo_path) in no_upstream_repos {
         if seen.insert(repo_name.clone()) {
             rows.push(IssueRow {
                 repo: repo_name.clone(),
+                path: repo_path.clone(),
                 reason: "no upstream".to_string(),
                 next: "repos push --auto-upstream".to_string(),
             });
         }
     }
 
-    for (repo_name, _repo_path) in no_remote_repos {
+    for (repo_name, repo_path) in no_remote_repos {
         if seen.insert(repo_name.clone()) {
             rows.push(IssueRow {
                 repo: repo_name.clone(),
+                path: repo_path.clone(),
                 reason: "missing remote".to_string(),
                 next: "add remote or skip".to_string(),
             });
@@ -656,23 +680,65 @@ fn format_issue_table(rows: &[IssueRow]) -> Vec<String> {
         "─".repeat(NEXT_WIDTH)
     );
     let mut lines = vec![
-        format!(
-            "  {:REPO_WIDTH$}{GAP}{:REASON_WIDTH$}{GAP}{:NEXT_WIDTH$}",
-            "Repo", "Reason", "Next"
+        paint(
+            DIM,
+            &format!(
+                "  {:REPO_WIDTH$}{GAP}{:REASON_WIDTH$}{GAP}{:NEXT_WIDTH$}",
+                "Repo", "Reason", "Next"
+            ),
         ),
-        rule,
+        paint(DIM, &rule),
     ];
 
     for row in rows {
-        lines.push(format!(
+        let line = format!(
             "  {:REPO_WIDTH$}{GAP}{:REASON_WIDTH$}{GAP}{:NEXT_WIDTH$}",
             truncate_text(&row.repo, REPO_WIDTH),
             truncate_text(&row.reason, REASON_WIDTH),
             truncate_text(&row.next, NEXT_WIDTH)
+        );
+        lines.push(paint(issue_row_color(row), &line));
+        lines.push(paint(
+            DIM,
+            &format!("    └─ {}", format_relative_repo_path(&row.path)),
         ));
     }
 
     lines
+}
+
+fn issue_row_color(row: &IssueRow) -> &'static str {
+    if row.reason.contains("diverged")
+        || row.reason.contains("email privacy")
+        || row.reason.contains("network")
+    {
+        RED
+    } else {
+        YELLOW
+    }
+}
+
+fn paint(color: &str, value: &str) -> String {
+    format!("{color}{value}{RESET}")
+}
+
+fn format_relative_repo_path(path: &str) -> String {
+    let repo_path = Path::new(path);
+    let display_path = if repo_path.is_absolute() {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| repo_path.strip_prefix(cwd).ok())
+            .map_or_else(|| repo_path.to_path_buf(), Path::to_path_buf)
+    } else {
+        repo_path.to_path_buf()
+    };
+
+    let value = display_path.to_string_lossy();
+    if value == "." || value.starts_with("./") {
+        value.to_string()
+    } else {
+        format!("./{value}")
+    }
 }
 
 fn truncate_text(value: &str, width: usize) -> String {

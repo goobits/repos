@@ -94,12 +94,14 @@ pub async fn handle_push_command(
         };
 
     // Process all repositories concurrently
-    process_push_repositories(context, auto_upstream, verbose, show_changes).await;
-
-    // Check for nested repository drift unless explicitly skipped
-    if !no_drift_check {
-        check_and_display_drift();
-    }
+    process_push_repositories(
+        context,
+        auto_upstream,
+        verbose,
+        show_changes,
+        no_drift_check,
+    )
+    .await;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos");
@@ -116,6 +118,7 @@ async fn process_push_repositories(
     auto_upstream: bool,
     verbose: bool,
     show_changes: bool,
+    no_drift_check: bool,
 ) {
     use crate::core::{acquire_stats_lock, create_progress_bar};
     use crate::git::{fetch_and_analyze, push_if_needed};
@@ -434,12 +437,30 @@ async fn process_push_repositories(
     }
 
     let final_stats = acquire_stats_lock(&context.statistics);
+    let (drift_count, drift_lines) = if no_drift_check {
+        (0, Vec::new())
+    } else {
+        format_nested_drift_work_items()
+    };
     println!();
-    println!(
-        "{}",
+    let report = if drift_count == 0 && drift_lines.is_empty() {
         final_stats.generate_push_report(context.start_time.elapsed(), show_changes)
-    );
+    } else {
+        final_stats.generate_push_report_with_needs_work(
+            context.start_time.elapsed(),
+            show_changes,
+            drift_count,
+            &drift_lines,
+        )
+    };
+    println!("{report}");
     println!();
+}
+
+fn format_nested_drift_work_items() -> (usize, Vec<String>) {
+    crate::subrepo::status::analyze_subrepos_quiet()
+        .map(|statuses| crate::subrepo::status::format_drift_work_items(&statuses))
+        .unwrap_or_else(|_| (0, Vec::new()))
 }
 
 /// Check for nested repository drift and display concise summary

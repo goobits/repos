@@ -289,9 +289,10 @@ mod tests {
         let report = stats.generate_push_report(Duration::from_secs(3), false);
         let occurrences = report.matches("doppleganger").count();
 
-        assert_eq!(occurrences, 1);
+        assert_eq!(occurrences, 2);
         assert!(report.contains("no upstream + uncommitted changes"));
         assert!(!report.contains("repo has uncommitted changes"));
+        assert!(!report.contains("Local Changes"));
     }
 
     #[test]
@@ -310,7 +311,32 @@ mod tests {
         assert!(report.contains("Repo                        Reason"));
         assert!(report.contains("──────────────────────────"));
         assert!(report.contains("assets                      no upstream"));
+        assert!(report.contains("└─ ./assets"));
         assert!(!report.contains("+--------------------------+"));
+    }
+
+    #[test]
+    fn test_generate_push_report_combines_extra_needs_work() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "assets",
+            "/workspace/assets",
+            &Status::NoUpstream,
+            "no upstream",
+            false,
+        );
+        let extra_lines = vec!["  Nested Drift".to_string(), "  aw 3 copies".to_string()];
+
+        let report = stats.generate_push_report_with_needs_work(
+            Duration::from_secs(3),
+            false,
+            1,
+            &extra_lines,
+        );
+
+        assert!(report.contains("Needs work   2"));
+        assert!(report.contains("Nested Drift"));
+        assert!(report.contains("aw 3 copies"));
     }
 
     #[test]
