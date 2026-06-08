@@ -1,5 +1,3 @@
-#![allow(clippy::await_holding_lock)]
-
 use goobits_repos::commands::publish::handle_publish_command;
 use std::env;
 use std::fs;
@@ -9,7 +7,7 @@ use common::{is_git_available, TestRepoBuilder};
 
 #[tokio::test]
 async fn test_publish_dry_run_cargo() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -60,7 +58,7 @@ version = "0.1.0"
 
 #[tokio::test]
 async fn test_publish_dry_run_npm() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;

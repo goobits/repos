@@ -8,8 +8,6 @@
 //! edge cases, and proper execution flow. They test the commands work correctly
 //! without requiring actual network operations or real remotes.
 
-#![allow(clippy::await_holding_lock)]
-
 mod common;
 use common::{is_git_available, TestRepoBuilder};
 
@@ -32,7 +30,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_sync_command_with_no_repos() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -55,7 +53,7 @@ async fn test_sync_command_with_no_repos() {
 
 #[tokio::test]
 async fn test_sync_command_with_single_repo_no_remote() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -86,7 +84,7 @@ async fn test_sync_command_with_single_repo_no_remote() {
 
 #[tokio::test]
 async fn test_push_command_with_single_repo_no_changes() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -124,7 +122,7 @@ async fn test_push_command_with_single_repo_no_changes() {
 
 #[tokio::test]
 async fn test_push_command_with_no_remote() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -159,7 +157,7 @@ async fn test_push_command_with_no_remote() {
 
 #[tokio::test]
 async fn test_push_command_with_uncommitted_changes() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -201,7 +199,7 @@ async fn test_push_command_with_uncommitted_changes() {
 
 #[tokio::test]
 async fn test_pull_command_with_single_repo() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -239,7 +237,7 @@ async fn test_pull_command_with_single_repo() {
 
 #[tokio::test]
 async fn test_push_command_with_auto_upstream() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -277,7 +275,7 @@ async fn test_push_command_with_auto_upstream() {
 
 #[tokio::test]
 async fn test_push_if_needed_uses_upstream_remote_for_current_branch() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -420,7 +418,7 @@ async fn test_push_if_needed_uses_upstream_remote_for_current_branch() {
 
 #[tokio::test]
 async fn test_stage_command_with_simple_pattern() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -468,7 +466,7 @@ async fn test_stage_command_with_simple_pattern() {
 
 #[tokio::test]
 async fn test_stage_command_with_wildcard_pattern() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -507,7 +505,7 @@ async fn test_stage_command_with_wildcard_pattern() {
 
 #[tokio::test]
 async fn test_unstage_command_with_pattern() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -551,7 +549,7 @@ async fn test_unstage_command_with_pattern() {
 
 #[tokio::test]
 async fn test_commit_command_with_staged_changes() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -614,7 +612,7 @@ async fn test_commit_command_with_staged_changes() {
 
 #[tokio::test]
 async fn test_commit_command_with_no_staged_changes() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -648,7 +646,7 @@ async fn test_commit_command_with_no_staged_changes() {
 
 #[tokio::test]
 async fn test_commit_command_with_allow_empty_flag() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -682,7 +680,7 @@ async fn test_commit_command_with_allow_empty_flag() {
 
 #[tokio::test]
 async fn test_staging_status_command_with_changes() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -730,7 +728,7 @@ async fn test_staging_status_command_with_changes() {
 
 #[tokio::test]
 async fn test_staging_status_command_with_no_changes() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -764,7 +762,7 @@ async fn test_staging_status_command_with_no_changes() {
 
 #[tokio::test]
 async fn test_stage_command_with_nonexistent_file() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -802,7 +800,7 @@ async fn test_stage_command_with_nonexistent_file() {
 
 #[tokio::test]
 async fn test_push_command_with_sequential_flag() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -839,7 +837,7 @@ async fn test_push_command_with_sequential_flag() {
 
 #[tokio::test]
 async fn test_push_command_with_custom_jobs_limit() {
-    let _lock = common::lock_test();
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
