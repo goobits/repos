@@ -288,6 +288,10 @@ impl SyncStatistics {
 
         let needs_work = issue_rows.len() + local_only.len();
         let mut lines = Vec::new();
+        let pushed_repo_label = pluralize(pushed_repos, "repo", "repos");
+        let pushed_commit_label = pluralize(pushed_commits, "commit", "commits");
+        let local_repo_label = pluralize(local_only.len() as u64, "repo", "repos");
+        let local_verb = if local_only.len() == 1 { "has" } else { "have" };
 
         lines.push(format!("{BOLD_BLUE}repos push{RESET}"));
         lines.push(format!("{GREEN}✓{RESET} Completed in {duration_secs:.1}s"));
@@ -295,11 +299,17 @@ impl SyncStatistics {
         lines.push(format!("{BOLD_PURPLE}▌ Summary{RESET}"));
         lines.push(format!("  {GREEN}✓{RESET} Synced       {synced}"));
         lines.push(format!(
-            "  {GREEN}✓{RESET} Pushed       {pushed_repos} repos / {pushed_commits} commits"
+            "  {GREEN}✓{RESET} Pushed       {pushed_repos} {pushed_repo_label} / {pushed_commits} {pushed_commit_label}"
         ));
-        lines.push(format!("  {RED}!{RESET} Failed       {errors}"));
-        lines.push(format!("  {YELLOW}!{RESET} Needs work   {needs_work}"));
-        lines.push(format!("  {DIM}·{RESET} Skipped      {skipped}"));
+        if errors > 0 {
+            lines.push(format!("  {RED}!{RESET} Failed       {errors}"));
+        }
+        if needs_work > 0 {
+            lines.push(format!("  {YELLOW}!{RESET} Needs work   {needs_work}"));
+        }
+        if skipped > 0 {
+            lines.push(format!("  {DIM}·{RESET} Skipped      {skipped}"));
+        }
         lines.push(String::new());
 
         lines.push(format!("{BOLD_PURPLE}▌ Pushed{RESET}"));
@@ -326,7 +336,7 @@ impl SyncStatistics {
         if !local_only.is_empty() {
             lines.push(format!("{BOLD_PURPLE}▌ Local Changes{RESET}"));
             lines.push(format!(
-                "  {YELLOW}!{RESET} {} repos have uncommitted changes only",
+                "  {YELLOW}!{RESET} {} {local_repo_label} {local_verb} uncommitted changes",
                 local_only.len()
             ));
             lines.extend(format_repo_name_lines(
@@ -695,6 +705,14 @@ fn format_local_changes(repos: &[(String, String)]) -> Vec<String> {
         }
     }
     lines
+}
+
+fn pluralize(count: u64, singular: &'static str, plural: &'static str) -> &'static str {
+    if count == 1 {
+        singular
+    } else {
+        plural
+    }
 }
 
 fn parse_commit_count(message: &str) -> Option<u64> {

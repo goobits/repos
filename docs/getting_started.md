@@ -58,6 +58,7 @@ Example drift summary:
 ▌ Nested Drift
 ! 1 nested repo group is at different commits
   auth                2 copies  → repos nested sync auth --to 105ce4e
+      in: app, website
 ↳ Run `repos nested status` for per-copy details.
 ```
 

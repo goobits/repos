@@ -430,7 +430,7 @@ async fn process_push_repositories(
     }
 
     if let Some(footer_pb) = footer_pb {
-        footer_pb.finish();
+        footer_pb.finish_and_clear();
     }
 
     let final_stats = acquire_stats_lock(&context.statistics);

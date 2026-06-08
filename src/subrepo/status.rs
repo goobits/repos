@@ -152,6 +152,23 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
         status.name,
         target_commit
     );
+
+    let mut parents = status
+        .instances
+        .iter()
+        .map(|instance| {
+            if instance.has_uncommitted {
+                format!("{} (dirty)", instance.parent_repo)
+            } else {
+                instance.parent_repo.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    parents.sort();
+
+    for line in format_wrapped_list("      in: ", &parents) {
+        println!("{line}");
+    }
 }
 
 fn truncate_text(value: &str, width: usize) -> String {
@@ -167,6 +184,37 @@ fn truncate_text(value: &str, width: usize) -> String {
     let mut truncated = value.chars().take(width - 1).collect::<String>();
     truncated.push('…');
     truncated
+}
+
+fn format_wrapped_list(prefix: &str, values: &[String]) -> Vec<String> {
+    const MAX_WIDTH: usize = 100;
+
+    if values.is_empty() {
+        return Vec::new();
+    }
+
+    let continuation = " ".repeat(prefix.chars().count());
+    let mut lines = Vec::new();
+    let mut current = prefix.to_string();
+
+    for value in values {
+        let separator = if current.trim().ends_with(':') {
+            ""
+        } else {
+            ", "
+        };
+        let candidate = format!("{current}{separator}{value}");
+
+        if candidate.chars().count() > MAX_WIDTH && current != prefix {
+            lines.push(current);
+            current = format!("{continuation}{value}");
+        } else {
+            current = candidate;
+        }
+    }
+
+    lines.push(current);
+    lines
 }
 
 /// Display subrepo status (problem-first by default)

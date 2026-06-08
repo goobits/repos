@@ -225,6 +225,38 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_push_report_pluralizes_and_hides_zero_problem_rows() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "current",
+            "/repos/current",
+            &Status::Pushed,
+            "1 commit pushed",
+            false,
+        );
+
+        let report = stats.generate_push_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("1 repo / 1 commit"));
+        assert!(report.contains("1 commit"));
+        assert!(!report.contains("Failed       0"));
+        assert!(!report.contains("Needs work   0"));
+        assert!(!report.contains("Skipped      0"));
+    }
+
+    #[test]
+    fn test_generate_push_report_names_local_change_repositories() {
+        let stats = SyncStatistics::new();
+        stats.update("repos", "/workspace", &Status::Synced, "up to date", true);
+
+        let report = stats.generate_push_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("Needs work   1"));
+        assert!(report.contains("1 repo has uncommitted changes"));
+        assert!(report.contains("repos"));
+    }
+
+    #[test]
     fn test_generate_push_report_dedupes_uncommitted_issue_repositories() {
         let stats = SyncStatistics::new();
         stats.update(
@@ -240,7 +272,7 @@ mod tests {
 
         assert_eq!(occurrences, 1);
         assert!(report.contains("no upstream + uncommitted changes"));
-        assert!(!report.contains("uncommitted changes only"));
+        assert!(!report.contains("repo has uncommitted changes"));
     }
 
     #[test]
