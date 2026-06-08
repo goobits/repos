@@ -4,6 +4,11 @@ use super::SubrepoInstance;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
+const RESET: &str = "\x1b[0m";
+const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+const YELLOW: &str = "\x1b[1;38;5;221m";
+const DIM: &str = "\x1b[2m";
+
 /// Uncommitted changes state across instances
 #[derive(Debug, PartialEq)]
 enum UncommittedState {
@@ -107,31 +112,26 @@ pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
         return; // Don't show anything if no drift
     }
 
-    let synced: Vec<_> = statuses.iter().filter(|s| !s.has_drift).collect();
-
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("🔴 NESTED DRIFT ({})", drifted.len());
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    println!("{BOLD_PURPLE}▌ Nested Drift{RESET}");
+    let group_label = if drifted.len() == 1 {
+        "group is"
+    } else {
+        "groups are"
+    };
+    println!(
+        "{YELLOW}!{RESET} {} nested repo {group_label} at different commits",
+        drifted.len()
+    );
 
     for status in &drifted {
         display_drift_summary_item(status);
     }
 
-    if !synced.is_empty() {
-        println!("💡 {} nested repositories are fully synced.", synced.len());
-    }
-    println!("💡 Run 'repos nested status' for a detailed analysis.");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    println!("{DIM}↳ Run `repos nested status` for per-copy details.{RESET}\n");
 }
 
 /// Display a single drifted subrepo in concise format
 fn display_drift_summary_item(status: &SubrepoStatus) {
-    println!(
-        "{}: {} instances at different commits",
-        status.name,
-        status.instances.len()
-    );
-
     // Find the latest clean commit (sync target)
     let latest_clean = status
         .instances
@@ -144,59 +144,29 @@ fn display_drift_summary_item(status: &SubrepoStatus) {
         return; // Defensive: skip if somehow empty
     };
 
-    // Group by commit for display
-    let mut by_commit: std::collections::HashMap<String, Vec<&SubrepoInstance>> =
-        std::collections::HashMap::new();
-    for instance in &status.instances {
-        by_commit
-            .entry(instance.commit_hash.clone())
-            .or_default()
-            .push(instance);
-    }
-
-    // Sort commits by timestamp (newest first)
-    let mut commits: Vec<_> = by_commit.into_iter().collect();
-    commits.sort_by(|a, b| {
-        let a_timestamp = a.1.iter().map(|i| i.commit_timestamp).max().unwrap_or(0);
-        let b_timestamp = b.1.iter().map(|i| i.commit_timestamp).max().unwrap_or(0);
-        b_timestamp.cmp(&a_timestamp)
-    });
-
-    // Display commits with arrow notation
-    for (_commit, instances) in &commits {
-        for instance in instances {
-            let is_sync_target =
-                latest_clean.is_some_and(|t| t.commit_hash == instance.commit_hash);
-            let is_latest = latest.commit_hash == instance.commit_hash;
-
-            let prefix = if is_sync_target { "→" } else { " " };
-            let status_indicator = if instance.has_uncommitted {
-                "⚠️ uncommitted"
-            } else {
-                "✅ clean"
-            };
-
-            let mut suffix = String::new();
-            if is_latest && !instance.has_uncommitted {
-                suffix.push_str("  ⬆️ LATEST");
-            } else if !is_latest {
-                suffix.push_str("  (outdated)");
-            }
-
-            println!(
-                "  {} {}  {:30}  {}{}",
-                prefix, instance.short_hash, instance.parent_repo, status_indicator, suffix
-            );
-        }
-    }
-
-    // Show sync command
     let target_commit = latest_clean.map_or(&latest.short_hash, |t| &t.short_hash);
     println!(
-        "    Sync: repos nested sync {} --to {}",
-        status.name, target_commit
+        "  {:18} {:>2} copies  → repos nested sync {} --to {}",
+        truncate_text(&status.name, 18),
+        status.instances.len(),
+        status.name,
+        target_commit
     );
-    println!();
+}
+
+fn truncate_text(value: &str, width: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= width {
+        return value.to_string();
+    }
+
+    if width <= 1 {
+        return "…".to_string();
+    }
+
+    let mut truncated = value.chars().take(width - 1).collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 /// Display subrepo status (problem-first by default)

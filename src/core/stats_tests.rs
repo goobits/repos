@@ -32,6 +32,11 @@ mod tests {
             .lock()
             .expect("Failed to lock failed_repos mutex in test")
             .is_empty());
+        assert!(stats
+            .pushed_repo_details
+            .lock()
+            .expect("Failed to lock pushed_repo_details mutex in test")
+            .is_empty());
     }
 
     #[test]
@@ -46,6 +51,14 @@ mod tests {
         );
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 3);
         assert_eq!(stats.synced_repos.load(Ordering::Relaxed), 1); // Pushed also increments synced_repos
+        let pushed = stats
+            .pushed_repo_details
+            .lock()
+            .expect("Failed to lock pushed_repo_details mutex in test");
+        assert_eq!(
+            pushed.as_slice(),
+            &[("repo1".to_string(), "/path/1".to_string(), 3)]
+        );
     }
 
     #[test]
@@ -190,6 +203,44 @@ mod tests {
 
         assert!(summary.contains("2 pulled (12 commits)"));
         assert!(!summary.contains("pushed"));
+    }
+
+    #[test]
+    fn test_generate_push_report_lists_pushed_repositories() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "widgets",
+            "/repos/widgets",
+            &Status::Pushed,
+            "2 commits pushed",
+            false,
+        );
+
+        let report = stats.generate_push_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("Pushed"));
+        assert!(report.contains("widgets"));
+        assert!(report.contains("2 commits"));
+        assert!(report.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_generate_push_report_dedupes_uncommitted_issue_repositories() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "doppleganger",
+            "/repos/doppleganger",
+            &Status::NoUpstream,
+            "no upstream",
+            true,
+        );
+
+        let report = stats.generate_push_report(Duration::from_secs(3), false);
+        let occurrences = report.matches("doppleganger").count();
+
+        assert_eq!(occurrences, 1);
+        assert!(report.contains("no upstream + uncommitted changes"));
+        assert!(!report.contains("uncommitted changes only"));
     }
 
     #[test]

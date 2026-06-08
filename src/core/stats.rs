@@ -4,9 +4,18 @@ use crate::core::config::{
     ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, TIMEOUT_SECONDS_DISPLAY,
 };
 use crate::git::Status;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
+
+const RESET: &str = "\x1b[0m";
+const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
+const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+const GREEN: &str = "\x1b[1;38;5;114m";
+const YELLOW: &str = "\x1b[1;38;5;221m";
+const RED: &str = "\x1b[1;38;5;203m";
+const DIM: &str = "\x1b[2m";
 
 /// Statistics for tracking repository synchronization results
 ///
@@ -28,6 +37,7 @@ pub struct SyncStatistics {
     pub no_upstream_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
     pub no_remote_repos: Mutex<Vec<(String, String)>>,      // (repo_name, repo_path)
     pub uncommitted_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
+    pub pushed_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
 }
 
 impl Default for SyncStatistics {
@@ -53,6 +63,7 @@ impl SyncStatistics {
             no_upstream_repos: Mutex::new(Vec::new()),
             no_remote_repos: Mutex::new(Vec::new()),
             uncommitted_repos: Mutex::new(Vec::new()),
+            pushed_repo_details: Mutex::new(Vec::new()),
         }
     }
 
@@ -69,9 +80,15 @@ impl SyncStatistics {
             Status::Pushed => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
                 self.pushed_repos.fetch_add(1, Ordering::Relaxed);
-                if let Some(commits) = parse_commit_count(message) {
+                let commits = parse_commit_count(message).unwrap_or(0);
+                if commits > 0 {
                     self.total_commits_pushed
                         .fetch_add(commits, Ordering::Relaxed);
+                }
+                if let Ok(mut guard) = self.pushed_repo_details.lock() {
+                    guard.push((repo_name.to_string(), repo_path.to_string(), commits));
+                } else {
+                    eprintln!("Warning: Failed to record pushed repo: {repo_name}");
                 }
             }
             Status::Pulled => {
@@ -205,6 +222,129 @@ impl SyncStatistics {
             self.no_upstream_count(),
             self.skipped_repos.load(Ordering::Relaxed)
         )
+    }
+
+    /// Generates the final push report without repeating the live footer details.
+    pub fn generate_push_report(&self, duration: Duration, show_changes: bool) -> String {
+        let duration_secs = duration.as_secs_f64();
+        let synced = self.synced_repos.load(Ordering::Relaxed);
+        let pushed_repos = self.pushed_repos.load(Ordering::Relaxed);
+        let pushed_commits = self.total_commits_pushed.load(Ordering::Relaxed);
+        let skipped = self.skipped_repos.load(Ordering::Relaxed);
+        let errors = self.error_repos.load(Ordering::Relaxed);
+
+        let pushed_details = match self.pushed_repo_details.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for pushed_repo_details");
+                Vec::new()
+            }
+        };
+        let failed_repos = match self.failed_repos.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for failed_repos");
+                Vec::new()
+            }
+        };
+        let no_upstream_repos = match self.no_upstream_repos.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for no_upstream_repos");
+                Vec::new()
+            }
+        };
+        let no_remote_repos = match self.no_remote_repos.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for no_remote_repos");
+                Vec::new()
+            }
+        };
+        let uncommitted_repos = match self.uncommitted_repos.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                eprintln!("Warning: Failed to acquire lock for uncommitted_repos");
+                Vec::new()
+            }
+        };
+
+        let mut issue_rows = build_issue_rows(&failed_repos, &no_upstream_repos, &no_remote_repos);
+        let issue_index = issue_rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| (row.repo.clone(), index))
+            .collect::<HashMap<_, _>>();
+
+        let mut local_only = Vec::new();
+        let mut local_seen = HashSet::new();
+        for (repo_name, repo_path) in &uncommitted_repos {
+            if let Some(index) = issue_index.get(repo_name).copied() {
+                issue_rows[index].add_reason("uncommitted changes");
+            } else if local_seen.insert(repo_name.clone()) {
+                local_only.push((repo_name.clone(), repo_path.clone()));
+            }
+        }
+
+        let needs_work = issue_rows.len() + local_only.len();
+        let mut lines = Vec::new();
+
+        lines.push(format!("{BOLD_BLUE}repos push{RESET}"));
+        lines.push(format!("{GREEN}✓{RESET} Completed in {duration_secs:.1}s"));
+        lines.push(String::new());
+        lines.push(format!("{BOLD_PURPLE}▌ Summary{RESET}"));
+        lines.push(format!("  {GREEN}✓{RESET} Synced       {synced}"));
+        lines.push(format!(
+            "  {GREEN}✓{RESET} Pushed       {pushed_repos} repos / {pushed_commits} commits"
+        ));
+        lines.push(format!("  {RED}!{RESET} Failed       {errors}"));
+        lines.push(format!("  {YELLOW}!{RESET} Needs work   {needs_work}"));
+        lines.push(format!("  {DIM}·{RESET} Skipped      {skipped}"));
+        lines.push(String::new());
+
+        lines.push(format!("{BOLD_PURPLE}▌ Pushed{RESET}"));
+        if pushed_details.is_empty() {
+            lines.push(format!("  {DIM}Nothing pushed this run.{RESET}"));
+        } else {
+            for (repo_name, _repo_path, commits) in pushed_details {
+                let commit_label = if commits == 1 { "commit" } else { "commits" };
+                lines.push(format!(
+                    "  {GREEN}✓{RESET} {:24} {:>3} {commit_label}",
+                    truncate_text(&repo_name, 24),
+                    commits
+                ));
+            }
+        }
+        lines.push(String::new());
+
+        if !issue_rows.is_empty() {
+            lines.push(format!("{BOLD_PURPLE}▌ Needs Work{RESET}"));
+            lines.extend(format_issue_table(&issue_rows));
+            lines.push(String::new());
+        }
+
+        if !local_only.is_empty() {
+            lines.push(format!("{BOLD_PURPLE}▌ Local Changes{RESET}"));
+            lines.push(format!(
+                "  {YELLOW}!{RESET} {} repos have uncommitted changes only",
+                local_only.len()
+            ));
+            lines.extend(format_repo_name_lines(
+                &local_only
+                    .iter()
+                    .map(|(repo_name, _)| repo_name.clone())
+                    .collect::<Vec<_>>(),
+            ));
+            if show_changes {
+                lines.extend(format_local_changes(&local_only));
+            }
+        }
+
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+
+        lines.join("\n")
     }
 
     /// Generates a compact live pull/sync footer.
@@ -394,6 +534,167 @@ impl SyncStatistics {
 
         lines.join("\n")
     }
+}
+
+#[derive(Debug)]
+struct IssueRow {
+    repo: String,
+    reason: String,
+    next: String,
+}
+
+impl IssueRow {
+    fn add_reason(&mut self, reason: &str) {
+        if self.reason.contains(reason) {
+            return;
+        }
+        if !self.reason.is_empty() {
+            self.reason.push_str(" + ");
+        }
+        self.reason.push_str(reason);
+
+        if self.next == "repos push --auto-upstream" {
+            self.next = "commit/clean, then auto-upstream".to_string();
+        }
+    }
+}
+
+fn build_issue_rows(
+    failed_repos: &[(String, String, String)],
+    no_upstream_repos: &[(String, String)],
+    no_remote_repos: &[(String, String)],
+) -> Vec<IssueRow> {
+    let mut rows = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (repo_name, _repo_path, error) in failed_repos {
+        if seen.insert(repo_name.clone()) {
+            rows.push(IssueRow {
+                repo: repo_name.clone(),
+                reason: compact_push_error(error),
+                next: next_for_push_error(error),
+            });
+        }
+    }
+
+    for (repo_name, _repo_path) in no_upstream_repos {
+        if seen.insert(repo_name.clone()) {
+            rows.push(IssueRow {
+                repo: repo_name.clone(),
+                reason: "no upstream".to_string(),
+                next: "repos push --auto-upstream".to_string(),
+            });
+        }
+    }
+
+    for (repo_name, _repo_path) in no_remote_repos {
+        if seen.insert(repo_name.clone()) {
+            rows.push(IssueRow {
+                repo: repo_name.clone(),
+                reason: "missing remote".to_string(),
+                next: "add remote or skip".to_string(),
+            });
+        }
+    }
+
+    rows
+}
+
+fn compact_push_error(error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains("diverged") {
+        return error
+            .replace(" (run repos sync or resolve manually)", "")
+            .replace(", ", " / ");
+    }
+    clean_error_message(error)
+}
+
+fn next_for_push_error(error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains("diverged") {
+        "repos sync or resolve manually".to_string()
+    } else if lower.contains("repository moved") && lower.contains("email privacy") {
+        "update remote + fix git email".to_string()
+    } else if lower.contains("email privacy") {
+        "fix git email, then push".to_string()
+    } else if lower.contains("repository moved") {
+        "update remote, then push".to_string()
+    } else {
+        "inspect failure".to_string()
+    }
+}
+
+fn format_issue_table(rows: &[IssueRow]) -> Vec<String> {
+    const REPO_WIDTH: usize = 24;
+    const REASON_WIDTH: usize = 34;
+    const NEXT_WIDTH: usize = 34;
+
+    let border = format!(
+        "  +{}+{}+{}+",
+        "-".repeat(REPO_WIDTH + 2),
+        "-".repeat(REASON_WIDTH + 2),
+        "-".repeat(NEXT_WIDTH + 2)
+    );
+    let mut lines = vec![
+        border.clone(),
+        format!(
+            "  | {:REPO_WIDTH$} | {:REASON_WIDTH$} | {:NEXT_WIDTH$} |",
+            "Repo", "Reason", "Next"
+        ),
+        border.clone(),
+    ];
+
+    for row in rows {
+        lines.push(format!(
+            "  | {:REPO_WIDTH$} | {:REASON_WIDTH$} | {:NEXT_WIDTH$} |",
+            truncate_text(&row.repo, REPO_WIDTH),
+            truncate_text(&row.reason, REASON_WIDTH),
+            truncate_text(&row.next, NEXT_WIDTH)
+        ));
+    }
+
+    lines.push(border);
+    lines
+}
+
+fn truncate_text(value: &str, width: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= width {
+        return value.to_string();
+    }
+
+    if width <= 1 {
+        return "…".to_string();
+    }
+
+    let mut truncated = value.chars().take(width - 1).collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn format_repo_name_lines(names: &[String]) -> Vec<String> {
+    const NAMES_PER_LINE: usize = 5;
+    names
+        .chunks(NAMES_PER_LINE)
+        .map(|chunk| format!("  {}", chunk.join(", ")))
+        .collect()
+}
+
+fn format_local_changes(repos: &[(String, String)]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (repo_name, repo_path) in repos {
+        if let Ok(changes) = get_repo_changes(repo_path) {
+            if changes.is_empty() {
+                continue;
+            }
+            lines.push(format!("  {repo_name}:"));
+            for change in changes {
+                lines.push(format!("    {change}"));
+            }
+        }
+    }
+    lines
 }
 
 fn parse_commit_count(message: &str) -> Option<u64> {

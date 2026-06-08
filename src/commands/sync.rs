@@ -434,17 +434,11 @@ async fn process_push_repositories(
     }
 
     let final_stats = acquire_stats_lock(&context.statistics);
-    if !verbose {
-        let summary = final_stats.generate_push_summary(context.start_time.elapsed());
-        println!();
-        println!("{summary}");
-    }
-    let detailed_summary = final_stats.generate_detailed_summary(show_changes);
-    if !detailed_summary.is_empty() {
-        println!("\n{}", "━".repeat(70));
-        println!("{detailed_summary}");
-        println!("{}", "━".repeat(70));
-    }
+    println!();
+    println!(
+        "{}",
+        final_stats.generate_push_report(context.start_time.elapsed(), show_changes)
+    );
     println!();
 }
 

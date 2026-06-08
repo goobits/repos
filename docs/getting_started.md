@@ -55,11 +55,10 @@ drift. Dirty repositories are skipped instead of being stashed implicitly.
 Example drift summary:
 
 ```text
-🔴 NESTED DRIFT (1)
-auth: 2 instances at different commits
-  → 105ce4e  app       ✅ clean  ⬆️ LATEST
-    2f13c23  website   ✅ clean  (outdated)
-    Sync: repos nested sync auth --to 105ce4e
+▌ Nested Drift
+! 1 nested repo group is at different commits
+  auth                2 copies  → repos nested sync auth --to 105ce4e
+↳ Run `repos nested status` for per-copy details.
 ```
 
 ### Granular Git Control
