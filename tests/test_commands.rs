@@ -8,6 +8,8 @@
 //! edge cases, and proper execution flow. They test the commands work correctly
 //! without requiring actual network operations or real remotes.
 
+#![allow(clippy::await_holding_lock)]
+
 mod common;
 use common::{is_git_available, TestRepoBuilder};
 
@@ -15,7 +17,9 @@ use goobits_repos::commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
     handle_unstage_command,
 };
-use goobits_repos::commands::sync::{handle_pull_command, handle_push_command};
+use goobits_repos::commands::sync::{
+    handle_pull_command, handle_push_command, handle_sync_command,
+};
 use goobits_repos::git::{fetch_and_analyze, push_if_needed, Status};
 use std::env;
 use std::fs;
@@ -25,6 +29,60 @@ use tempfile::TempDir;
 // ==============================================================================
 // SYNC COMMAND TESTS (commands/sync.rs)
 // ==============================================================================
+
+#[tokio::test]
+async fn test_sync_command_with_no_repos() {
+    let _lock = common::lock_test();
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    let original_dir = env::current_dir().expect("Failed to get current dir");
+    let empty_dir = TempDir::new().expect("Failed to create temp directory");
+    env::set_current_dir(empty_dir.path()).expect("Failed to change dir");
+
+    let result = handle_sync_command(false, false, false, true, None, false).await;
+
+    let _ = env::set_current_dir(&original_dir);
+
+    assert!(
+        result.is_ok(),
+        "Sync command should handle an empty directory: {:?}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn test_sync_command_with_single_repo_no_remote() {
+    let _lock = common::lock_test();
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    let original_dir = env::current_dir().expect("Failed to get current dir");
+
+    let repo = match TestRepoBuilder::new("test-sync-no-remote").build() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Failed to create test repo: {}, skipping", e);
+            return;
+        }
+    };
+
+    env::set_current_dir(repo.path()).expect("Failed to change dir");
+
+    let result = handle_sync_command(true, false, false, true, None, false).await;
+
+    let _ = env::set_current_dir(&original_dir);
+
+    assert!(
+        result.is_ok(),
+        "Sync command should run pull then push without panicking: {:?}",
+        result
+    );
+}
 
 #[tokio::test]
 async fn test_push_command_with_single_repo_no_changes() {

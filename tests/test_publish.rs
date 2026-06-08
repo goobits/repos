@@ -1,3 +1,5 @@
+#![allow(clippy::await_holding_lock)]
+
 use goobits_repos::commands::publish::handle_publish_command;
 use std::env;
 use std::fs;

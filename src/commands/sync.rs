@@ -1,7 +1,7 @@
-//! Repository push command implementation
+//! Repository sync, push, and pull command implementation
 //!
-//! This module handles the core push functionality - discovering repositories
-//! and pushing any unpushed commits to their upstream remotes.
+//! This module handles discovering repositories, pulling safe remote changes,
+//! and pushing unpushed commits to upstream remotes.
 
 use anyhow::Result;
 
@@ -13,6 +13,31 @@ use crate::core::{
 use crate::git::Status;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
+
+/// Handles the two-way repository sync command.
+///
+/// Sync is the daily workflow: pull safe remote changes with rebase, then push
+/// local commits. The directional pull/push handlers remain the lower-level
+/// building blocks.
+pub async fn handle_sync_command(
+    auto_upstream: bool,
+    verbose: bool,
+    show_changes: bool,
+    no_drift_check: bool,
+    jobs: Option<usize>,
+    sequential: bool,
+) -> Result<()> {
+    handle_pull_command(true, verbose, show_changes, true, jobs, sequential).await?;
+    handle_push_command(
+        auto_upstream,
+        verbose,
+        show_changes,
+        no_drift_check,
+        jobs,
+        sequential,
+    )
+    .await
+}
 
 /// Handles the repository push command
 pub async fn handle_push_command(

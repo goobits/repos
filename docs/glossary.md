@@ -8,7 +8,7 @@ Quick reference for `repos` commands, flags, and concepts.
 
 **`repos save`** - Stage tracked changes, commit, and push in one step.
 
-**`repos sync`** - Fetch, rebase safe repositories, and report nested drift.
+**`repos sync`** - Pull safe remote changes, push local commits, and report nested drift.
 
 **`repos stage`** - Stage files matching a pattern.
 

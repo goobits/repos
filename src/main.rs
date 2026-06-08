@@ -25,7 +25,7 @@ use commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
     handle_unstage_command,
 };
-use commands::sync::{handle_pull_command, handle_push_command};
+use commands::sync::{handle_pull_command, handle_push_command, handle_sync_command};
 use git::ConfigArgs;
 
 #[derive(Subcommand, Clone)]
@@ -47,8 +47,11 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Fetch, pull with rebase, and report nested drift
+    /// Pull safe remote changes, push local commits, and report nested drift
     Sync {
+        /// Set upstream automatically for branches without tracking during push
+        #[arg(long)]
+        auto_upstream: bool,
         /// Show detailed progress for all repositories
         #[arg(long, short)]
         verbose: bool,
@@ -296,14 +299,15 @@ async fn main() -> Result<()> {
             .await
         }
         Some(Commands::Sync {
+            auto_upstream,
             verbose,
             show_changes,
             no_drift_check,
             jobs,
             sequential,
         }) => {
-            handle_pull_command(
-                true,
+            handle_sync_command(
+                *auto_upstream,
                 *verbose,
                 *show_changes,
                 *no_drift_check,

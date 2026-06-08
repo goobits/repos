@@ -20,7 +20,7 @@ cargo install goobits-repos
 # Daily usage
 repos status                    # Understand fleet state
 repos save "Update docs"        # Stage tracked changes, commit, push
-repos sync                      # Fetch, rebase, and report drift
+repos sync                      # Pull safe changes, push commits, report drift
 ```
 
 [Full installation guide →](docs/installation.md)
@@ -42,12 +42,12 @@ repos sync                      # Fetch, rebase, and report drift
 # Everyday
 repos status                    # Understand fleet state
 repos save "Update docs"        # Stage tracked changes, commit, push
-repos sync                      # Fetch, rebase, and report drift
+repos sync                      # Pull safe changes, push commits, report drift
 
 # Git Control
-repos push                      # Push all + drift check
+repos push                      # Push only + drift check
 repos push --auto-upstream      # Set upstream for new branches
-repos pull --rebase             # Granular pull with rebase
+repos pull --rebase             # Pull only with rebase
 
 # Staging & Commits
 repos stage "pattern"           # Stage by pattern
@@ -84,7 +84,7 @@ See [Commands Reference](docs/guides/commands.md) for complete flag documentatio
 - `repos save "message"` uses the equivalent of `git add -u`, so new files are not committed accidentally.
 - Use `repos save "message" --include-untracked` when you intentionally want new files.
 - Use `repos save "message" --dry-run` to preview the save plan.
-- `repos sync` skips dirty repositories instead of stashing or overwriting local work.
+- `repos sync` pulls safe remote changes, pushes local commits, and skips dirty repositories instead of stashing or overwriting local work.
 - `repos push --auto-upstream` replaces the old “force” wording for publishing new branches.
 
 ## Documentation
@@ -113,6 +113,20 @@ See [Commands Reference](docs/guides/commands.md) for complete flag documentatio
 cargo build --release           # Optimized build
 cargo test                      # Run tests
 ```
+
+### Agent Workspace
+
+This repo pins [Agent Workspace](https://github.com/goobits/agent-workspace)
+as a submodule under `infra/aw`.
+
+```bash
+git submodule update --init --recursive
+make aw-install                 # Install aw, Zellij setup, and repo adapters
+make aw-doctor                  # Validate repo adapters and config/aw
+make aw-update                  # Fast-forward the submodule and reinstall
+```
+
+The default local workspace is `main` with `dev`, `git`, and `scratch` tabs.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup.
 

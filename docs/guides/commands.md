@@ -16,7 +16,7 @@ repos sync
 Safety model:
 
 - `save` stages tracked changes only unless you opt into untracked files.
-- `sync` skips dirty repositories instead of stashing implicitly.
+- `sync` pulls safe remote changes, pushes local commits, and skips dirty repositories instead of stashing implicitly.
 - branch publishing uses `--auto-upstream`, not overloaded force wording.
 - mutating daily workflows expose `--dry-run` where practical.
 
@@ -31,7 +31,7 @@ USAGE:
 EVERYDAY:
   status      Understand repository state
   save        Stage tracked changes, commit, and push
-  sync        Fetch, rebase safe repositories, and report nested drift
+  sync        Pull safe remote changes, push local commits, and report nested drift
 
 CONTROL:
   stage       Stage matching files
@@ -100,8 +100,8 @@ repos save "Preview save" --dry-run
 
 ### `repos sync`
 
-Fetch and pull safe repositories using rebase. This is the humane daily command
-for “bring my workspace up to date.”
+Pull safe remote changes using rebase, then push local commits. This is the
+humane daily command for “reconcile my workspace with remotes.”
 
 ```bash
 repos sync
@@ -111,9 +111,10 @@ Default behavior:
 
 - Fetches remotes.
 - Pulls with rebase.
+- Pushes local commits after the pull phase.
 - Skips dirty repositories instead of stashing implicitly.
 - Reports nested repository drift.
-- Leaves granular pull behavior available through `repos pull`.
+- Leaves directional behavior available through `repos pull` and `repos push`.
 
 Options:
 
@@ -121,6 +122,7 @@ Options:
 |---|---|
 | `-v`, `--verbose` | Show detailed progress |
 | `-c`, `--show-changes` | Show file changes in dirty repositories |
+| `--auto-upstream` | Set upstream during the push phase for branches without tracking |
 | `--no-drift-check` | Skip nested drift check |
 
 Advanced options are hidden from main help but still available:

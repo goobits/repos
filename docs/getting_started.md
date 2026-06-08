@@ -131,9 +131,9 @@ fleet command.
 
 ### Should I use `sync` or `pull`?
 
-Use `repos sync` for daily work. It fetches, rebases safe repositories, and
-reports nested drift. Use `repos pull` when you specifically want the granular
-Git-shaped command.
+Use `repos sync` for daily work. It pulls safe remote changes with rebase,
+pushes local commits, and reports nested drift. Use `repos pull` when you
+specifically want the granular Git-shaped pull command.
 
 ### Does `repos` work with Git submodules?
 
