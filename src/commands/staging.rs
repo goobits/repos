@@ -98,60 +98,50 @@ impl FleetStatus {
 
 /// Handles the repository stage command
 pub async fn handle_stage_command(pattern: String) -> Result<()> {
-    // Set terminal title to indicate repos is running
-    set_terminal_title("🚀 repos stage");
-
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
-
-    if repos.is_empty() {
-        println!("\r{NO_REPOS_MESSAGE}");
-        // Set terminal title to green checkbox to indicate completion
-        set_terminal_title_and_flush("✅ repos stage");
+    let Some(context) = prepare_batch_command(
+        "🚀 repos stage",
+        "✅ repos stage",
+        format!("Staging {pattern}"),
+    )
+    .await?
+    else {
         return Ok(());
-    }
-
-    let total_repos = repos.len();
-    let repo_word = if total_repos == 1 {
-        "repository"
-    } else {
-        "repositories"
     };
-    print!("\r🚀 Staging {pattern} in {total_repos} {repo_word}                    \n");
-    println!();
 
-    // Create processing context
-    let context =
-        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
-        {
-            Ok(context) => context,
-            Err(e) => {
-                // If context creation fails, set completion title and return error
-                set_terminal_title_and_flush("✅ repos stage");
-                return Err(e);
-            }
-        };
-
-    // Process all repositories concurrently
     process_staging_repositories(context, pattern, true).await;
-
-    // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos stage");
-
     Ok(())
 }
 
 /// Handles the repository unstage command
 pub async fn handle_unstage_command(pattern: String) -> Result<()> {
-    // Set terminal title to indicate repos is running
-    set_terminal_title("🚀 repos unstage");
+    let Some(context) = prepare_batch_command(
+        "🚀 repos unstage",
+        "✅ repos unstage",
+        format!("Unstaging {pattern}"),
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+
+    process_staging_repositories(context, pattern, false).await;
+    set_terminal_title_and_flush("✅ repos unstage");
+    Ok(())
+}
+
+async fn prepare_batch_command(
+    running_title: &str,
+    done_title: &str,
+    action: String,
+) -> Result<Option<crate::core::ProcessingContext>> {
+    set_terminal_title(running_title);
 
     let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
-
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
-        // Set terminal title to green checkbox to indicate completion
-        set_terminal_title_and_flush("✅ repos unstage");
-        return Ok(());
+        set_terminal_title_and_flush(done_title);
+        return Ok(None);
     }
 
     let total_repos = repos.len();
@@ -160,28 +150,16 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
     } else {
         "repositories"
     };
-    print!("\r🚀 Unstaging {pattern} in {total_repos} {repo_word}                    \n");
+    print!("\r🚀 {action} in {total_repos} {repo_word}                    \n");
     println!();
 
-    // Create processing context
-    let context =
-        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
-        {
-            Ok(context) => context,
-            Err(e) => {
-                // If context creation fails, set completion title and return error
-                set_terminal_title_and_flush("✅ repos unstage");
-                return Err(e);
-            }
-        };
-
-    // Process all repositories concurrently
-    process_staging_repositories(context, pattern, false).await;
-
-    // Set terminal title to green checkbox to indicate completion
-    set_terminal_title_and_flush("✅ repos unstage");
-
-    Ok(())
+    match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP) {
+        Ok(context) => Ok(Some(context)),
+        Err(e) => {
+            set_terminal_title_and_flush(done_title);
+            Err(e)
+        }
+    }
 }
 
 /// Handles the repository staging status command
@@ -681,45 +659,18 @@ async fn summarize_missing_upstream(repo_path: &std::path::Path) -> UpstreamSumm
 
 /// Handles the repository commit command
 pub async fn handle_commit_command(message: String, include_empty: bool) -> Result<()> {
-    // Set terminal title to indicate repos is running
-    set_terminal_title("🚀 repos commit");
-
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
-
-    if repos.is_empty() {
-        println!("\r{NO_REPOS_MESSAGE}");
-        // Set terminal title to green checkbox to indicate completion
-        set_terminal_title_and_flush("✅ repos commit");
+    let Some(context) = prepare_batch_command(
+        "🚀 repos commit",
+        "✅ repos commit",
+        "Committing changes".to_string(),
+    )
+    .await?
+    else {
         return Ok(());
-    }
-
-    let total_repos = repos.len();
-    let repo_word = if total_repos == 1 {
-        "repository"
-    } else {
-        "repositories"
     };
-    print!("\r🚀 Committing changes in {total_repos} {repo_word}                    \n");
-    println!();
 
-    // Create processing context
-    let context =
-        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
-        {
-            Ok(context) => context,
-            Err(e) => {
-                // If context creation fails, set completion title and return error
-                set_terminal_title_and_flush("✅ repos commit");
-                return Err(e);
-            }
-        };
-
-    // Process all repositories concurrently
     process_commit_repositories(context, message, include_empty).await;
-
-    // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos commit");
-
     Ok(())
 }
 
