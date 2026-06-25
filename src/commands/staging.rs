@@ -48,11 +48,7 @@ impl StatusFilters {
 struct FleetStatus {
     status: Status,
     message: String,
-    dirty: bool,
-    no_remote: bool,
-    no_upstream: bool,
-    diverged: bool,
-    ahead: u32,
+    upstream: UpstreamSummary,
 }
 
 impl FleetStatus {
@@ -62,15 +58,21 @@ impl FleetStatus {
         }
 
         (filters.needs_work && self.needs_work())
-            || (filters.dirty && self.dirty)
-            || (filters.no_remote && self.no_remote)
-            || (filters.no_upstream && self.no_upstream)
+            || (filters.dirty && self.dirty())
+            || (filters.no_remote && matches!(self.upstream, UpstreamSummary::NoRemote))
+            || (filters.no_upstream && matches!(self.upstream, UpstreamSummary::NoUpstream))
             || (filters.failed && self.failed())
             || (filters.skipped && self.skipped_for_push())
     }
 
     fn needs_work(&self) -> bool {
-        self.dirty || self.no_remote || self.no_upstream || self.diverged || self.failed()
+        self.dirty()
+            || matches!(
+                self.upstream,
+                UpstreamSummary::NoRemote | UpstreamSummary::NoUpstream
+            )
+            || self.upstream.is_diverged()
+            || self.failed()
     }
 
     fn failed(&self) -> bool {
@@ -81,7 +83,16 @@ impl FleetStatus {
     }
 
     fn skipped_for_push(&self) -> bool {
-        !self.failed() && !self.diverged && (self.no_remote || self.no_upstream || self.ahead == 0)
+        !self.failed()
+            && !self.upstream.is_diverged()
+            && (matches!(
+                self.upstream,
+                UpstreamSummary::NoRemote | UpstreamSummary::NoUpstream
+            ) || self.upstream.ahead() == Some(0))
+    }
+
+    fn dirty(&self) -> bool {
+        self.status == Status::Dirty
     }
 }
 
@@ -468,15 +479,10 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
             return FleetStatus {
                 status: Status::StagingError,
                 message: format!("status failed: {e}"),
-                dirty: false,
-                no_remote: false,
-                no_upstream: false,
-                diverged: false,
-                ahead: 0,
+                upstream: UpstreamSummary::Unknown,
             };
         }
     };
-    let dirty = working_status == Status::Dirty;
 
     let branch = match run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
         Ok((true, branch, _)) => branch,
@@ -485,25 +491,8 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
     parts.insert(0, format!("branch {branch}"));
 
     let upstream = summarize_upstream(repo_path).await;
-    let mut no_remote = false;
-    let mut no_upstream = false;
-    let mut diverged = false;
-    let mut ahead = 0;
-
-    match upstream {
-        UpstreamSummary::Remote(remote) => {
-            ahead = remote.ahead;
-            diverged = remote.ahead > 0 && remote.behind > 0;
-            parts.push(remote.message);
-        }
-        UpstreamSummary::NoUpstream => {
-            no_upstream = true;
-            parts.push("no upstream".to_string());
-        }
-        UpstreamSummary::NoRemote => {
-            no_remote = true;
-            parts.push("no remote".to_string());
-        }
+    if let Some(summary) = upstream.message() {
+        parts.push(summary.to_string());
     }
 
     let mut message = parts.join(" | ");
@@ -515,11 +504,7 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
     FleetStatus {
         status: working_status,
         message,
-        dirty,
-        no_remote,
-        no_upstream,
-        diverged,
-        ahead,
+        upstream,
     }
 }
 
@@ -598,16 +583,37 @@ fn status_detail_label(status: &str) -> &'static str {
     }
 }
 
-struct RemoteSummary {
-    message: String,
-    ahead: u32,
-    behind: u32,
-}
-
 enum UpstreamSummary {
-    Remote(RemoteSummary),
+    Remote {
+        message: String,
+        ahead: u32,
+        behind: u32,
+    },
     NoRemote,
     NoUpstream,
+    Unknown,
+}
+
+impl UpstreamSummary {
+    fn message(&self) -> Option<&str> {
+        match self {
+            UpstreamSummary::Remote { message, .. } => Some(message),
+            UpstreamSummary::NoRemote => Some("no remote"),
+            UpstreamSummary::NoUpstream => Some("no upstream"),
+            UpstreamSummary::Unknown => None,
+        }
+    }
+
+    fn is_diverged(&self) -> bool {
+        matches!(self, UpstreamSummary::Remote { ahead, behind, .. } if *ahead > 0 && *behind > 0)
+    }
+
+    fn ahead(&self) -> Option<u32> {
+        match self {
+            UpstreamSummary::Remote { ahead, .. } => Some(*ahead),
+            _ => None,
+        }
+    }
 }
 
 async fn summarize_upstream(repo_path: &std::path::Path) -> UpstreamSummary {
@@ -657,11 +663,11 @@ async fn summarize_upstream(repo_path: &std::path::Path) -> UpstreamSummary {
         format!("synced with {}", upstream.1)
     };
 
-    UpstreamSummary::Remote(RemoteSummary {
+    UpstreamSummary::Remote {
         message: remote,
         ahead,
         behind,
-    })
+    }
 }
 
 async fn summarize_missing_upstream(repo_path: &std::path::Path) -> UpstreamSummary {
