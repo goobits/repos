@@ -173,7 +173,16 @@ fn format_drift_summary_item(status: &SubrepoStatus, lines: &mut Vec<String>) {
     };
 
     let target_commit = latest_clean.map_or(&latest.short_hash, |t| &t.short_hash);
-    let package_label = package_drift_label(status);
+    let scoped_suffix = format!("/@goobits/{}", status.name);
+    let package_label = if status
+        .instances
+        .iter()
+        .any(|instance| instance.relative_path.contains(&scoped_suffix))
+    {
+        format!("@goobits/{}", status.name)
+    } else {
+        format!("pkg:{}", status.name)
+    };
     lines.push(format!(
         "  {:22} {:>2} copies  → repos nested sync {} --to {}",
         truncate_text(&package_label, 22),
@@ -274,19 +283,6 @@ fn instance_location(instance: &SubrepoInstance) -> String {
                 format!("{}/{}", instance.parent_repo, relative_path)
             }
         }
-    }
-}
-
-fn package_drift_label(status: &SubrepoStatus) -> String {
-    let scoped_suffix = format!("/@goobits/{}", status.name);
-    if status
-        .instances
-        .iter()
-        .any(|instance| instance.relative_path.contains(&scoped_suffix))
-    {
-        format!("@goobits/{}", status.name)
-    } else {
-        format!("pkg:{}", status.name)
     }
 }
 
