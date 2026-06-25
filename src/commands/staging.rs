@@ -24,6 +24,67 @@ const UNSTAGING_MESSAGE: &str = "unstaging...";
 const STATUS_MESSAGE: &str = "checking status...";
 const COMMITTING_MESSAGE: &str = "committing...";
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StatusFilters {
+    pub needs_work: bool,
+    pub dirty: bool,
+    pub no_remote: bool,
+    pub no_upstream: bool,
+    pub failed: bool,
+    pub skipped: bool,
+}
+
+impl StatusFilters {
+    fn is_empty(self) -> bool {
+        !self.needs_work
+            && !self.dirty
+            && !self.no_remote
+            && !self.no_upstream
+            && !self.failed
+            && !self.skipped
+    }
+}
+
+struct FleetStatus {
+    status: Status,
+    message: String,
+    dirty: bool,
+    no_remote: bool,
+    no_upstream: bool,
+    diverged: bool,
+    ahead: u32,
+}
+
+impl FleetStatus {
+    fn matches_filters(&self, filters: StatusFilters) -> bool {
+        if filters.is_empty() {
+            return true;
+        }
+
+        (filters.needs_work && self.needs_work())
+            || (filters.dirty && self.dirty)
+            || (filters.no_remote && self.no_remote)
+            || (filters.no_upstream && self.no_upstream)
+            || (filters.failed && self.failed())
+            || (filters.skipped && self.skipped_for_push())
+    }
+
+    fn needs_work(&self) -> bool {
+        self.dirty || self.no_remote || self.no_upstream || self.diverged || self.failed()
+    }
+
+    fn failed(&self) -> bool {
+        matches!(
+            self.status,
+            Status::Error | Status::StagingError | Status::CommitError | Status::PullError
+        )
+    }
+
+    fn skipped_for_push(&self) -> bool {
+        !self.failed() && !self.diverged && (self.no_remote || self.no_upstream || self.ahead == 0)
+    }
+}
+
 /// Handles the repository stage command
 pub async fn handle_stage_command(pattern: String) -> Result<()> {
     // Set terminal title to indicate repos is running
@@ -113,7 +174,10 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
 }
 
 /// Handles the repository staging status command
-pub async fn handle_staging_status_command(targets: Vec<String>) -> Result<()> {
+pub async fn handle_staging_status_command(
+    targets: Vec<String>,
+    filters: StatusFilters,
+) -> Result<()> {
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos status");
 
@@ -153,7 +217,7 @@ pub async fn handle_staging_status_command(targets: Vec<String>) -> Result<()> {
         };
 
     // Process all repositories concurrently for status
-    process_status_repositories(context).await;
+    process_status_repositories(context, filters).await;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos status");
@@ -317,21 +381,28 @@ async fn process_staging_repositories(
 }
 
 /// Processes all repositories concurrently for status checking
-async fn process_status_repositories(context: crate::core::ProcessingContext) {
+async fn process_status_repositories(
+    context: crate::core::ProcessingContext,
+    filters: StatusFilters,
+) {
     use crate::core::{acquire_semaphore_permit, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
     if context.repositories.len() == 1 {
         if let Some((repo_name, repo_path)) = context.repositories.first() {
-            let (status, message) = get_fleet_status(repo_path, true).await;
-            println!(
-                "{} {:width$} {:<12}   {}",
-                status.symbol(),
-                repo_name,
-                status.text(),
-                message,
-                width = context.max_name_length
-            );
+            let status = get_fleet_status(repo_path, true).await;
+            if status.matches_filters(filters) {
+                println!(
+                    "{} {:width$} {:<12}   {}",
+                    status.status.symbol(),
+                    repo_name,
+                    status.status.text(),
+                    status.message,
+                    width = context.max_name_length
+                );
+            } else {
+                println!("No repositories matched the requested status filters.");
+            }
             println!();
         }
         return;
@@ -361,15 +432,19 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let (status, message) = get_fleet_status(repo_path, false).await;
+            let status = get_fleet_status(repo_path, false).await;
+            if !status.matches_filters(filters) {
+                progress_bar.finish_and_clear();
+                return;
+            }
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
-                status.symbol(),
+                status.status.symbol(),
                 repo_name,
                 width = max_name_length
             ));
-            progress_bar.set_message(format!("{:<12}   {}", status.text(), message));
+            progress_bar.set_message(format!("{:<12}   {}", status.status.text(), status.message));
             progress_bar.finish();
         };
 
@@ -383,14 +458,25 @@ async fn process_status_repositories(context: crate::core::ProcessingContext) {
     println!();
 }
 
-async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> (Status, String) {
+async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> FleetStatus {
     use crate::git::operations::run_git;
 
     let status_result = get_staging_status(repo_path).await;
     let (working_status, mut parts, details) = match status_result {
         Ok((stdout, _)) => summarize_worktree(&stdout, show_details),
-        Err(e) => return (Status::StagingError, format!("status failed: {e}")),
+        Err(e) => {
+            return FleetStatus {
+                status: Status::StagingError,
+                message: format!("status failed: {e}"),
+                dirty: false,
+                no_remote: false,
+                no_upstream: false,
+                diverged: false,
+                ahead: 0,
+            };
+        }
     };
+    let dirty = working_status == Status::Dirty;
 
     let branch = match run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
         Ok((true, branch, _)) => branch,
@@ -398,9 +484,26 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> (S
     };
     parts.insert(0, format!("branch {branch}"));
 
-    match summarize_upstream(repo_path).await {
-        Some(remote) => parts.push(remote),
-        None => parts.push("no upstream".to_string()),
+    let upstream = summarize_upstream(repo_path).await;
+    let mut no_remote = false;
+    let mut no_upstream = false;
+    let mut diverged = false;
+    let mut ahead = 0;
+
+    match upstream {
+        UpstreamSummary::Remote(remote) => {
+            ahead = remote.ahead;
+            diverged = remote.ahead > 0 && remote.behind > 0;
+            parts.push(remote.message);
+        }
+        UpstreamSummary::NoUpstream => {
+            no_upstream = true;
+            parts.push("no upstream".to_string());
+        }
+        UpstreamSummary::NoRemote => {
+            no_remote = true;
+            parts.push("no remote".to_string());
+        }
     }
 
     let mut message = parts.join(" | ");
@@ -409,7 +512,15 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> (S
         message.push_str(&details.join("\n"));
     }
 
-    (working_status, message)
+    FleetStatus {
+        status: working_status,
+        message,
+        dirty,
+        no_remote,
+        no_upstream,
+        diverged,
+        ahead,
+    }
 }
 
 fn summarize_worktree(stdout: &str, show_details: bool) -> (Status, Vec<String>, Vec<String>) {
@@ -487,14 +598,29 @@ fn status_detail_label(status: &str) -> &'static str {
     }
 }
 
-async fn summarize_upstream(repo_path: &std::path::Path) -> Option<String> {
+struct RemoteSummary {
+    message: String,
+    ahead: u32,
+    behind: u32,
+}
+
+enum UpstreamSummary {
+    Remote(RemoteSummary),
+    NoRemote,
+    NoUpstream,
+}
+
+async fn summarize_upstream(repo_path: &std::path::Path) -> UpstreamSummary {
     use crate::git::operations::run_git;
 
     let upstream = run_git(repo_path, &["rev-parse", "--abbrev-ref", "@{upstream}"])
         .await
-        .ok()?;
+        .ok();
+    let Some(upstream) = upstream else {
+        return summarize_missing_upstream(repo_path).await;
+    };
     if !upstream.0 {
-        return None;
+        return summarize_missing_upstream(repo_path).await;
     }
 
     let ahead = run_git(repo_path, &["rev-list", "--count", "HEAD", "^@{upstream}"])
@@ -531,7 +657,20 @@ async fn summarize_upstream(repo_path: &std::path::Path) -> Option<String> {
         format!("synced with {}", upstream.1)
     };
 
-    Some(remote)
+    UpstreamSummary::Remote(RemoteSummary {
+        message: remote,
+        ahead,
+        behind,
+    })
+}
+
+async fn summarize_missing_upstream(repo_path: &std::path::Path) -> UpstreamSummary {
+    use crate::git::operations::run_git;
+
+    match run_git(repo_path, &["remote"]).await {
+        Ok((true, remotes, _)) if !remotes.trim().is_empty() => UpstreamSummary::NoUpstream,
+        _ => UpstreamSummary::NoRemote,
+    }
 }
 
 /// Handles the repository commit command

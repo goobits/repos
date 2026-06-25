@@ -23,7 +23,7 @@ use commands::publish::handle_publish_command;
 use commands::save::handle_save_command;
 use commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
-    handle_unstage_command,
+    handle_unstage_command, StatusFilters,
 };
 use commands::sync::{handle_pull_command, handle_push_command, handle_sync_command};
 use git::ConfigArgs;
@@ -143,6 +143,24 @@ enum Commands {
     },
     /// Show staging status across all repositories, or only specific repositories/paths
     Status {
+        /// Show repositories that need action before sync/push is clean
+        #[arg(long)]
+        needs_work: bool,
+        /// Show repositories with uncommitted worktree changes
+        #[arg(long)]
+        dirty: bool,
+        /// Show repositories without a configured remote
+        #[arg(long)]
+        no_remote: bool,
+        /// Show repositories without an upstream branch
+        #[arg(long)]
+        no_upstream: bool,
+        /// Show repositories where status inspection failed
+        #[arg(long)]
+        failed: bool,
+        /// Show repositories that would be skipped by a push because there is nothing pushable
+        #[arg(long)]
+        skipped: bool,
         /// Repository names or paths to inspect
         targets: Vec<String>,
     },
@@ -357,7 +375,25 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Stage { pattern }) => handle_stage_command(pattern.clone()).await,
         Some(Commands::Unstage { pattern }) => handle_unstage_command(pattern.clone()).await,
-        Some(Commands::Status { targets }) => handle_staging_status_command(targets.clone()).await,
+        Some(Commands::Status {
+            needs_work,
+            dirty,
+            no_remote,
+            no_upstream,
+            failed,
+            skipped,
+            targets,
+        }) => {
+            let filters = StatusFilters {
+                needs_work: *needs_work,
+                dirty: *dirty,
+                no_remote: *no_remote,
+                no_upstream: *no_upstream,
+                failed: *failed,
+                skipped: *skipped,
+            };
+            handle_staging_status_command(targets.clone(), filters).await
+        }
         Some(Commands::Commit {
             message,
             include_empty,

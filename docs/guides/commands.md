@@ -58,6 +58,8 @@ Show repository state across the fleet.
 
 ```bash
 repos status
+repos status --needs-work
+repos status --skipped
 repos status tunajack.com
 repos status ./packages/logger
 ```
@@ -66,6 +68,17 @@ Pass one or more repository names or paths to inspect only those repositories.
 
 Reports branch, worktree state, and upstream status per repository.
 When exactly one repository is checked, dirty files are listed below the summary.
+
+Options:
+
+| Option | Description |
+|---|---|
+| `--needs-work` | Show dirty, missing-remote, missing-upstream, diverged, or failed repos |
+| `--dirty` | Show repos with uncommitted worktree changes |
+| `--no-remote` | Show repos without a configured remote |
+| `--no-upstream` | Show repos without an upstream branch |
+| `--failed` | Show repos where status inspection failed |
+| `--skipped` | Show repos that would be skipped by `repos push` because there is nothing pushable |
 
 ### `repos save`
 
@@ -181,6 +194,10 @@ Push unpushed commits.
 repos push
 repos push --auto-upstream
 ```
+
+The final report recommends real follow-up filters such as
+`repos status --failed`, `repos status --skipped`, and
+`repos status --needs-work` when a push cannot finish cleanly.
 
 Options:
 

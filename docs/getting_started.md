@@ -24,10 +24,12 @@ Run `repos` in a directory tree that contains Git repositories.
 
 ```bash
 repos status
+repos status --needs-work
 ```
 
 Use this first when you want to know which repositories are clean, dirty, staged,
-untracked, ahead, or behind.
+untracked, ahead, or behind. Use `--needs-work`, `--dirty`, `--failed`, or
+`--skipped` when you want to focus on a specific follow-up bucket.
 
 ### Save Work
 
@@ -55,9 +57,9 @@ drift. Dirty repositories are skipped instead of being stashed implicitly.
 Example drift summary:
 
 ```text
-▌ Nested Drift
-! 1 nested repo group is at different commits
-  auth                2 copies  → repos nested sync auth --to 105ce4e
+▌ Nested Package Drift
+! 1 nested package group is at different commits
+  pkg:auth            2 copies  → repos nested sync auth --to 105ce4e
     ✓ target app                            105ce4e
     ↓ update website                        2f13c23
 ↳ Run `repos nested status` for per-copy details.

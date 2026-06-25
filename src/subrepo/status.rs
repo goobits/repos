@@ -132,10 +132,10 @@ fn format_drift_summary_lines(
 
     let mut lines = Vec::new();
     if include_section_header {
-        lines.push(format!("{BOLD_PURPLE}▌ Nested Drift{RESET}"));
+        lines.push(format!("{BOLD_PURPLE}▌ Nested Package Drift{RESET}"));
     } else {
-        lines.push(format!("{BOLD_PURPLE}  Nested Drift{RESET}"));
-        lines.push(paint(DIM, "  ────────────"));
+        lines.push(format!("{BOLD_PURPLE}  Nested Package Drift{RESET}"));
+        lines.push(paint(DIM, "  ────────────────────"));
     }
 
     let group_label = if drifted.len() == 1 {
@@ -144,7 +144,7 @@ fn format_drift_summary_lines(
         "groups are"
     };
     lines.push(format!(
-        "{YELLOW}!{RESET} {} nested repo {group_label} at different commits",
+        "{YELLOW}!{RESET} {} nested package {group_label} at different commits",
         drifted.len()
     ));
 
@@ -173,9 +173,10 @@ fn format_drift_summary_item(status: &SubrepoStatus, lines: &mut Vec<String>) {
     };
 
     let target_commit = latest_clean.map_or(&latest.short_hash, |t| &t.short_hash);
+    let package_label = package_drift_label(status);
     lines.push(format!(
-        "  {:18} {:>2} copies  → repos nested sync {} --to {}",
-        truncate_text(&status.name, 18),
+        "  {:22} {:>2} copies  → repos nested sync {} --to {}",
+        truncate_text(&package_label, 22),
         status.instances.len(),
         status.name,
         target_commit
@@ -273,6 +274,19 @@ fn instance_location(instance: &SubrepoInstance) -> String {
                 format!("{}/{}", instance.parent_repo, relative_path)
             }
         }
+    }
+}
+
+fn package_drift_label(status: &SubrepoStatus) -> String {
+    let scoped_suffix = format!("/@goobits/{}", status.name);
+    if status
+        .instances
+        .iter()
+        .any(|instance| instance.relative_path.contains(&scoped_suffix))
+    {
+        format!("@goobits/{}", status.name)
+    } else {
+        format!("pkg:{}", status.name)
     }
 }
 

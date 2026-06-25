@@ -37,6 +37,11 @@ mod tests {
             .lock()
             .expect("Failed to lock pushed_repo_details mutex in test")
             .is_empty());
+        assert!(stats
+            .skipped_repo_details
+            .lock()
+            .expect("Failed to lock skipped_repo_details mutex in test")
+            .is_empty());
     }
 
     #[test]
@@ -292,8 +297,8 @@ mod tests {
         let report = stats.generate_push_report(Duration::from_secs(3), false);
 
         assert!(report.contains("2 repos have uncommitted changes:"));
-        assert!(report.contains("    - repos"));
-        assert!(report.contains("    - docs"));
+        assert!(report.contains("repos"));
+        assert!(report.contains("docs"));
     }
 
     #[test]

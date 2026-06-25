@@ -13,7 +13,7 @@ use common::{is_git_available, TestRepoBuilder};
 
 use goobits_repos::commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
-    handle_unstage_command,
+    handle_unstage_command, StatusFilters,
 };
 use goobits_repos::commands::sync::{
     handle_pull_command, handle_push_command, handle_sync_command,
@@ -714,7 +714,7 @@ async fn test_staging_status_command_with_changes() {
     env::set_current_dir(repo.path()).expect("Failed to change dir");
 
     // Run status command
-    let result = handle_staging_status_command(Vec::new()).await;
+    let result = handle_staging_status_command(Vec::new(), StatusFilters::default()).await;
 
     // Restore original directory before repo cleanup
     let _ = env::set_current_dir(&original_dir);
@@ -748,7 +748,7 @@ async fn test_staging_status_command_with_no_changes() {
     env::set_current_dir(repo.path()).expect("Failed to change dir");
 
     // Run status command
-    let result = handle_staging_status_command(Vec::new()).await;
+    let result = handle_staging_status_command(Vec::new(), StatusFilters::default()).await;
 
     // Restore original directory before repo cleanup
     let _ = env::set_current_dir(&original_dir);
