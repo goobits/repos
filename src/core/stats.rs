@@ -39,7 +39,7 @@ pub struct SyncStatistics {
     pub no_remote_repos: Mutex<Vec<(String, String)>>,      // (repo_name, repo_path)
     pub uncommitted_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
     pub pushed_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
-    pub skipped_repo_details: Mutex<Vec<(String, String, String)>>, // (repo_name, repo_path, reason)
+    pub skipped_reasons: Mutex<Vec<String>>,
 }
 
 impl Default for SyncStatistics {
@@ -66,7 +66,7 @@ impl SyncStatistics {
             no_remote_repos: Mutex::new(Vec::new()),
             uncommitted_repos: Mutex::new(Vec::new()),
             pushed_repo_details: Mutex::new(Vec::new()),
-            skipped_repo_details: Mutex::new(Vec::new()),
+            skipped_reasons: Mutex::new(Vec::new()),
         }
     }
 
@@ -112,11 +112,11 @@ impl SyncStatistics {
             }
             Status::Skip | Status::ConfigSkipped | Status::NoChanges | Status::Dirty => {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
-                self.record_skipped_repo(repo_name, repo_path, skipped_reason(status, message));
+                self.record_skipped_reason(repo_name, skipped_reason(status, message));
             }
             Status::NoUpstream => {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
-                self.record_skipped_repo(repo_name, repo_path, "no upstream");
+                self.record_skipped_reason(repo_name, "no upstream");
                 if let Ok(mut guard) = self.no_upstream_repos.lock() {
                     guard.push((repo_name.to_string(), repo_path.to_string()));
                 } else {
@@ -125,7 +125,7 @@ impl SyncStatistics {
             }
             Status::NoRemote => {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
-                self.record_skipped_repo(repo_name, repo_path, "missing remote");
+                self.record_skipped_reason(repo_name, "missing remote");
                 if let Ok(mut guard) = self.no_remote_repos.lock() {
                     guard.push((repo_name.to_string(), repo_path.to_string()));
                 } else {
@@ -172,13 +172,9 @@ impl SyncStatistics {
         }
     }
 
-    fn record_skipped_repo(&self, repo_name: &str, repo_path: &str, reason: &str) {
-        if let Ok(mut guard) = self.skipped_repo_details.lock() {
-            guard.push((
-                repo_name.to_string(),
-                repo_path.to_string(),
-                reason.to_string(),
-            ));
+    fn record_skipped_reason(&self, repo_name: &str, reason: &str) {
+        if let Ok(mut guard) = self.skipped_reasons.lock() {
+            guard.push(reason.to_string());
         } else {
             eprintln!("Warning: Failed to record skipped repo: {repo_name}");
         }
@@ -267,48 +263,12 @@ impl SyncStatistics {
         let skipped = self.skipped_repos.load(Ordering::Relaxed);
         let errors = self.error_repos.load(Ordering::Relaxed);
 
-        let pushed_details = match self.pushed_repo_details.lock() {
-            Ok(guard) => guard.clone(),
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for pushed_repo_details");
-                Vec::new()
-            }
-        };
-        let failed_repos = match self.failed_repos.lock() {
-            Ok(guard) => guard.clone(),
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for failed_repos");
-                Vec::new()
-            }
-        };
-        let no_upstream_repos = match self.no_upstream_repos.lock() {
-            Ok(guard) => guard.clone(),
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for no_upstream_repos");
-                Vec::new()
-            }
-        };
-        let no_remote_repos = match self.no_remote_repos.lock() {
-            Ok(guard) => guard.clone(),
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for no_remote_repos");
-                Vec::new()
-            }
-        };
-        let uncommitted_repos = match self.uncommitted_repos.lock() {
-            Ok(guard) => guard.clone(),
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for uncommitted_repos");
-                Vec::new()
-            }
-        };
-        let skipped_details = match self.skipped_repo_details.lock() {
-            Ok(guard) => guard.clone(),
-            Err(_) => {
-                eprintln!("Warning: Failed to acquire lock for skipped_repo_details");
-                Vec::new()
-            }
-        };
+        let pushed_details = clone_vec(&self.pushed_repo_details, "pushed_repo_details");
+        let failed_repos = clone_vec(&self.failed_repos, "failed_repos");
+        let no_upstream_repos = clone_vec(&self.no_upstream_repos, "no_upstream_repos");
+        let no_remote_repos = clone_vec(&self.no_remote_repos, "no_remote_repos");
+        let uncommitted_repos = clone_vec(&self.uncommitted_repos, "uncommitted_repos");
+        let skipped_reasons = clone_vec(&self.skipped_reasons, "skipped_reasons");
 
         let mut issue_rows = build_issue_rows(&failed_repos, &no_upstream_repos, &no_remote_repos);
         let issue_index = issue_rows
@@ -333,8 +293,6 @@ impl SyncStatistics {
         let mut lines = Vec::new();
         let pushed_repo_label = pluralize(pushed_repos, "repo", "repos");
         let pushed_commit_label = pluralize(pushed_commits, "commit", "commits");
-        let local_repo_label = pluralize(local_only.len() as u64, "repo", "repos");
-        let local_verb = if local_only.len() == 1 { "has" } else { "have" };
 
         lines.push(format!("{BOLD_BLUE}repos push{RESET}"));
         lines.push(format!("{GREEN}✓{RESET} Completed in {duration_secs:.1}s"));
@@ -370,76 +328,22 @@ impl SyncStatistics {
         }
         lines.push(String::new());
 
-        if errors > 0 {
-            lines.push(format!("{BOLD_PURPLE}▌ Failed{RESET}"));
-            if failed_repos.is_empty() {
-                lines.push(format!("  {RED}!{RESET} {errors} repos failed"));
-                lines.push(format!("    {DIM}↳ Run `repos status --failed`{RESET}"));
-            } else {
-                for (repo_name, repo_path, error) in &failed_repos {
-                    lines.push(format!(
-                        "  {RED}!{RESET} {:24} {}",
-                        truncate_text(repo_name, 24),
-                        compact_push_error(error)
-                    ));
-                    lines.push(format!(
-                        "    {DIM}↳ path: {}{RESET}",
-                        format_relative_repo_path(repo_path)
-                    ));
-                    lines.push(format!(
-                        "    {DIM}↳ next: {}{RESET}",
-                        next_for_push_error(error)
-                    ));
-                }
-            }
-            lines.push(String::new());
-        }
+        append_failed_section(&mut lines, errors, &failed_repos);
 
         if skipped > 0 {
-            lines.push(format!("{BOLD_PURPLE}▌ Skipped{RESET}"));
-            lines.push(format!("  {DIM}·{RESET} {skipped} repos skipped"));
-            let skipped_counts = summarize_skipped_reasons(&skipped_details);
-            if skipped_counts.is_empty() {
-                lines.push(format!("    {DIM}↳ Run `repos status --skipped`{RESET}"));
-            } else {
-                for (reason, count) in skipped_counts {
-                    lines.push(format!("    {DIM}· {count} {reason}{RESET}"));
-                }
-                lines.push(format!("    {DIM}↳ Run `repos status --skipped`{RESET}"));
-            }
-            lines.push(String::new());
+            append_skipped_section(&mut lines, skipped, &skipped_reasons);
         }
 
         if !issue_rows.is_empty() || !extra_needs_work_lines.is_empty() {
-            let issue_label = pluralize(issue_count as u64, "repo", "repos");
-            let local_label = pluralize(local_issue_count as u64, "dirty repo", "dirty repos");
-            let group_label = pluralize(
-                extra_needs_work_count as u64,
-                "nested package group",
-                "nested package groups",
-            );
-            let mut detail_parts = Vec::new();
-            if issue_count > 0 {
-                detail_parts.push(format!("{issue_count} {issue_label}"));
-            }
-            if extra_needs_work_count > 0 {
-                detail_parts.push(format!("{extra_needs_work_count} {group_label}"));
-            }
-            if local_issue_count > 0 {
-                detail_parts.push(format!("{local_issue_count} {local_label}"));
-            }
-            let detail = if detail_parts.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    " {}",
-                    paint(
-                        DIM,
-                        &format!("{} total: {}", needs_work, detail_parts.join(" + "))
-                    )
+            lines.push(format!(
+                "{BOLD_PURPLE}▌ Needs Work{RESET}{}",
+                format_needs_work_detail(
+                    needs_work,
+                    issue_count,
+                    extra_needs_work_count,
+                    local_issue_count
                 )
-            };
-            lines.push(format!("{BOLD_PURPLE}▌ Needs Work{RESET}{detail}"));
+            ));
             if !issue_rows.is_empty() {
                 lines.extend(format_issue_table(&issue_rows));
             }
@@ -453,30 +357,7 @@ impl SyncStatistics {
         }
 
         if local_issue_count > 0 {
-            lines.push(format!("{BOLD_PURPLE}▌ Local Changes{RESET}"));
-            let local_names = local_only
-                .iter()
-                .map(|(repo_name, _)| repo_name.as_str())
-                .collect::<Vec<_>>();
-            if local_names.len() == 1 {
-                lines.push(format!(
-                    "  {YELLOW}!{RESET} 1 repo has uncommitted changes: {}",
-                    local_names[0]
-                ));
-            } else if local_names.len() > 1 {
-                lines.push(format!(
-                    "  {YELLOW}!{RESET} {} {local_repo_label} {local_verb} uncommitted changes:",
-                    local_issue_count
-                ));
-                for repo_name in local_names {
-                    lines.push(format!("    {DIM}·{RESET} {repo_name}"));
-                }
-            } else {
-                lines.push(format!(
-                    "  {YELLOW}!{RESET} {local_issue_count} {local_repo_label} {local_verb} uncommitted changes"
-                ));
-                lines.push(format!("    {DIM}↳ Run `repos status` for details.{RESET}"));
-            }
+            append_local_changes_section(&mut lines, &local_only);
             if show_changes {
                 lines.extend(format_local_changes(&local_only));
             }
@@ -484,27 +365,13 @@ impl SyncStatistics {
         }
 
         if needs_work > 0 || errors > 0 || skipped > 0 {
-            lines.push(format!("{BOLD_PURPLE}▌ Next{RESET}"));
-            let mut next_index = 1;
-            if errors > 0 {
-                lines.push(format!("  {next_index}. `repos status --failed`"));
-                next_index += 1;
-            }
-            if skipped > 0 {
-                lines.push(format!("  {next_index}. `repos status --skipped`"));
-                next_index += 1;
-            }
-            if extra_needs_work_count > 0 {
-                lines.push(format!("  {next_index}. Clean dirty nested package copies, then run `repos nested status`"));
-                next_index += 1;
-                lines.push(format!(
-                    "  {next_index}. Run the listed `repos nested sync ...` commands"
-                ));
-                next_index += 1;
-            }
-            if !issue_rows.is_empty() || local_issue_count > 0 {
-                lines.push(format!("  {next_index}. `repos status --needs-work`"));
-            }
+            append_next_section(
+                &mut lines,
+                errors,
+                skipped,
+                extra_needs_work_count,
+                !issue_rows.is_empty() || local_issue_count > 0,
+            );
         }
 
         while lines.last().is_some_and(String::is_empty) {
@@ -731,6 +598,164 @@ impl IssueRow {
     }
 }
 
+fn clone_vec<T: Clone>(values: &Mutex<Vec<T>>, label: &str) -> Vec<T> {
+    match values.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => {
+            eprintln!("Warning: Failed to acquire lock for {label}");
+            Vec::new()
+        }
+    }
+}
+
+fn append_failed_section(
+    lines: &mut Vec<String>,
+    errors: u64,
+    failed_repos: &[(String, String, String)],
+) {
+    if errors == 0 {
+        return;
+    }
+
+    lines.push(format!("{BOLD_PURPLE}▌ Failed{RESET}"));
+    if failed_repos.is_empty() {
+        lines.push(format!("  {RED}!{RESET} {errors} repos failed"));
+        lines.push(format!("    {DIM}↳ Run `repos status --failed`{RESET}"));
+    } else {
+        for (repo_name, repo_path, error) in failed_repos {
+            lines.push(format!(
+                "  {RED}!{RESET} {:24} {}",
+                truncate_text(repo_name, 24),
+                compact_push_error(error)
+            ));
+            lines.push(format!(
+                "    {DIM}↳ path: {}{RESET}",
+                format_relative_repo_path(repo_path)
+            ));
+            lines.push(format!(
+                "    {DIM}↳ next: {}{RESET}",
+                next_for_push_error(error)
+            ));
+        }
+    }
+    lines.push(String::new());
+}
+
+fn append_skipped_section(lines: &mut Vec<String>, skipped: u64, skipped_reasons: &[String]) {
+    lines.push(format!("{BOLD_PURPLE}▌ Skipped{RESET}"));
+    lines.push(format!("  {DIM}·{RESET} {skipped} repos skipped"));
+    for (reason, count) in summarize_skipped_reasons(skipped_reasons) {
+        lines.push(format!("    {DIM}· {count} {reason}{RESET}"));
+    }
+    lines.push(format!("    {DIM}↳ Run `repos status --skipped`{RESET}"));
+    lines.push(String::new());
+}
+
+fn format_needs_work_detail(
+    needs_work: usize,
+    issue_count: usize,
+    extra_needs_work_count: usize,
+    local_issue_count: usize,
+) -> String {
+    let mut detail_parts = Vec::new();
+    if issue_count > 0 {
+        detail_parts.push(format!(
+            "{issue_count} {}",
+            pluralize(issue_count as u64, "repo", "repos")
+        ));
+    }
+    if extra_needs_work_count > 0 {
+        detail_parts.push(format!(
+            "{extra_needs_work_count} {}",
+            pluralize(
+                extra_needs_work_count as u64,
+                "nested package group",
+                "nested package groups"
+            )
+        ));
+    }
+    if local_issue_count > 0 {
+        detail_parts.push(format!(
+            "{local_issue_count} {}",
+            pluralize(local_issue_count as u64, "dirty repo", "dirty repos")
+        ));
+    }
+
+    if detail_parts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {}",
+            paint(
+                DIM,
+                &format!("{needs_work} total: {}", detail_parts.join(" + "))
+            )
+        )
+    }
+}
+
+fn append_local_changes_section(lines: &mut Vec<String>, local_only: &[(String, String)]) {
+    let local_names = local_only
+        .iter()
+        .map(|(repo_name, _)| repo_name.as_str())
+        .collect::<Vec<_>>();
+    let local_issue_count = local_names.len();
+
+    lines.push(format!("{BOLD_PURPLE}▌ Local Changes{RESET}"));
+    if local_issue_count == 1 {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} 1 repo has uncommitted changes: {}",
+            local_names[0]
+        ));
+    } else {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} {} {} have uncommitted changes:",
+            local_issue_count,
+            pluralize(local_issue_count as u64, "repo", "repos")
+        ));
+        for repo_name in local_names {
+            lines.push(format!("    {DIM}·{RESET} {repo_name}"));
+        }
+    }
+}
+
+fn append_next_section(
+    lines: &mut Vec<String>,
+    errors: u64,
+    skipped: u64,
+    extra_needs_work_count: usize,
+    has_repo_work: bool,
+) {
+    let mut next_index = 1;
+    lines.push(format!("{BOLD_PURPLE}▌ Next{RESET}"));
+    if errors > 0 {
+        push_next_step(lines, &mut next_index, "`repos status --failed`");
+    }
+    if skipped > 0 {
+        push_next_step(lines, &mut next_index, "`repos status --skipped`");
+    }
+    if extra_needs_work_count > 0 {
+        push_next_step(
+            lines,
+            &mut next_index,
+            "Clean dirty nested package copies, then run `repos nested status`",
+        );
+        push_next_step(
+            lines,
+            &mut next_index,
+            "Run the listed `repos nested sync ...` commands",
+        );
+    }
+    if has_repo_work {
+        push_next_step(lines, &mut next_index, "`repos status --needs-work`");
+    }
+}
+
+fn push_next_step(lines: &mut Vec<String>, next_index: &mut usize, step: &str) {
+    lines.push(format!("  {next_index}. {step}"));
+    *next_index += 1;
+}
+
 fn build_issue_rows(
     failed_repos: &[(String, String, String)],
     no_upstream_repos: &[(String, String)],
@@ -926,9 +951,9 @@ fn skipped_reason(status: &Status, message: &str) -> &'static str {
     }
 }
 
-fn summarize_skipped_reasons(skipped_details: &[(String, String, String)]) -> Vec<(String, usize)> {
+fn summarize_skipped_reasons(skipped_reasons: &[String]) -> Vec<(String, usize)> {
     let mut counts = HashMap::<String, usize>::new();
-    for (_, _, reason) in skipped_details {
+    for reason in skipped_reasons {
         *counts.entry(reason.clone()).or_default() += 1;
     }
 

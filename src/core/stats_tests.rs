@@ -38,9 +38,9 @@ mod tests {
             .expect("Failed to lock pushed_repo_details mutex in test")
             .is_empty());
         assert!(stats
-            .skipped_repo_details
+            .skipped_reasons
             .lock()
-            .expect("Failed to lock skipped_repo_details mutex in test")
+            .expect("Failed to lock skipped_reasons mutex in test")
             .is_empty());
     }
 
