@@ -1,31 +1,11 @@
 use anyhow::Result;
 use goobits_repos::subrepo::{sync::sync_subrepo_with_report, SubrepoInstance, ValidationReport};
 use std::collections::HashMap;
-use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
 mod common;
-use common::git::{create_test_commit, setup_git_repo};
-
-fn clone_repo(source: &Path, dest: &Path) -> Result<()> {
-    let output = Command::new("git")
-        .args(["clone", source.to_str().unwrap(), dest.to_str().unwrap()])
-        .output()?;
-
-    if !output.status.success() {
-        anyhow::bail!("Failed to clone repo");
-    }
-    Ok(())
-}
-
-fn get_head_commit(path: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(["-C", path.to_str().unwrap(), "rev-parse", "HEAD"])
-        .output()?;
-
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
-}
+use common::git::{clone_repo, create_test_commit, get_head_commit, setup_git_repo};
 
 #[test]
 fn test_sync_subrepo_success() -> Result<()> {

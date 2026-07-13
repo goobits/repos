@@ -5,7 +5,7 @@
 //!
 //! ## Core Features
 //!
-//! - **Fast Discovery**: Parallel repository scanning using `ignore` and `rayon`.
+//! - **Fast Discovery**: Parallel repository scanning using `ignore`.
 //! - **Concurrent Operations**: Push, pull, and fetch operations across hundreds of repos.
 //! - **Package Management**: Automated publishing for npm, Cargo, and PyPI.
 //! - **Security Auditing**: Secret scanning and repository hygiene checks.

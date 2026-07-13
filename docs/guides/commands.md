@@ -303,10 +303,15 @@ Checks:
 
 - Detached HEADs.
 - Missing remotes.
+- Access to every configured remote (`git ls-remote --heads`).
 - Missing upstream tracking.
 - Dirty worktrees.
 - Conflicts.
 - Nested repository drift.
+
+`doctor` is read-only and exits nonzero when it finds any blocker. Git
+credential prompts are disabled, so an inaccessible HTTPS credential or SSH key
+is reported instead of waiting for input.
 
 ## Advanced
 
@@ -330,7 +335,7 @@ Subcommands:
 | `validate` | Validate nested repository setup |
 | `status` | Show nested drift |
 | `sync` | Sync a nested repository to a commit |
-| `update` | Update a nested repository to latest remote commit |
+| `update` | Fast-forward a nested repository to the latest remote commit; skip divergent local commits |
 
 ### `repos config`
 

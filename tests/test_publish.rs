@@ -3,7 +3,8 @@ use std::env;
 use std::fs;
 
 mod common;
-use common::{is_git_available, TestRepoBuilder};
+use common::fixtures::TestRepoBuilder;
+use common::git::is_git_available;
 
 #[tokio::test]
 async fn test_publish_dry_run_cargo() {

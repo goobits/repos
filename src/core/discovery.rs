@@ -43,7 +43,12 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
     let walker = WalkBuilder::new(search_path)
         .follow_links(true) // Follow symlinks to find symlinked repos
         .max_depth(Some(MAX_SCAN_DEPTH)) // Limit depth to avoid deep recursion
-        .threads(num_cpus::get().min(8)) // Use up to 8 threads for directory walking
+        .threads(
+            std::thread::available_parallelism()
+                .map(std::num::NonZeroUsize::get)
+                .unwrap_or(1)
+                .min(8),
+        )
         .filter_entry(|entry| {
             let file_name = entry.file_name().to_str().unwrap_or("");
 
@@ -171,91 +176,6 @@ pub async fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_dashmap_concurrent_access() {
-        // Test that DashMap handles concurrent access correctly
-        let map: Arc<DashMap<String, i32>> = Arc::new(DashMap::new());
-
-        // Simulate concurrent inserts from multiple threads
-        let handles: Vec<_> = (0..10)
-            .map(|i| {
-                let map_clone = Arc::clone(&map);
-                std::thread::spawn(move || {
-                    for j in 0..100 {
-                        let key = format!("key-{}-{}", i, j);
-                        map_clone.insert(key, i * 1000 + j);
-                    }
-                })
-            })
-            .collect();
-
-        // Wait for all threads to complete
-        for handle in handles {
-            handle
-                .join()
-                .expect("Test thread panicked during concurrent insert test");
-        }
-
-        // Verify all 1000 items were inserted (10 threads * 100 items)
-        assert_eq!(map.len(), 1000, "All concurrent inserts should succeed");
-    }
-
-    #[test]
-    fn test_dashmap_no_race_conditions() {
-        // Test that DashMap entry API provides atomic operations
-        let map: Arc<DashMap<String, i32>> = Arc::new(DashMap::new());
-
-        // Multiple threads incrementing the same counter
-        let handles: Vec<_> = (0..10)
-            .map(|_| {
-                let map_clone = Arc::clone(&map);
-                std::thread::spawn(move || {
-                    for _ in 0..1000 {
-                        let mut entry = map_clone.entry("counter".to_string()).or_insert(0);
-                        *entry += 1;
-                    }
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            handle
-                .join()
-                .expect("Test thread panicked during race condition test");
-        }
-
-        // Should have exactly 10,000 (10 threads * 1,000 increments)
-        assert_eq!(
-            *map.get("counter")
-                .expect("Key 'counter' should exist in test map"),
-            10000,
-            "Counter should be atomic"
-        );
-    }
-
-    #[test]
-    fn test_path_deduplication_with_dashmap() {
-        use std::path::PathBuf;
-
-        let seen: Arc<DashMap<PathBuf, ()>> = Arc::new(DashMap::new());
-
-        let path1 = PathBuf::from("/test/repo1");
-        let path2 = PathBuf::from("/test/repo2");
-        let path1_dup = PathBuf::from("/test/repo1");
-
-        // First insert should return None (new entry)
-        assert!(seen.insert(path1.clone(), ()).is_none());
-
-        // Second insert of same path should return Some (existing entry)
-        assert!(seen.insert(path1_dup, ()).is_some());
-
-        // Different path should return None
-        assert!(seen.insert(path2, ()).is_none());
-
-        // Should have 2 unique paths
-        assert_eq!(seen.len(), 2);
-    }
 
     #[test]
     fn test_find_repos_from_path_deduplication() {

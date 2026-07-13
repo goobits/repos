@@ -8,11 +8,12 @@
 use goobits_repos::audit::fixes::FixOptions;
 use goobits_repos::audit::hygiene::report::HygieneStatus;
 use goobits_repos::audit::hygiene::{HygieneStatistics, HygieneViolation, ViolationType};
-use goobits_repos::audit::scanner::{AuditStatistics, SecretFinding, TruffleStatistics};
+use goobits_repos::audit::scanner::{SecretFinding, TruffleStatistics};
 use std::time::Duration;
 
 mod common;
-use common::{is_git_available, TestRepoBuilder};
+use common::fixtures::TestRepoBuilder;
+use common::git::is_git_available;
 
 // =====================================================================================
 // scanner.rs tests - TruffleHog secret scanning functionality
@@ -383,17 +384,6 @@ fn test_truffle_statistics_generate_detailed_report_empty() {
         report.trim().is_empty() || report.lines().count() < 3,
         "Empty stats should produce minimal report"
     );
-}
-
-#[test]
-fn test_audit_statistics_initialization() {
-    let stats = AuditStatistics::new();
-
-    assert_eq!(
-        stats.truffle_stats.total_repos_scanned, 0,
-        "TruffleStats should be initialized"
-    );
-    // HygieneStatistics are private, but we verify the structure exists
 }
 
 #[test]

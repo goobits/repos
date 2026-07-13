@@ -159,6 +159,56 @@ pub fn add_bare_remote(path: &Path, set_upstream: bool) -> Result<TempDir> {
     Ok(remote_dir)
 }
 
+/// Clones a repository and configures a local test identity.
+pub fn clone_repo(source: &Path, destination: &Path) -> Result<()> {
+    let clone = Command::new("git")
+        .args(["clone"])
+        .arg(source)
+        .arg(destination)
+        .output()?;
+    if !clone.status.success() {
+        anyhow::bail!(
+            "Failed to clone repository: {}",
+            String::from_utf8_lossy(&clone.stderr).trim()
+        );
+    }
+
+    for args in [
+        ["config", "user.name", "Test User"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "commit.gpgsign", "false"],
+    ] {
+        let config = Command::new("git")
+            .args(args)
+            .current_dir(destination)
+            .output()?;
+        if !config.status.success() {
+            anyhow::bail!(
+                "Failed to configure cloned repository: {}",
+                String::from_utf8_lossy(&config.stderr).trim()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Returns the current HEAD commit for a test repository.
+pub fn get_head_commit(path: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(path)
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to resolve HEAD: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+}
+
 /// Checks if git is available in the system
 pub fn is_git_available() -> bool {
     Command::new("git")

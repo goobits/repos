@@ -1,11 +1,8 @@
 //! Common test utilities and helpers
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)]
 
 pub mod fixtures;
 pub mod git;
-
-pub use self::fixtures::TestRepoBuilder;
-pub use self::git::{create_multiple_repos, is_git_available, setup_git_repo};
 
 use std::sync::OnceLock;
 use tokio::sync::{Mutex, MutexGuard};

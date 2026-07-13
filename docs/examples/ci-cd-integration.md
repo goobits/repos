@@ -18,9 +18,9 @@ jobs:
         with:
           fetch-depth: 0 # Important for history scanning
       - name: Install repos
-        run: curl -sSf https://raw.githubusercontent.com/goobits/repos/main/install.sh | sh
+        run: cargo install goobits-repos
       - name: Run Audit
-        run: repos audit --verify
+        run: repos audit --install-tools --verify
 ```
 
 ### Automated Publishing
@@ -44,7 +44,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Install repos
-        run: curl -sSf https://raw.githubusercontent.com/goobits/repos/main/install.sh | sh
+        run: cargo install goobits-repos
       - name: Publish all packages
         run: repos publish --all --tag
         env:
@@ -58,6 +58,6 @@ jobs:
 audit:
   image: rust:latest
   script:
-    - curl -sSf https://raw.githubusercontent.com/goobits/repos/main/install.sh | sh
-    - repos audit --verify
+    - cargo install goobits-repos
+    - repos audit --install-tools --verify
 ```

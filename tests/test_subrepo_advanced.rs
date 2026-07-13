@@ -4,48 +4,11 @@ use goobits_repos::subrepo::{
     ValidationReport,
 };
 use std::collections::HashMap;
-use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
 mod common;
-use common::git::{create_test_commit, setup_git_repo};
-
-fn clone_repo(source: &Path, dest: &Path) -> Result<()> {
-    let output = Command::new("git")
-        .args(["clone", source.to_str().unwrap(), dest.to_str().unwrap()])
-        .output()?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "Failed to clone repo: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(dest)
-        .output()?;
-    Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(dest)
-        .output()?;
-    Command::new("git")
-        .args(["config", "commit.gpgsign", "false"])
-        .current_dir(dest)
-        .output()?;
-
-    Ok(())
-}
-
-fn get_head_commit(path: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(["-C", path.to_str().unwrap(), "rev-parse", "HEAD"])
-        .output()?;
-
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
-}
+use common::git::{clone_repo, create_test_commit, get_head_commit, setup_git_repo};
 
 #[test]
 fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
@@ -116,7 +79,7 @@ fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
 }
 
 #[test]
-fn test_update_with_diverged_branches_fails_safely() -> Result<()> {
+fn test_update_skips_diverged_local_commits() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
 
@@ -160,18 +123,58 @@ fn test_update_with_diverged_branches_fails_safely() -> Result<()> {
         no_remote: vec![],
     };
 
-    // 4. Try update without force (checkout should fail or be blocked by uncommitted changes check,
-    // but here we have a committed local change).
-    // The current update_subrepo logic just does `git checkout <remote_tip>`.
-    // Git checkout will succeed if there are no conflicts, even if it's not a fast-forward.
-    // However, if we want "safe" updates, we might want to ensure it's a FF.
-    // The Roadmap says "Verify force logic".
-
     update_subrepo_with_report("upstream", false, &report)?;
 
-    // Verify it synced to remote tip (because checkout works)
-    assert_eq!(get_head_commit(&sub_path)?, remote_tip);
+    assert_eq!(
+        get_head_commit(&sub_path)?,
+        local_tip,
+        "A normal update must not move away from divergent local commits"
+    );
+    assert_ne!(local_tip, remote_tip);
 
+    Ok(())
+}
+
+#[test]
+fn test_update_allows_fast_forward_commit() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "f.txt", "v1", "Initial")?;
+    let initial = get_head_commit(&remote_path)?;
+
+    let parent_path = root.join("parent");
+    std::fs::create_dir(&parent_path)?;
+    setup_git_repo(&parent_path)?;
+    let sub_path = parent_path.join("sub");
+    clone_repo(&remote_path, &sub_path)?;
+
+    create_test_commit(&remote_path, "f.txt", "v2", "Remote update")?;
+    let remote_tip = get_head_commit(&remote_path)?;
+
+    let instance = SubrepoInstance {
+        parent_repo: "parent".to_string(),
+        parent_path,
+        subrepo_name: "upstream".to_string(),
+        subrepo_path: sub_path.clone(),
+        relative_path: "sub".to_string(),
+        commit_hash: initial.clone(),
+        short_hash: initial[..7].to_string(),
+        remote_url: Some(remote_path.to_string_lossy().into_owned()),
+        has_uncommitted: false,
+        commit_timestamp: 0,
+    };
+    let report = ValidationReport {
+        total_nested: 1,
+        by_remote: HashMap::from([(remote_path.to_string_lossy().into_owned(), vec![instance])]),
+        no_remote: Vec::new(),
+    };
+
+    update_subrepo_with_report("upstream", false, &report)?;
+    assert_eq!(get_head_commit(&sub_path)?, remote_tip);
     Ok(())
 }
 

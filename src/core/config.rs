@@ -47,7 +47,9 @@ pub fn get_git_concurrency(jobs: Option<usize>, sequential: bool) -> usize {
 
     // Smart default: CPU cores + 2, no artificial cap
     // This allows the tool to scale naturally with available hardware
-    let cpu_count = num_cpus::get();
+    let cpu_count = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
     cpu_count + 2
 }
 
@@ -136,7 +138,10 @@ mod tests {
     fn test_get_git_concurrency_default_scales_with_cpu() {
         // Default should be CPU cores + 2
         let concurrency = get_git_concurrency(None, false);
-        let expected = num_cpus::get() + 2;
+        let expected = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1)
+            + 2;
         assert_eq!(concurrency, expected);
 
         // Should be at least 3 on any system (1 core + 2)

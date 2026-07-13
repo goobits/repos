@@ -24,7 +24,7 @@ Quick reference for `repos` commands, flags, and concepts.
 
 **`repos publish`** - Publish detected packages.
 
-**`repos doctor`** - Diagnose remotes, upstreams, dirty worktrees, conflicts, and nested drift.
+**`repos doctor`** - Diagnose remote access, upstreams, dirty worktrees, conflicts, and nested drift.
 
 **`repos nested`** - Manage nested repository drift.
 

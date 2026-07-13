@@ -63,8 +63,9 @@ Use `--stash` to stash local changes before syncing.
 repos nested update shared-lib
 ```
 
-Updates all matching nested repositories to the latest remote commit. Dirty
-nested repositories are skipped.
+Updates matching nested repositories to the latest remote commit when that move
+is a fast-forward. Dirty repositories and repositories with divergent local
+commits are skipped for manual review.
 
 ## Recommended Workflow
 

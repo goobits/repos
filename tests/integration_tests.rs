@@ -4,7 +4,8 @@ use goobits_repos::git::UserConfig;
 use std::sync::atomic::Ordering;
 
 mod common;
-use common::{is_git_available, TestRepoBuilder};
+use common::fixtures::TestRepoBuilder;
+use common::git::is_git_available;
 
 #[test]
 fn test_sync_stats_initialization() {
@@ -29,14 +30,6 @@ fn test_user_config_creation() {
 
 // Removed tests for internal validation functions (is_valid_email, is_valid_name)
 // These are tested indirectly through validate_user_config() which is part of the public API
-
-#[tokio::test]
-async fn test_audit_statistics_creation() {
-    use goobits_repos::audit::scanner::AuditStatistics;
-
-    let stats = AuditStatistics::new();
-    assert_eq!(stats.truffle_stats.total_secrets, 0);
-}
 
 #[test]
 fn test_staging_status_variants() {
@@ -169,7 +162,7 @@ async fn test_staging_with_patterns() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let repo_path = temp_dir.path();
 
-    if let Err(error) = common::setup_git_repo(repo_path) {
+    if let Err(error) = common::git::setup_git_repo(repo_path) {
         eprintln!("{error}");
         return; // Skip if git not available
     }
@@ -327,7 +320,7 @@ async fn test_error_scenarios() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let repo_path = temp_dir.path();
 
-    if let Err(error) = common::setup_git_repo(repo_path) {
+    if let Err(error) = common::git::setup_git_repo(repo_path) {
         eprintln!("{error}");
         return; // Skip if git not available
     }
@@ -507,7 +500,7 @@ async fn test_has_uncommitted_changes() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let repo_path = temp_dir.path();
 
-    if let Err(error) = common::setup_git_repo(repo_path) {
+    if let Err(error) = common::git::setup_git_repo(repo_path) {
         eprintln!("{error}");
         return; // Skip if git not available
     }

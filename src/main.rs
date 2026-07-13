@@ -8,25 +8,20 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-mod audit;
-mod commands;
-mod core;
-mod git;
-mod package;
-mod subrepo;
-mod utils;
-
-use commands::audit::handle_audit_command;
-use commands::config::{handle_config_command, parse_config_command};
-use commands::doctor::handle_doctor_command;
-use commands::publish::handle_publish_command;
-use commands::save::handle_save_command;
-use commands::staging::{
+use goobits_repos::commands::audit::handle_audit_command;
+use goobits_repos::commands::config::{handle_config_command, parse_config_command};
+use goobits_repos::commands::doctor::handle_doctor_command;
+use goobits_repos::commands::publish::handle_publish_command;
+use goobits_repos::commands::save::handle_save_command;
+use goobits_repos::commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
     handle_unstage_command, StatusFilters,
 };
-use commands::sync::{handle_pull_command, handle_push_command, handle_sync_command};
-use git::ConfigArgs;
+use goobits_repos::commands::sync::{
+    handle_pull_command, handle_push_command, handle_sync_command,
+};
+use goobits_repos::git::ConfigArgs;
+use goobits_repos::subrepo;
 
 #[derive(Subcommand, Clone)]
 enum Commands {

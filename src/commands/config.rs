@@ -19,7 +19,7 @@ use crate::git::{
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 
 /// Shows interactive prompt for config selection when no arguments provided
-async fn show_config_selection_prompt() -> Result<ConfigArgs> {
+async fn show_config_selection_prompt() -> Result<Option<ConfigArgs>> {
     println!("\n📋 Git Configuration Options\n");
 
     // Get global config
@@ -67,18 +67,16 @@ async fn show_config_selection_prompt() -> Result<ConfigArgs> {
     let config_source = match choice {
         "1" => {
             if global_name.is_none() && global_email.is_none() {
-                println!(
-                    "\n❌ No global config found. Use 'git config --global' to set values first."
+                anyhow::bail!(
+                    "No global config found. Use 'git config --global' to set values first."
                 );
-                std::process::exit(1);
             }
             println!("\n✅ Using global config to sync all repositories");
             ConfigSource::Global
         }
         "2" => {
             if current_name.is_none() && current_email.is_none() {
-                println!("\n❌ No config found in current directory.");
-                std::process::exit(1);
+                anyhow::bail!("No config found in current directory");
             }
             println!("\n✅ Using current directory config to sync all repositories");
             ConfigSource::Current(current_dir)
@@ -105,8 +103,7 @@ async fn show_config_selection_prompt() -> Result<ConfigArgs> {
             };
 
             if name.is_none() && email.is_none() {
-                println!("\n❌ No values provided");
-                std::process::exit(1);
+                anyhow::bail!("No config values provided");
             }
 
             let config = UserConfig::new(name, email);
@@ -116,17 +113,17 @@ async fn show_config_selection_prompt() -> Result<ConfigArgs> {
         }
         "4" => {
             println!("\nCancelled");
-            std::process::exit(0);
+            return Ok(None);
         }
         _ => {
             println!("\nCancelled");
-            std::process::exit(0);
+            return Ok(None);
         }
     };
 
-    Ok(ConfigArgs {
+    Ok(Some(ConfigArgs {
         command: ConfigCommand::Interactive(config_source),
-    })
+    }))
 }
 
 /// Parses config command arguments into a `ConfigCommand`
@@ -222,7 +219,11 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     // Handle interactive config selection first if needed
     let resolved_args = if let ConfigCommand::Interactive(ConfigSource::Interactive) = &args.command
     {
-        show_config_selection_prompt().await?
+        let Some(resolved) = show_config_selection_prompt().await? else {
+            set_terminal_title_and_flush("✅ repos");
+            return Ok(());
+        };
+        resolved
     } else {
         args
     };

@@ -101,6 +101,30 @@ fn checkout_commit(path: &Path, commit: &str) -> Result<()> {
     Ok(())
 }
 
+/// Returns whether `ancestor` can move to `descendant` without discarding commits.
+fn is_ancestor(path: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            path_to_str(path)?,
+            "merge-base",
+            "--is-ancestor",
+            ancestor,
+            descendant,
+        ])
+        .output()
+        .context("Failed to run git merge-base")?;
+
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => anyhow::bail!(
+            "git merge-base failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    }
+}
+
 /// Fetch from remote and determine the latest commit
 fn fetch_latest_commit(path: &Path) -> Result<String> {
     let path_str = path_to_str(path)?;
@@ -266,20 +290,44 @@ pub fn update_subrepo_with_report(
 
         // Fetch and checkout
         match fetch_latest_commit(&instance.subrepo_path) {
-            Ok(commit) => match checkout_commit(&instance.subrepo_path, &commit) {
-                Ok(()) => {
-                    let old_short = instance.short_hash.clone();
-                    println!(
-                        "  ✅ {} ({} → {})",
-                        instance.parent_repo, old_short, short_latest
-                    );
-                    success_count += 1;
+            Ok(commit) => {
+                if !force {
+                    match is_ancestor(&instance.subrepo_path, &instance.commit_hash, &commit) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            println!(
+                                "  ⚠️  {} (local commits diverge from remote)",
+                                instance.parent_repo
+                            );
+                            skip_count += 1;
+                            continue;
+                        }
+                        Err(e) => {
+                            println!(
+                                "  ❌ {} (history check failed: {})",
+                                instance.parent_repo, e
+                            );
+                            error_count += 1;
+                            continue;
+                        }
+                    }
                 }
-                Err(e) => {
-                    println!("  ❌ {} ({})", instance.parent_repo, e);
-                    error_count += 1;
+
+                match checkout_commit(&instance.subrepo_path, &commit) {
+                    Ok(()) => {
+                        let old_short = instance.short_hash.clone();
+                        println!(
+                            "  ✅ {} ({} → {})",
+                            instance.parent_repo, old_short, short_latest
+                        );
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        println!("  ❌ {} ({})", instance.parent_repo, e);
+                        error_count += 1;
+                    }
                 }
-            },
+            }
             Err(e) => {
                 println!("  ❌ {} (fetch failed: {})", instance.parent_repo, e);
                 error_count += 1;
@@ -293,7 +341,7 @@ pub fn update_subrepo_with_report(
     println!("📊 Update Summary");
     println!("   ✅ {success_count} updated");
     if skip_count > 0 {
-        println!("   ⚠️  {skip_count} skipped (uncommitted changes)");
+        println!("   ⚠️  {skip_count} skipped (manual review required)");
     }
     if error_count > 0 {
         println!("   ❌ {error_count} failed");

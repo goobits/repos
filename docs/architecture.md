@@ -1,342 +1,143 @@
 # Architecture
 
-Technical overview of the `repos` codebase structure and design patterns.
+`repos` is a Rust CLI and library for operating on many Git repositories under
+one directory. The binary owns argument parsing; reusable behavior lives in the
+library crate.
 
-## Overview
+## Source Layout
 
-`repos` is a Rust-based CLI tool organized as both a binary application and a library. The architecture emphasizes modularity, concurrent operations, and clean separation of concerns.
-
-## Project Structure
-
-```
-repos/
-├── src/
-│   ├── main.rs              # CLI entry point and argument parsing
-│   ├── lib.rs               # Public library API exports
-│   ├── commands/            # Command implementations
-│   ├── core/                # Core functionality
-│   ├── package/             # Package manager integrations
-│   ├── git/                 # Git operations
-│   ├── subrepo/             # Nested repository management internals
-│   ├── audit/               # Security auditing
-│   └── utils/               # Utility functions
-├── tests/
-│   └── integration_tests.rs # End-to-end tests
-└── docs/                    # Documentation
-```
-
-## Module Design
-
-### Commands (`src/commands/`)
-
-Command implementations for each CLI subcommand. Each command module:
-- Accepts parsed arguments from CLI
-- Orchestrates operations across repositories
-- Uses core, git, and specialized modules
-- Handles progress reporting and output formatting
-
-**Key commands:**
-- `push.rs` - Push operations with upstream handling
-- `stage.rs`, `unstage.rs` - Staging operations
-- `commit.rs` - Commit across repositories
-- `config.rs` - Git config synchronization
-- `publish.rs` - Package publishing orchestration
-- `audit.rs` - Security scanning coordination
-- `subrepo.rs` - Nested repository management internals
-
-### Core (`src/core/`)
-
-Foundational functionality used across all commands:
-- **Repository Discovery** - Finding git repositories in directory trees
-- **Configuration Management** - Reading and writing git configs
-- **Progress Reporting** - User feedback during operations
-- **Concurrency Control** - Managing parallel operations across repositories
-
-**Design principles:**
-- Concurrent operations with smart parallelism (default: CPU cores + 2)
-- User-controllable concurrency via `--jobs N` or `--sequential` flags
-- Timeouts for long-running operations (3-5 minutes depending on operation type)
-- Progress bars and status indicators for user feedback
-
-### Package Managers (`src/package/`)
-
-Integrations for publishing packages to registries:
-- `npm.rs` - npm (JavaScript/TypeScript)
-- `cargo.rs` - Cargo (Rust)
-- `pypi.rs` - PyPI (Python)
-
-**Common patterns:**
-- Auto-detection via manifest files (`package.json`, `Cargo.toml`, `pyproject.toml`)
-- Credential management using existing package manager configs
-- Dry-run support for safe preview
-- Visibility filtering (public/private repository handling)
-
-### Git Operations (`src/git/`)
-
-Low-level git functionality abstraction:
-- Repository status checking
-- Staging and committing
-- Push operations with upstream handling
-- Config reading and writing
-- Tag creation and management
-
-**Design principles:**
-- Wraps `git2` library and shell commands
-- Handles edge cases (missing upstreams, dirty working trees)
-- Provides consistent error handling
-
-### Nested Repository Management (`src/subrepo/`)
-
-Nested repository detection and synchronization:
-- **Discovery** - Finding nested `.git` directories
-- **Grouping** - Matching nested repositories by remote URL
-- **Drift Detection** - Comparing commits across instances
-- **Synchronization** - Updating nested repositories to target commits
-
-**Key algorithms:**
-- Sync score calculation: `(total_instances - unique_commits) / (total_instances - 1) × 100`
-- Sync target selection: Latest commit without uncommitted changes
-- Stash handling: Safe preservation of uncommitted work
-
-### Security Auditing (`src/audit/`)
-
-Security scanning and hygiene checking:
-- **TruffleHog Integration** - Secret detection via external tool
-- **Hygiene Checks** - Gitignore violations, bad patterns, large files
-- **Automated Fixes** - Safe (.gitignore updates) and destructive (history rewriting)
-
-**Components:**
-- Secret scanning orchestration
-- File pattern matching
-- Git history analysis (large files via `git rev-list`)
-- Interactive fix prompts
-
-## Concurrency Model
-
-### Parallel Processing
-
-Operations across repositories run concurrently with smart parallelism that scales with hardware:
-
-**Git Operations:**
-- **Push command:** Default `CPU cores + 2` with `--jobs N` support (no cap, scales with hardware)
-- **Other commands (stage, commit, config):** Fixed at `32` concurrent operations
-- User control: `--jobs N` (push only), `--sequential` for serial execution (all commands)
-- Two-phase pipeline (v2.0+): Fetch phase uses 2x concurrency, push phase uses standard concurrency
-
-**Specialized Operations:**
-
-| Operation | Concurrency Limit | Reason |
-|-----------|-------------------|--------|
-| TruffleHog scanning | 1 | CPU-intensive, memory-heavy |
-| Hygiene checking | 3 | Balanced I/O and CPU |
-| Publishing | 8 (v2.1+) | Network I/O with rate limit handling |
-| Fetch operations | 24 cap | Network I/O, prevents overwhelming remotes |
-
-**Performance Notes:**
-- v2.0: Removed 12-operation cap to allow scaling on high-core systems
-- v2.1: Increased default cap from 12 to 32 for better multi-core utilization
-- Rate limit protection: Automatic GitHub detection with 2-second retry backoff
-
-### Timeout Handling
-
-Different operations have different timeout values to balance responsiveness and reliability:
-
-| Operation Type | Timeout | Files |
-|---------------|---------|-------|
-| Git operations | 180s (3 min) | src/git/operations.rs:13 |
-| npm publishing | 300s (5 min) | src/package/npm.rs:10 |
-| Cargo publishing | 600s (10 min) | src/package/cargo.rs:10 |
-| PyPI publishing | 300s (5 min) | src/package/pypi.rs:11 |
-| GitHub visibility checks | 10s | src/git/operations.rs:571 |
-
-Publishing operations have longer timeouts to accommodate large package uploads and registry processing times.
-
-## Error Handling
-
-### Strategy
-
-- Use Rust's `Result<T, E>` for recoverable errors
-- Provide actionable error messages
-- Continue operations on partial failures (report summary at end)
-- Exit codes: 0 (success), 1 (failure), especially for CI/CD integration
-
-### Examples
-
-```rust
-// Audit verification mode exits 1 if verified secrets found
-repos audit --verify  // Exit code 1 → fail CI build
-
-// Publishing continues despite individual failures
-repos publish  // Reports "3 published, 1 failed" → Exit code 0
+```text
+src/
+├── main.rs                 CLI arguments and command dispatch
+├── lib.rs                  Library boundary
+├── commands/               User-facing workflows
+│   ├── sync.rs             Push, pull, and two-way sync orchestration
+│   ├── save.rs             Stage, commit, and push workflow
+│   ├── staging.rs          Stage, unstage, commit, and status commands
+│   ├── config.rs           Git identity synchronization
+│   ├── doctor.rs           Read-only repository diagnostics
+│   ├── audit.rs            Audit command orchestration
+│   └── publish/            Publish planning and execution
+├── core/                   Discovery, progress, concurrency, and statistics
+├── git/                    Git command execution and result classification
+├── audit/                  Secret and repository-hygiene scanners and fixes
+├── package/                Cargo, npm, and PyPI package adapters
+├── subrepo/                Nested repository validation, drift, and sync
+└── utils/                  Filesystem and terminal helpers
 ```
 
-## Data Flow
+`src/main.rs` imports the library crate. It does not redeclare the library
+modules, so each module and unit test is compiled once.
 
-### Typical Command Flow
+## Command Flow
 
-1. **CLI Parsing** (`main.rs`) - Parse arguments with `clap`
-2. **Repository Discovery** (`core/`) - Find all git repositories
-3. **Command Execution** (`commands/`) - Execute operation across repos
-4. **Module Coordination** - Use `git/`, `package/`, etc. as needed
-5. **Progress Reporting** (`core/`) - Show status indicators
-6. **Result Aggregation** - Collect successes/failures
-7. **Output** - Display summary and exit
+Most fleet commands follow the same sequence:
 
-### Example: Publishing Flow
+1. Discover repositories below the current directory.
+2. Build a processing context with shared progress and statistics.
+3. Run repository work concurrently under semaphores.
+4. Classify every result and update aggregate statistics.
+5. Print a final report and return an error when hard failures occurred.
 
+`repos sync` runs the pull workflow first and the push workflow second. Both
+results are retained, so a push failure cannot hide a pull failure or vice
+versa.
+
+## Repository Discovery
+
+`core::discovery` uses `ignore::WalkBuilder` with a parallel walker. It follows
+directory symlinks, skips dependency/build directories and `.git` internals,
+and limits traversal depth.
+
+Discovered paths are deduplicated and sorted before names are assigned. When
+multiple paths have the same directory name, the lexically first path owns the
+base name and later paths receive `-2`, `-3`, and so on. This makes command
+targets stable across runs even though walking is concurrent.
+
+## Git Execution
+
+`git::operations::run_git` is the common async Git process boundary. It:
+
+- uses the repository as the process working directory;
+- disables interactive credential prompts;
+- supplies batch-mode SSH only when the caller has not set
+  `GIT_SSH_COMMAND`;
+- preserves each configured remote URL and transport;
+- kills child processes when their future is dropped;
+- enforces a 180-second timeout; and
+- returns command success, stdout, and stderr separately.
+
+Network commands retry transient failures with bounded backoff. Normal Git
+nonzero statuses are classified by callers and become repository failures when
+the requested operation could not be completed.
+
+## Concurrency
+
+The default Git concurrency is the host's available parallelism plus two.
+`--jobs` sets an explicit limit and `--sequential` sets it to one.
+
+Push and pull use a pipelined model per repository:
+
+```text
+fetch permit -> inspect state -> release fetch permit
+write permit -> push or pull -> record result -> release write permit
 ```
-main.rs
-  └─> commands/publish.rs
-       ├─> core/discovery (find repos)
-       ├─> package/npm.rs (detect + publish npm packages)
-       ├─> package/cargo.rs (detect + publish cargo crates)
-       ├─> package/pypi.rs (detect + publish python packages)
-       ├─> git/tags.rs (create git tags if --tag)
-       └─> core/progress (show status updates)
-```
 
-## Testing Strategy
+Fetches may use up to twice the configured Git concurrency, capped at 24.
+Secret scanning is limited to one repository and hygiene scanning to three.
 
-### Integration Tests
+## Safety Boundaries
 
-Located in `tests/integration_tests.rs`:
-- End-to-end command testing
-- Repository discovery validation
-- Package manager detection
-- Git operations verification
+- Push and pull inspect remotes, branches, upstreams, and worktree state before
+  mutation.
+- Pull uses fast-forward-only behavior unless the caller requests rebase.
+- Missing or inaccessible remotes are failures, not clean/synced results.
+- `repos doctor` probes every configured remote with `git ls-remote` and exits
+  nonzero when it finds blockers.
+- Audit scanners distinguish a clean scan from an inspection failure.
+- History-rewriting audit fixes require a clean repository and, when a remote
+  exists, a reachable configured upstream that is not ahead of local `HEAD`.
+- Downloaded installer scripts are executed only after checksum verification.
 
-### Unit Tests
+## Nested Repositories
 
-Embedded in module files:
-- Function-level testing
-- Edge case handling
-- Error condition validation
+Nested repositories are ordinary Git repositories inside parent repositories,
+not Git submodules. Validation groups them by a normalized remote identity.
+Equivalent GitHub HTTPS and SSH URLs share a group; case is preserved for paths
+on hosts where repository paths may be case-sensitive.
 
-### Test Execution
+Sync and update select a single remote group by nested repository name. If the
+same name refers to different remotes, the command stops as ambiguous before
+checking out any commit. Normal updates also require the remote target to be a
+fast-forward from each current commit, so divergent local commits stay checked
+out for manual review.
+
+## Package Publishing
+
+`commands::publish::planner` discovers package managers, applies visibility and
+exact repository-name filters, and blocks unsafe dirty or uninspectable
+repositories. `executor` delegates publication to the package adapter and only
+creates/pushes a tag after a successful publish.
+
+Package adapters implement the `PackageManager` trait for Cargo, npm, and PyPI.
+Registry credentials remain owned by those package-manager tools.
+
+## Public Boundary
+
+`lib.rs` exposes command plumbing for integration and automation. Stable core
+and Git entry points are curated through `core::api` and `git::api`; callers
+should prefer those re-exports over internal module paths.
+
+## Verification
+
+The repository uses unit tests for classification and formatting, integration
+tests with temporary Git repositories and local bare remotes, stress tests for
+discovery, and Criterion benchmarks for discovery/context hot paths.
+
+The standard verification gates are:
 
 ```bash
-cargo test              # All tests
-cargo test test_name    # Specific test
-cargo test -- --nocapture  # Show output
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
 ```
-
-## Build and Release
-
-### Debug Builds
-
-```bash
-cargo build
-./target/debug/repos
-```
-
-Faster compilation, slower runtime. Use for development.
-
-### Release Builds
-
-```bash
-cargo build --release
-./target/release/repos
-```
-
-Optimized binary with full optimizations. Used for distribution.
-
-### Installation
-
-The `install.sh` script:
-1. Runs `cargo build --release`
-2. Detects first writable location (`/usr/local/bin`, `~/.local/bin`, `~/bin`)
-3. Copies binary to location
-4. Updates PATH if needed
-
-## Extension Points
-
-### Adding a New Command
-
-1. Create `src/commands/new_command.rs`
-2. Implement command logic using core modules
-3. Register in `src/main.rs` CLI parser
-4. Add tests
-5. Update `docs/guides/commands.md`
-
-### Adding Package Manager Support
-
-1. Create `src/package/new_manager.rs`
-2. Implement detection (manifest file check)
-3. Implement publish logic (credentials, API calls)
-4. Add to `commands/publish.rs` detection list
-5. Update `docs/guides/credentials_setup.md`
-
-### Adding Audit Checks
-
-1. Extend `src/audit/` with new check type
-2. Add detection logic
-3. Implement fix strategies (safe/destructive)
-4. Add to `commands/audit.rs` orchestration
-5. Update `docs/guides/security_auditing.md`
-
-## Performance Considerations
-
-### Repository Discovery
-
-- Walks directory tree recursively
-- Checks for `.git` directories
-- Skips common ignore patterns (`.git` subdirectories, `node_modules`)
-- Concurrent discovery for large directory structures
-
-### Large Monorepos
-
-- Expected behavior: Processing time scales with repository count
-- Subrepo detection can be slow with deeply nested structures
-- Audit scans (TruffleHog) are CPU/memory intensive
-
-### Optimization Tips
-
-- Use `--repos` flag to target specific repositories
-- Limit scope when operating on large monorepos
-- TruffleHog scans: Run sequentially (1 concurrent) to avoid memory issues
-
-## Dependencies
-
-### Core Libraries
-
-- `clap` - CLI argument parsing
-- `git2` - Git operations (libgit2 bindings)
-- `indicatif` - Progress bars and status indicators
-- `tokio` / `rayon` - Async and parallel processing
-- `serde` / `serde_json` - JSON serialization (for `--json` output)
-
-### External Tools
-
-- **TruffleHog** - Secret scanning (optional, auto-installed via `--install-tools`)
-- **git-filter-repo** - History rewriting (required for `--fix-large`, `--fix-secrets`)
-- **gh** - GitHub CLI (for repo visibility detection)
-
-## Security Considerations
-
-### Credential Handling
-
-- Never stores credentials
-- Uses existing package manager credential files
-- Recommends token-based auth over passwords
-- File permissions: `chmod 600` for credential files
-
-### Git History Rewriting
-
-- Creates backup refs: `refs/original/pre-fix-backup-<type>-<timestamp>`
-- Requires force-push awareness
-- Warns about collaborator impact
-- Provides rollback instructions
-
-### Secret Scanning
-
-- Detection only (no automatic secret rotation)
-- Verification mode confirms if secrets are active
-- Emphasizes rotation over deletion
-
----
-
-**Related Documentation:**
-- [Documentation Index](README.md)
-- [Module Boundaries](../MODULE_BOUNDARIES.md)
-- [Contributing Guide](../CONTRIBUTING.md)
-- [Commands Reference](guides/commands.md)

@@ -2,7 +2,8 @@
 
 mod common;
 
-use common::{create_multiple_repos, is_git_available, setup_git_repo, TestRepoBuilder};
+use common::fixtures::TestRepoBuilder;
+use common::git::{create_multiple_repos, is_git_available, setup_git_repo};
 use goobits_repos::core::find_repos_from_path;
 use std::fs;
 use tempfile::TempDir;

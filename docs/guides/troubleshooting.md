@@ -42,9 +42,11 @@ Common issues and solutions for the repos tool.
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `TruffleHog not found` | TruffleHog not installed | Run `repos audit --install-tools` to auto-install |
-| Too many false positives | TruffleHog sensitivity | Expected; manually review findings and update `.trufflehog-ignore` |
+| Suspected false positives | TruffleHog classified test/revoked data as a secret | Review the finding manually; `repos` does not maintain an ignore file |
 | Need to recover from history rewrite | Used history rewriting options (`--fix-large`, `--fix-secrets`, or `--fix-all`) | Use `git reflog` to find previous commit and reset: `git reset --hard HEAD@{N}` |
-| Scan takes too long | Large repository history | Normal for first scan; subsequent scans are faster with verified findings |
+| Scan takes too long | Large repository history | Narrow the run with `--repos` or inspect the repository history separately |
+| `audit incomplete` | A secret or hygiene scanner could not inspect one or more repositories | Fix the reported tool/repository error and rerun; an incomplete scan is never reported as clean |
+| `git fetch failed` before a history fix | Configured upstream is inaccessible | Restore access or correct the remote before rewriting history |
 
 ## Nested Repository Issues
 
@@ -52,6 +54,7 @@ Common issues and solutions for the repos tool.
 |-------|-------|----------|
 | Nested repos not detected | Missing `.git` directory | Nested repos must have their own `.git` directory |
 | Drift false positives | Different remote URLs | Normal if a nested repo uses a different remote; verify URLs match expectations |
+| Nested repository name is ambiguous | The same directory name points at different remotes | Rename one nested checkout or operate after making the target name unique |
 | Sync failures | Uncommitted changes in nested repo | Commit or stash changes before syncing |
 | `not a valid nested repo` | Directory is Git submodule, not nested repo | Use `git submodule` commands for submodules |
 
@@ -61,9 +64,16 @@ Common issues and solutions for the repos tool.
 |-------|-------|----------|
 | `push failed: no upstream branch` | Upstream branch not configured | Use `repos push --auto-upstream` |
 | `push rejected: non-fast-forward` | Remote has commits not in local | Use `repos sync` or resolve the branch manually |
+| `Could not read from remote repository` | The configured SSH key is missing or unauthorized | Test the configured URL with `git ls-remote <url>`, then install/authorize the correct key |
+| HTTPS authentication failure | The configured HTTPS credential is missing or expired | Refresh the credential-manager or host CLI login; `repos` does not rewrite HTTPS remotes to SSH |
 | Submodule conflicts | Mixed submodules and nested repos | Use `git submodule` commands for submodules; repos handles nested repos |
 | Worktree detection issues | Git worktree not recognized | Ensure worktree is properly configured: `git worktree list` |
-| `not a git repository` | Command run outside git repo | Navigate to git repository root directory |
+| `not a git repository` | A discovered repository is damaged or a direct Git command used the wrong directory | Run `repos status --failed` to identify it and repair its `.git` metadata |
+
+Git credential prompts are disabled during fleet operations so one inaccessible
+repository cannot hang the whole run. The command records the repository as
+failed and exits nonzero. The remote URL and transport in `.git/config` are
+used as configured; custom `GIT_SSH_COMMAND` values are preserved.
 
 ## General Debugging
 
@@ -84,7 +94,10 @@ git tag                    # List all tags
 ### Common Diagnostic Commands
 ```bash
 repos status               # Check status of all repos
+repos status --failed      # Show repositories whose status inspection failed
+repos doctor               # Probe remotes, upstreams, worktrees, and nested drift
 git config --list          # View git configuration
+git remote -v              # Confirm each configured transport and URL
 which repos                # Verify binary location
 repos --version            # Check installed version
 ```

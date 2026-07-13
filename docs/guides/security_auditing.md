@@ -9,7 +9,7 @@ Comprehensive security scanning and repository hygiene checking with automated f
   - [Installation](#installation)
   - [Secret Detection](#secret-detection)
   - [Output](#output)
-  - [Suppressing False Positives](#suppressing-false-positives)
+  - [Reviewing Findings](#reviewing-findings)
 - [Hygiene Checking](#hygiene-checking)
   - [Gitignore Violations](#1-gitignore-violations)
   - [Universal Bad Patterns](#2-universal-bad-patterns)
@@ -25,6 +25,10 @@ Comprehensive security scanning and repository hygiene checking with automated f
 ## Overview
 
 The `repos audit` command combines TruffleHog secret scanning with repository hygiene checking to identify security issues and improperly committed files across all repositories.
+
+Audits fail closed: if TruffleHog, Git history inspection, or hygiene scanning
+cannot inspect a repository, the command exits nonzero instead of treating that
+repository as clean.
 
 **Concurrency:**
 - TruffleHog scanning: 1 concurrent (CPU-intensive)
@@ -50,9 +54,13 @@ TruffleHog must be installed before running audits. Install manually or use `--i
 repos audit --install-tools
 
 # Manual installation
-brew install trufflesecurity/trufflehog/trufflehog                                            # macOS
-curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh  # Linux
+brew install trufflesecurity/trufflehog/trufflehog  # macOS
 ```
+
+On Linux, install a trusted TruffleHog release for your platform. Automatic
+installation downloads the upstream installer to a private temporary file and
+executes it only when its SHA-256 checksum matches the version trusted by this
+release of `repos`.
 
 ### Secret Detection
 
@@ -60,12 +68,12 @@ Scans git history for exposed credentials and API keys:
 
 ```bash
 repos audit                    # Detect unverified secrets
-repos audit --verify           # Verify if secrets are active (exits 1 on findings)
+repos audit --verify           # Verify active secrets and fail on findings
 ```
 
 **Verification mode** (`--verify`):
 - Tests if secrets are currently active
-- **Exits with code 1** if verified secrets found
+- **Exits nonzero** if verified secrets are found
 - Use in CI/CD pipelines to fail builds
 - Slower due to API verification calls
 
@@ -90,28 +98,11 @@ repos audit --verify           # Verify if secrets are active (exits 1 on findin
 ═══════════════════════════════════════════════════════════════════
 ```
 
-### Suppressing False Positives
+### Reviewing Findings
 
-TruffleHog may flag test data, example code, or revoked credentials as secrets. Use `.trufflehog-ignore` to suppress false positives.
-
-**Create `.trufflehog-ignore` in repository root:**
-
-```
-# Format: one pattern per line
-# Patterns can be file paths, commit hashes, or regex
-path/to/test/file.js
-docs/examples/api-keys.md
-abcd1234  # Commit hash
-```
-
-**Managing false positives:**
-
-1. Review TruffleHog findings carefully
-2. Confirm secrets are truly false positives (test data, examples, revoked keys)
-3. Add patterns to `.trufflehog-ignore`
-4. Re-run `repos audit` to verify suppression
-
-See [TruffleHog documentation](https://github.com/trufflesecurity/trufflehog#ignoring-findings) for advanced ignore patterns.
+Review every finding before changing history. Rotate active credentials first,
+then decide whether the affected content should be removed. `repos` does not
+maintain a project-specific ignore file or silently suppress scanner output.
 
 ---
 
@@ -217,6 +208,8 @@ repos audit --fix-large --fix-secrets
 **Requirements:**
 - `git-filter-repo` must be installed: `pip install git-filter-repo` or `brew install git-filter-repo`
 - Repository must be clean (no uncommitted changes)
+- A repository with remotes must have a configured, reachable upstream
+- Local `HEAD` must not be behind that upstream
 - All collaborators must re-clone after push
 
 **What happens:**
@@ -292,8 +285,17 @@ repos audit --json
     "secrets_by_detector": {
       "GitHub": 2,
       "AWS": 1
-    }
-  }
+    },
+    "failed_repos": []
+  },
+  "hygiene": {
+    "clean_repos": 3,
+    "repos_with_violations": 2,
+    "total_violations": 4,
+    "error_repos": 0,
+    "failed_repos": []
+  },
+  "message": "Completed audit summary"
 }
 ```
 
@@ -325,7 +327,7 @@ Fail builds on verified secrets:
   run: repos audit --verify --install-tools
 ```
 
-Exit code 1 if verified secrets found.
+The command exits nonzero for verified secrets or incomplete scans.
 
 ### 3. Pre-Push Hooks
 

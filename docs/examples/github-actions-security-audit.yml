@@ -28,10 +28,7 @@ jobs:
         fetch-depth: 0
 
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Install repos
       run: |
@@ -45,7 +42,7 @@ jobs:
       run: |
         repos audit --install-tools --verify --json > audit-report.json
       continue-on-error: false
-      # Exit code 1 if verified secrets found → fails build
+      # Nonzero for verified secrets or incomplete scans.
 
     - name: Upload audit report
       if: always()

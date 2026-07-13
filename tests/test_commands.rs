@@ -9,8 +9,9 @@
 //! without requiring actual network operations or real remotes.
 
 mod common;
+use common::fixtures::TestRepoBuilder;
 use common::git::add_bare_remote;
-use common::{is_git_available, TestRepoBuilder};
+use common::git::is_git_available;
 
 use goobits_repos::commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,

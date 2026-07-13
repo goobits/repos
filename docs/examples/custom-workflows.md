@@ -1,47 +1,37 @@
-# Custom Workflows with repos
+# Custom Workflows
 
-You can leverage `repos` in your own shell scripts to automate complex workflows across multiple repositories.
+Use `repos` for the fleet operation and normal Git commands for repository-local
+changes. Do not parse human-formatted `repos status` output as a machine API.
 
-## Example: Mass branch creation and PR opening
-
-This script creates a new branch in all repositories matching a pattern, makes a change, and pushes.
+## Explicit Repository List
 
 ```bash
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Configuration
-BRANCH_NAME="feat/update-license"
-REPOS_PATTERN="goobits-"
+branch="feat/update-license"
+repositories=("service-api" "service-web")
 
-# 1. Sync safe repositories first
 repos sync
 
-# 2. Iterate over discovered repos
-# Use repos status to get a list of repos (or find them yourself)
-for repo in $(repos status | grep "$REPOS_PATTERN" | awk '{print $2}'); do
-    echo "Processing $repo..."
-    cd "$repo"
-    
-    # Create branch
-    git checkout -b "$BRANCH_NAME"
-    
-    # Apply change
-    cp ../LICENSE ./LICENSE
-    
-    # Stage and commit this repository explicitly
+for repository in "${repositories[@]}"; do
+  (
+    cd "$repository"
+    git switch -c "$branch"
+    cp ../LICENSE LICENSE
     git add LICENSE
-    git commit -m "Update LICENSE file"
-    
-    cd ..
+    git commit -m "Update LICENSE"
+  )
 done
 
-# 3. Push all new branches
 repos push --auto-upstream
 ```
 
-## Example: CI/CD integration for massive monorepos
+Use explicit paths from trusted configuration when the workflow will mutate
+repositories. This avoids coupling automation to display formatting or partial
+name matches.
 
-If you have a large monorepo with many independent packages, you can use `repos publish` to only publish what changed.
+## CI Publish
 
 ```yaml
 jobs:
@@ -49,8 +39,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install repos
-        run: curl -sSf https://raw.githubusercontent.com/goobits/repos/main/install.sh | sh
-      - name: Publish all public packages
-        run: repos publish --public-only --tag
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install goobits-repos
+      - run: repos publish --all --dry-run
+      - run: repos publish --all
 ```
+
+Configure npm, Cargo, or PyPI credentials through their standard environment or
+credential files before the publish steps. See the
+[credentials guide](../guides/credentials_setup.md).

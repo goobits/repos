@@ -168,20 +168,6 @@ pub struct SecretFinding {
     pub file_path: String,
 }
 
-/// Combined audit statistics
-#[derive(Clone, Default)]
-pub struct AuditStatistics {
-    pub truffle_stats: TruffleStatistics,
-    pub hygiene_stats: HygieneStatistics,
-}
-
-impl AuditStatistics {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// Runs complete `TruffleHog` secret scanning and hygiene checking
 /// Returns (`truffle_stats`, `hygiene_stats`)
 pub async fn run_truffle_scan(
@@ -233,13 +219,10 @@ pub async fn run_truffle_scan(
         return Err(anyhow!(
             "TruffleHog is not installed. Please install it or use --install-tools:\n\
              brew install trufflesecurity/trufflehog/trufflehog (macOS)\n\
-             curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin (Linux)\n\
+             Install a trusted TruffleHog release for your platform (Linux)\n\
              Or use: repos audit --install-tools"
         ));
     }
-
-    // Create combined audit statistics
-    let audit_stats = AuditStatistics::new();
 
     // Wrap repositories in Arc to avoid cloning
     let repos_arc = Arc::new(repos_to_scan);
@@ -248,7 +231,7 @@ pub async fn run_truffle_scan(
     let truffle_context = create_generic_processing_context(
         Arc::clone(&repos_arc),
         start_time,
-        audit_stats.truffle_stats.clone(),
+        TruffleStatistics::new(),
         TRUFFLE_CONCURRENT_LIMIT,
     )?;
 
@@ -259,7 +242,7 @@ pub async fn run_truffle_scan(
     let hygiene_context = create_generic_processing_context(
         Arc::clone(&repos_arc),
         start_time,
-        audit_stats.hygiene_stats.clone(),
+        HygieneStatistics::new(),
         HYGIENE_CONCURRENT_LIMIT,
     )?;
 
