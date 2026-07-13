@@ -14,6 +14,15 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
+fn ensure_command_success(output: &std::process::Output, operation: &str) -> Result<()> {
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow!("{operation} failed: {}", stderr.trim()))
+    }
+}
+
 use super::hygiene::{HygieneStatistics, HygieneViolation, ViolationType};
 
 struct PrivateTempFile {
@@ -400,18 +409,18 @@ async fn fix_gitignore_violations(
                 .output()
                 .await?;
 
-            if result.status.success() {
-                untracked_count += 1;
-            }
+            ensure_command_success(&result, "git rm --cached")?;
+            untracked_count += 1;
         }
     }
 
     // Create commit
-    Command::new("git")
+    let add_output = Command::new("git")
         .args(["add", ".gitignore"])
         .current_dir(repo_path)
         .output()
         .await?;
+    ensure_command_success(&add_output, "staging .gitignore")?;
 
     let commit_message = if untracked_count > 0 {
         format!(
@@ -426,11 +435,12 @@ async fn fix_gitignore_violations(
         )
     };
 
-    Command::new("git")
+    let commit_output = Command::new("git")
         .args(["commit", "-m", &commit_message])
         .current_dir(repo_path)
         .output()
         .await?;
+    ensure_command_success(&commit_output, "committing .gitignore fixes")?;
 
     Ok(format!(
         "Added {} patterns to .gitignore{}",
@@ -533,11 +543,12 @@ async fn fix_large_files(
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let backup_ref = format!("refs/original/pre-fix-backup-large-{timestamp}");
 
-    Command::new("git")
+    let backup_output = Command::new("git")
         .args(["update-ref", &backup_ref, "HEAD"])
         .current_dir(repo_path)
         .output()
         .await?;
+    ensure_command_success(&backup_output, "creating large-file backup ref")?;
 
     println!("    Backup created at: {backup_ref}");
 
@@ -576,11 +587,12 @@ async fn fix_large_files(
     }
 
     // Run garbage collection to reclaim space
-    Command::new("git")
+    let gc_output = Command::new("git")
         .args(["gc", "--prune=now", "--aggressive"])
         .current_dir(repo_path)
         .output()
         .await?;
+    ensure_command_success(&gc_output, "garbage collection")?;
 
     Ok(format!(
         "Removed {} large files from history\n    \
@@ -618,8 +630,11 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
         .output()
         .await?;
 
-    if !output.status.success() && output.stdout.is_empty() {
-        return Ok("No secrets found".to_string());
+    if !output.status.success() {
+        return Err(anyhow!(
+            "TruffleHog scan failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
 
     // Parse secrets from output to get file paths
@@ -655,11 +670,12 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let backup_ref = format!("refs/original/pre-fix-backup-secrets-{timestamp}");
 
-    Command::new("git")
+    let backup_output = Command::new("git")
         .args(["update-ref", &backup_ref, "HEAD"])
         .current_dir(repo_path)
         .output()
         .await?;
+    ensure_command_success(&backup_output, "creating secret-removal backup ref")?;
 
     println!("    Backup created at: {backup_ref}");
     println!("    Found {} files with secrets", secret_files.len());
@@ -728,11 +744,12 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
     }
 
     // Run garbage collection
-    Command::new("git")
+    let gc_output = Command::new("git")
         .args(["gc", "--prune=now", "--aggressive"])
         .current_dir(repo_path)
         .output()
         .await?;
+    ensure_command_success(&gc_output, "garbage collection")?;
 
     Ok(format!(
         "Removed/redacted {} secrets from history\n    \
@@ -744,77 +761,85 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
 /// Check repository safety before applying fixes
 async fn check_repository_safety(repo_path: &str, options: &FixOptions) -> Result<()> {
+    use crate::git::operations::run_git;
+
     // Skip checks in dry-run mode
     if options.dry_run {
         return Ok(());
     }
 
     // Check for uncommitted changes
-    let status_output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(repo_path)
-        .output()
-        .await?;
+    let repo_path_ref = Path::new(repo_path);
+    let status = run_git(repo_path_ref, &["status", "--porcelain"]).await?;
+    if !status.0 {
+        return Err(anyhow!("git status failed: {}", status.2));
+    }
 
-    if !status_output.stdout.is_empty() {
-        let changes = String::from_utf8_lossy(&status_output.stdout);
+    if !status.1.is_empty() {
         return Err(anyhow!(
             "Repository has uncommitted changes:\n{}\n\n\
              Please commit or stash changes before running fixes.\n\
              Run: git stash push -m \"Before repos fix\"",
-            changes.trim()
+            status.1
         ));
     }
 
     // Check if we're up to date with remote (for operations that rewrite history)
     if options.fix_large || options.fix_secrets {
-        // Fetch to ensure we have latest remote info
-        Command::new("git")
-            .args(["fetch", "--quiet"])
-            .current_dir(repo_path)
-            .output()
-            .await?;
+        let remotes = run_git(repo_path_ref, &["remote"]).await?;
+        if !remotes.0 {
+            return Err(anyhow!("remote inspection failed: {}", remotes.2));
+        }
+        if remotes.1.trim().is_empty() {
+            return Ok(());
+        }
+
+        let upstream =
+            run_git(repo_path_ref, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await?;
+        if !upstream.0 {
+            return Err(anyhow!(
+                "History rewrite requires a configured upstream: {}",
+                upstream.2
+            ));
+        }
+
+        let fetch = run_git(repo_path_ref, &["fetch", "--quiet"]).await?;
+        if !fetch.0 {
+            return Err(anyhow!("git fetch failed: {}", fetch.2));
+        }
 
         // Check if we're behind remote
-        let behind_output = Command::new("git")
-            .args(["rev-list", "--count", "HEAD..@{u}"])
-            .current_dir(repo_path)
-            .output()
-            .await?;
+        let behind = run_git(repo_path_ref, &["rev-list", "--count", "HEAD..@{u}"]).await?;
+        if !behind.0 {
+            return Err(anyhow!("behind-count check failed: {}", behind.2));
+        }
+        let behind_count = behind
+            .1
+            .parse::<u32>()
+            .map_err(|e| anyhow!("invalid behind count '{}': {e}", behind.1))?;
 
-        if behind_output.status.success() {
-            let behind_count = String::from_utf8_lossy(&behind_output.stdout)
-                .trim()
-                .parse::<u32>()
-                .unwrap_or(0);
-
-            if behind_count > 0 {
-                return Err(anyhow!(
-                    "Repository is {behind_count} commits behind remote.\n\
-                     Pull changes first: git pull"
-                ));
-            }
+        if behind_count > 0 {
+            return Err(anyhow!(
+                "Repository is {behind_count} commits behind remote.\n\
+                 Pull changes first: git pull"
+            ));
         }
 
         // Check if we're ahead (will need force push)
-        let ahead_output = Command::new("git")
-            .args(["rev-list", "--count", "@{u}..HEAD"])
-            .current_dir(repo_path)
-            .output()
-            .await?;
+        let ahead = run_git(repo_path_ref, &["rev-list", "--count", "@{u}..HEAD"]).await?;
+        if !ahead.0 {
+            return Err(anyhow!("ahead-count check failed: {}", ahead.2));
+        }
+        let ahead_count = ahead
+            .1
+            .parse::<u32>()
+            .map_err(|e| anyhow!("invalid ahead count '{}': {e}", ahead.1))?;
 
-        if ahead_output.status.success() {
-            let ahead_count = String::from_utf8_lossy(&ahead_output.stdout)
-                .trim()
-                .parse::<u32>()
-                .unwrap_or(0);
-
-            if ahead_count > 0 {
-                println!(
-                    "⚠️  Warning: Repository is {ahead_count} commits ahead of remote.\n   \
-                     After history rewrite, you'll need: git push --force-with-lease"
-                );
-            }
+        if ahead_count > 0 {
+            println!(
+                "⚠️  Warning: Repository is {ahead_count} commits ahead of remote.\n   \
+                 After history rewrite, you'll need: git push --force-with-lease"
+            );
         }
     }
 

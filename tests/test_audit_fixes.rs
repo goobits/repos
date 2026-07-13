@@ -5,7 +5,7 @@ use std::process::Command;
 use tempfile::TempDir;
 
 mod common;
-use common::git::{create_test_commit, setup_git_repo};
+use common::git::{add_bare_remote, create_test_commit, setup_git_repo};
 
 #[tokio::test]
 async fn test_fix_gitignore_violations() -> Result<()> {
@@ -77,16 +77,6 @@ async fn test_fix_gitignore_violations() -> Result<()> {
 
 #[tokio::test]
 async fn test_fix_large_files_dry_run() -> Result<()> {
-    // Check if git filter-repo is installed
-    let filter_repo_check = Command::new("git")
-        .args(["filter-repo", "--version"])
-        .output();
-
-    if filter_repo_check.is_err() || !filter_repo_check.unwrap().status.success() {
-        eprintln!("git-filter-repo not installed, skipping large file fix test");
-        return Ok(());
-    }
-
     // 1. Setup
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path();
@@ -143,5 +133,70 @@ async fn test_fix_large_files_dry_run() -> Result<()> {
     assert!(!results[0].fixes_applied.is_empty());
     assert!(results[0].fixes_applied[0].contains("[DRY RUN]"));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_hygiene_scan_fails_for_non_repository() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let (status, _, violations) = check_repo_hygiene(temp_dir.path()).await;
+
+    assert!(matches!(
+        status,
+        goobits_repos::audit::hygiene::report::HygieneStatus::Error
+    ));
+    assert!(violations.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_history_rewrite_fails_when_upstream_is_unreachable() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let repo_path = temp_dir.path();
+    setup_git_repo(repo_path)?;
+
+    let large_file = "large.bin";
+    std::fs::write(repo_path.join(large_file), vec![0u8; 1_048_577])?;
+    let commit = Command::new("git")
+        .args(["add", large_file])
+        .current_dir(repo_path)
+        .output()?;
+    assert!(commit.status.success());
+    let commit = Command::new("git")
+        .args(["commit", "-m", "Add large file"])
+        .current_dir(repo_path)
+        .output()?;
+    assert!(commit.status.success());
+
+    let (status, message, violations) = check_repo_hygiene(repo_path).await;
+    let mut stats = HygieneStatistics::new();
+    stats.update(
+        "test-repo",
+        repo_path.to_str().unwrap(),
+        &status,
+        &message,
+        violations,
+    );
+
+    let remote = add_bare_remote(repo_path, true)?;
+    remote.close()?;
+
+    let result = apply_fixes(
+        &stats,
+        FixOptions {
+            interactive: false,
+            fix_gitignore: false,
+            fix_large: true,
+            fix_secrets: false,
+            untrack_files: false,
+            dry_run: false,
+            skip_confirm: true,
+            target_repos: None,
+        },
+    )
+    .await;
+
+    let error = result.expect_err("unreachable upstream must block history rewriting");
+    assert!(error.to_string().contains("git fetch failed"));
     Ok(())
 }

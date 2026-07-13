@@ -264,7 +264,7 @@ pub async fn run_truffle_scan(
     )?;
 
     // Run hygiene checking
-    process_hygiene_repositories(hygiene_context).await;
+    let hygiene_stats = process_hygiene_repositories(hygiene_context).await;
 
     // Get final statistics
     let final_truffle_stats = {
@@ -275,10 +275,13 @@ pub async fn run_truffle_scan(
 
     // Display results
     if json {
-        // JSON output - combine both truffle and hygiene results
+        let truffle_json = serde_json::from_str::<serde_json::Value>(
+            &final_truffle_stats.generate_detailed_report(true)?,
+        )?;
         let combined_output = serde_json::json!({
-            "truffle": final_truffle_stats.generate_detailed_report(true)?,
-            "summary": final_truffle_stats.generate_summary()
+            "truffle": truffle_json,
+            "hygiene": hygiene_stats.to_json(),
+            "message": final_truffle_stats.generate_summary(),
         });
         println!("{}", serde_json::to_string_pretty(&combined_output)?);
     } else {
@@ -296,7 +299,7 @@ pub async fn run_truffle_scan(
         println!("{}", "═".repeat(70));
     }
 
-    Ok((final_truffle_stats, HygieneStatistics::new()))
+    Ok((final_truffle_stats, hygiene_stats))
 }
 
 /// Process `TruffleHog` scanning across repositories
@@ -410,11 +413,18 @@ async fn scan_repository_secrets(
         .output()
         .await?;
 
-    if !output.status.success() && output.stdout.is_empty() {
-        return Ok(Vec::new());
+    if !output.status.success() {
+        return Err(anyhow!(
+            "TruffleHog failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_truffle_findings(&output.stdout)
+}
+
+fn parse_truffle_findings(output: &[u8]) -> Result<Vec<SecretFinding>> {
+    let stdout = String::from_utf8_lossy(output);
     let mut findings = Vec::new();
 
     for line in stdout.lines() {
@@ -422,26 +432,25 @@ async fn scan_repository_secrets(
             continue;
         }
 
-        // Parse JSON output from TruffleHog
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-            let detector_name = json["DetectorName"]
-                .as_str()
-                .unwrap_or("Unknown")
-                .to_string();
+        let json = serde_json::from_str::<serde_json::Value>(line)
+            .map_err(|e| anyhow!("invalid TruffleHog JSON output: {e}"))?;
+        let detector_name = json["DetectorName"]
+            .as_str()
+            .unwrap_or("Unknown")
+            .to_string();
 
-            let verified = json["Verified"].as_bool().unwrap_or(false);
+        let verified = json["Verified"].as_bool().unwrap_or(false);
 
-            let file_path = json["SourceMetadata"]["Data"]["Git"]["file"]
-                .as_str()
-                .unwrap_or("unknown")
-                .to_string();
+        let file_path = json["SourceMetadata"]["Data"]["Git"]["file"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
 
-            findings.push(SecretFinding {
-                detector_name,
-                verified,
-                file_path,
-            });
-        }
+        findings.push(SecretFinding {
+            detector_name,
+            verified,
+            file_path,
+        });
     }
 
     Ok(findings)
@@ -585,16 +594,14 @@ async fn install_trufflehog_direct() -> Result<()> {
             println!("✅ Checksum verification passed");
         }
         Ok(false) => {
-            eprintln!("\n⚠️  WARNING: Could not verify TruffleHog install script checksum");
-            eprintln!("   Reason: Checksum constant needs to be updated with actual value");
-            eprintln!(
-                "   The script will still be executed, but please verify manually if concerned."
-            );
-            eprintln!("   To update: Download the script and run 'sha256sum install.sh'\n");
+            let _ = tokio::fs::remove_file(&temp_script).await;
+            return Err(anyhow!(
+                "TruffleHog installer checksum did not match the trusted value"
+            ));
         }
         Err(e) => {
-            eprintln!("\n⚠️  WARNING: Checksum verification failed: {e}");
-            eprintln!("   Proceeding with installation - verify manually if concerned.\n");
+            let _ = tokio::fs::remove_file(&temp_script).await;
+            return Err(anyhow!("TruffleHog installer checksum check failed: {e}"));
         }
     }
 
@@ -614,4 +621,15 @@ async fn install_trufflehog_direct() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_truffle_findings;
+
+    #[test]
+    fn rejects_malformed_trufflehog_output() {
+        let result = parse_truffle_findings(b"not-json\n");
+        assert!(result.is_err());
+    }
 }

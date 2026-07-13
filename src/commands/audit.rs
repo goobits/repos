@@ -30,6 +30,14 @@ pub async fn handle_audit_command(
     let (truffle_stats, hygiene_stats) =
         run_truffle_scan(install_tools, verify, json, target_repos.clone()).await?;
 
+    if !truffle_stats.failed_repos.is_empty() || hygiene_stats.error_count() > 0 {
+        anyhow::bail!(
+            "audit incomplete: {} secret scans and {} hygiene scans failed",
+            truffle_stats.failed_repos.len(),
+            hygiene_stats.error_count()
+        );
+    }
+
     // If any fix options are specified, apply them
     if interactive || fix_gitignore || fix_large || fix_secrets || fix_all {
         let fix_options = if fix_all {
@@ -47,15 +55,21 @@ pub async fn handle_audit_command(
             }
         };
 
-        apply_fixes(&hygiene_stats, fix_options).await?;
+        let results = apply_fixes(&hygiene_stats, fix_options).await?;
+        let failed_fixes = results
+            .iter()
+            .filter(|result| !result.errors.is_empty())
+            .count();
+        if failed_fixes > 0 {
+            anyhow::bail!("{failed_fixes} repositories had failed audit fixes");
+        }
     }
 
     set_terminal_title_and_flush("✅ repos");
 
     // Exit with error code if secrets were found and verify flag is set
     if verify && truffle_stats.verified_secrets > 0 {
-        println!("\n❌ Verified secrets found - exiting with error code 1");
-        std::process::exit(1);
+        anyhow::bail!("verified secrets found");
     }
 
     Ok(())

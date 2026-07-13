@@ -72,6 +72,25 @@ impl HygieneStatistics {
         self.violation_repos.clone()
     }
 
+    #[must_use]
+    pub fn error_count(&self) -> u32 {
+        self.error_repos
+    }
+
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "clean_repos": self.clean_repos,
+            "repos_with_violations": self.repos_with_violations,
+            "total_violations": self.total_violations,
+            "gitignore_violations": self.gitignore_violations,
+            "universal_violations": self.universal_violations,
+            "large_files": self.large_files,
+            "error_repos": self.error_repos,
+            "failed_repos": self.failed_repos,
+        })
+    }
+
     pub fn update(
         &mut self,
         repo_name: &str,

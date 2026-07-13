@@ -19,7 +19,10 @@ async fn check_gitignore_violations(repo_path: &Path) -> Result<Vec<HygieneViola
         .await?;
 
     if !output.status.success() {
-        return Ok(Vec::new());
+        anyhow::bail!(
+            "git ls-files ignored check failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -48,7 +51,10 @@ async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolati
         .await?;
 
     if !output.status.success() {
-        return Ok(Vec::new());
+        anyhow::bail!(
+            "git ls-files check failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -94,7 +100,10 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
         .await?;
 
     if !output.status.success() {
-        return Ok(Vec::new());
+        anyhow::bail!(
+            "git history listing failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
 
     let objects_output = String::from_utf8_lossy(&output.stdout);
@@ -121,23 +130,27 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
         }
 
         let output = child.wait_with_output().await?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "git object inspection failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         for line in stdout.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 {
-                if let Ok(size) = parts[0].parse::<u64>() {
-                    if size > LARGE_FILE_THRESHOLD {
-                        let file_path = parts[2..].join(" ");
-                        if !file_path.is_empty() {
-                            violations.push(HygieneViolation {
-                                file_path,
-                                violation_type: ViolationType::LargeFile,
-                                size_bytes: Some(size),
-                            });
-                        }
-                    }
-                }
+            let Some((size, file_path)) = line.split_once(' ') else {
+                continue;
+            };
+            let Ok(size) = size.parse::<u64>() else {
+                continue;
+            };
+            if size > LARGE_FILE_THRESHOLD && !file_path.is_empty() {
+                violations.push(HygieneViolation {
+                    file_path: file_path.to_string(),
+                    violation_type: ViolationType::LargeFile,
+                    size_bytes: Some(size),
+                });
             }
         }
     }
