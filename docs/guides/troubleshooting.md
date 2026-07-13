@@ -73,7 +73,16 @@ Common issues and solutions for the repos tool.
 Git credential prompts are disabled during fleet operations so one inaccessible
 repository cannot hang the whole run. The command records the repository as
 failed and exits nonzero. The remote URL and transport in `.git/config` are
-used as configured; custom `GIT_SSH_COMMAND` values are preserved.
+used as configured; custom `GIT_SSH_COMMAND` values are preserved. `repos
+doctor` warns when a remote uses HTTP(S), without failing solely because of that
+transport.
+
+For a GitHub repository in an SSH-only setup:
+
+```bash
+git remote set-url origin git@github.com:OWNER/REPOSITORY.git
+git ls-remote origin
+```
 
 ## General Debugging
 

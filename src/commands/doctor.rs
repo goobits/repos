@@ -57,12 +57,21 @@ async fn run_diagnostics(context: crate::core::ProcessingContext) -> usize {
 
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore).await;
-            let findings = diagnose_repo(repo_path).await;
-            let symbol = if findings.is_empty() { "🟢" } else { "🟡" };
-            let message = if findings.is_empty() {
+            let (findings, advisories) = diagnose_repo(repo_path).await;
+            let symbol = if !findings.is_empty() || !advisories.is_empty() {
+                "🟡"
+            } else {
+                "🟢"
+            };
+            let message = if findings.is_empty() && advisories.is_empty() {
                 "healthy".to_string()
             } else {
-                findings.join("; ")
+                findings
+                    .iter()
+                    .chain(&advisories)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("; ")
             };
             println!(
                 "{symbol} {repo_name:width$}  {message}",
@@ -91,8 +100,9 @@ async fn run_diagnostics(context: crate::core::ProcessingContext) -> usize {
     unhealthy_repos + usize::from(nested_drift)
 }
 
-async fn diagnose_repo(path: &std::path::Path) -> Vec<String> {
+async fn diagnose_repo(path: &std::path::Path) -> (Vec<String>, Vec<String>) {
     let mut findings = Vec::new();
+    let mut advisories = Vec::new();
 
     match run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
         Ok((true, branch, _)) if branch == "HEAD" => findings.push("detached HEAD".to_string()),
@@ -118,6 +128,13 @@ async fn diagnose_repo(path: &std::path::Path) -> Vec<String> {
     };
 
     for remote in remotes {
+        let url_key = format!("remote.{remote}.url");
+        if let Ok((true, url, _)) = run_git(path, &["config", "--get", &url_key]).await {
+            if let Some(advisory) = transport_advisory(&remote, &url) {
+                advisories.push(advisory);
+            }
+        }
+
         match run_git(path, &["ls-remote", "--heads", &remote]).await {
             Ok((true, _, _)) => {}
             Ok((false, _, stderr)) => findings.push(format!(
@@ -152,5 +169,31 @@ async fn diagnose_repo(path: &std::path::Path) -> Vec<String> {
         Err(e) => findings.push(format!("status failed: {e}")),
     }
 
-    findings
+    (findings, advisories)
+}
+
+fn transport_advisory(remote: &str, url: &str) -> Option<String> {
+    let url = url.trim().to_ascii_lowercase();
+    (url.starts_with("https://") || url.starts_with("http://")).then(|| {
+        format!(
+            "warning: {remote} uses HTTP(S); SSH-only setup: git remote set-url {remote} <SSH clone URL>"
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transport_advisory;
+
+    #[test]
+    fn warns_for_http_remotes_without_echoing_the_url() {
+        let url = "https://token@example.com/team/repo.git";
+        let advisory = transport_advisory("origin", url).expect("HTTPS should produce a warning");
+
+        assert!(advisory.contains("origin uses HTTP(S)"));
+        assert!(!advisory.contains("token"));
+        assert!(transport_advisory("origin", "git@example.com:team/repo.git").is_none());
+        assert!(transport_advisory("origin", "ssh://git@example.com/team/repo.git").is_none());
+        assert!(transport_advisory("origin", "/tmp/repo.git").is_none());
+    }
 }

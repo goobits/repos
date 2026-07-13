@@ -189,6 +189,50 @@ fn test_cli_fails_when_remote_is_unreachable() {
     );
 }
 
+#[test]
+fn test_doctor_warns_for_accessible_https_remote_without_failing() {
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepoBuilder::new("test-https-warning")
+        .build()
+        .expect("Failed to create test repo");
+    let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    let https_url = "https://example.invalid/team/repo.git";
+
+    let set_url = Command::new("git")
+        .args(["remote", "set-url", "origin", https_url])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to set HTTPS remote");
+    assert!(set_url.status.success());
+
+    let rewrite_key = format!(
+        "url.{}.insteadOf",
+        remote.path().join("remote.git").display()
+    );
+    let rewrite = Command::new("git")
+        .args(["config", &rewrite_key, https_url])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to configure test URL rewrite");
+    assert!(rewrite.status.success());
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .arg("doctor")
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos doctor");
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+
+    assert!(
+        doctor.status.success(),
+        "advisory must not fail doctor: {stdout}"
+    );
+    assert!(stdout.contains("warning: origin uses HTTP(S)"), "{stdout}");
+}
+
 #[tokio::test]
 async fn test_push_command_with_uncommitted_changes() {
     let _lock = common::lock_test().await;

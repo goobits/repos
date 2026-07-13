@@ -311,7 +311,9 @@ Checks:
 
 `doctor` is read-only and exits nonzero when it finds any blocker. Git
 credential prompts are disabled, so an inaccessible HTTPS credential or SSH key
-is reported instead of waiting for input.
+is reported instead of waiting for input. HTTP(S) remotes also produce a
+non-failing advisory for SSH-only setups; accessible HTTP(S) remotes are not
+treated as unhealthy.
 
 ## Advanced
 
