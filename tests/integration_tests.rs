@@ -514,7 +514,7 @@ async fn test_has_uncommitted_changes() {
 
     // An unborn repository with no files should be clean. `git diff-index HEAD`
     // fails in this state, so this guards against treating Git errors as dirt.
-    let has_changes = has_uncommitted_changes(repo_path).await;
+    let has_changes = has_uncommitted_changes(repo_path).await.unwrap();
     assert!(
         !has_changes,
         "Should not report changes in a clean repo with no commits"
@@ -523,7 +523,7 @@ async fn test_has_uncommitted_changes() {
     let untracked_file = repo_path.join("untracked.txt");
     fs::write(&untracked_file, "untracked content").expect("Failed to write untracked file");
 
-    let has_changes = has_uncommitted_changes(repo_path).await;
+    let has_changes = has_uncommitted_changes(repo_path).await.unwrap();
     assert!(
         has_changes,
         "Should detect untracked changes before the first commit"
@@ -548,7 +548,7 @@ async fn test_has_uncommitted_changes() {
         .expect("Failed to commit");
 
     // Should have no uncommitted changes after commit
-    let has_changes = has_uncommitted_changes(repo_path).await;
+    let has_changes = has_uncommitted_changes(repo_path).await.unwrap();
     assert!(
         !has_changes,
         "Should have no uncommitted changes after clean commit"
@@ -558,7 +558,7 @@ async fn test_has_uncommitted_changes() {
     fs::write(&test_file, "modified content").expect("Failed to modify test file");
 
     // Should detect uncommitted changes
-    let has_changes = has_uncommitted_changes(repo_path).await;
+    let has_changes = has_uncommitted_changes(repo_path).await.unwrap();
     assert!(
         has_changes,
         "Should detect uncommitted changes after file modification"
@@ -572,7 +572,7 @@ async fn test_has_uncommitted_changes() {
         .expect("Failed to stage changes");
 
     // Should still have uncommitted changes (staged but not committed)
-    let has_changes = has_uncommitted_changes(repo_path).await;
+    let has_changes = has_uncommitted_changes(repo_path).await.unwrap();
     assert!(has_changes, "Should detect staged but uncommitted changes");
 
     // Commit the changes
@@ -583,7 +583,7 @@ async fn test_has_uncommitted_changes() {
         .expect("Failed to commit changes");
 
     // Should have no uncommitted changes after commit
-    let has_changes = has_uncommitted_changes(repo_path).await;
+    let has_changes = has_uncommitted_changes(repo_path).await.unwrap();
     assert!(
         !has_changes,
         "Should have no uncommitted changes after committing staged changes"
@@ -598,6 +598,8 @@ async fn test_create_and_push_tag() {
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let repo_path = temp_dir.path();
+    let remote_dir = TempDir::new().expect("Failed to create remote directory");
+    let remote_path = remote_dir.path().join("remote.git");
 
     // Initialize git repo
     let init_result = std::process::Command::new("git")
@@ -609,6 +611,21 @@ async fn test_create_and_push_tag() {
     if !init_result.status.success() {
         return; // Skip if git not available
     }
+
+    let remote_init = std::process::Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&remote_path)
+        .output()
+        .expect("Failed to initialize remote");
+    assert!(remote_init.status.success());
+
+    let remote_add = std::process::Command::new("git")
+        .args(["remote", "add", "origin"])
+        .arg(&remote_path)
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to add remote");
+    assert!(remote_add.status.success());
 
     // Configure git
     std::process::Command::new("git")
@@ -646,15 +663,10 @@ async fn test_create_and_push_tag() {
         .output()
         .expect("Failed to commit");
 
-    // Create a tag (push will fail without remote, but tag creation should work)
+    // Create and push a tag.
     let (success, message) = create_and_push_tag(repo_path, "v1.0.0").await;
 
-    // Tag creation should succeed even if push fails
-    assert!(
-        success || message.contains("failed to create tag"),
-        "Tag operation should complete (creation succeeds, push may fail): {}",
-        message
-    );
+    assert!(success, "Tag should be created and pushed: {message}");
 
     // Verify tag was created
     let tag_check = std::process::Command::new("git")
@@ -668,10 +680,10 @@ async fn test_create_and_push_tag() {
 
     // Try to create the same tag again - should indicate it already exists
     let (success, message) = create_and_push_tag(repo_path, "v1.0.0").await;
-    assert!(success, "Should handle existing tag gracefully");
+    assert!(success, "Should push an existing local tag: {message}");
     assert!(
-        message.contains("already exists"),
-        "Should indicate tag already exists: {}",
+        message.contains("existing tag pushed"),
+        "Should indicate existing tag was pushed: {}",
         message
     );
 }

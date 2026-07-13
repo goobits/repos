@@ -58,7 +58,7 @@ async fn test_invalid_git_repo_detection() -> Result<()> {
     std::fs::write(repo_path.join("README.md"), "hello")?;
 
     let fetch_result = fetch_and_analyze_for_pull(repo_path).await;
-    assert_eq!(fetch_result.status, Status::NoRemote); // Currently reports NoRemote if git fails
+    assert_eq!(fetch_result.status, Status::Error);
 
     Ok(())
 }
@@ -76,8 +76,7 @@ async fn test_corrupt_git_repo_handled() -> Result<()> {
     }
 
     let fetch_result = fetch_and_analyze_for_pull(repo_path).await;
-    // Should fail gracefully
-    assert_eq!(fetch_result.status, Status::NoRemote); // Fallback status
+    assert_eq!(fetch_result.status, Status::Error);
 
     Ok(())
 }

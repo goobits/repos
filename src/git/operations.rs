@@ -58,13 +58,9 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
         let timeout_duration = Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS);
         let mut command = Command::new("git");
 
-        if is_network {
-            command.args([
-                "-c",
-                "url.git@github.com:.insteadOf=https://github.com/",
-                "-c",
-                "url.git@github.com:.insteadOf=http://github.com/",
-            ]);
+        command.kill_on_drop(true);
+        if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+            command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
         }
 
         let result = tokio::time::timeout(
@@ -74,7 +70,6 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
                 .current_dir(path)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("GCM_INTERACTIVE", "never")
-                .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
                 .output(),
         )
         .await;
@@ -259,6 +254,42 @@ pub struct FetchResult {
     pub message: String,
 }
 
+impl FetchResult {
+    fn error(message: String, has_uncommitted: bool, current_branch: String) -> Self {
+        Self {
+            has_uncommitted,
+            current_branch,
+            ahead_count: 0,
+            upstream_exists: false,
+            upstream_remote: None,
+            upstream_branch: None,
+            status: Status::Error,
+            message,
+        }
+    }
+}
+
+fn command_error(stderr: &str, fallback: &str) -> String {
+    if stderr.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        crate::core::clean_error_message(stderr)
+    }
+}
+
+async fn count_revisions(path: &Path, include: &str, exclude: &str) -> Result<u32> {
+    match run_git(path, &["rev-list", "--count", include, exclude]).await {
+        Ok((true, count, _)) => count
+            .parse::<u32>()
+            .map_err(|e| anyhow::anyhow!("invalid revision count '{count}': {e}")),
+        Ok((false, _, stderr)) => Err(anyhow::anyhow!(command_error(
+            &stderr,
+            "revision count failed"
+        ))),
+        Err(e) => Err(e),
+    }
+}
+
 /// Resolve the configured upstream remote + branch for the current branch.
 async fn get_upstream_push_target(
     path: &Path,
@@ -293,22 +324,29 @@ async fn get_upstream_push_target(
 pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult {
     use crate::core::clean_error_message;
 
-    let has_uncommitted = has_uncommitted_changes(path).await;
+    let has_uncommitted = match has_uncommitted_changes(path).await {
+        Ok(has_changes) => has_changes,
+        Err(e) => {
+            return FetchResult::error(clean_error_message(&e.to_string()), false, String::new())
+        }
+    };
 
     // Get list of remotes
     let remotes = match run_git(path, GIT_REMOTE_ARGS).await {
         Ok((true, output, _)) => output,
-        Ok((false, _, _)) | Err(_) => {
-            return FetchResult {
+        Ok((false, _, stderr)) => {
+            return FetchResult::error(
+                command_error(&stderr, "remote inspection failed"),
                 has_uncommitted,
-                current_branch: String::new(),
-                ahead_count: 0,
-                upstream_exists: false,
-                upstream_remote: None,
-                upstream_branch: None,
-                status: Status::NoRemote,
-                message: STATUS_NO_REMOTE.to_string(),
-            };
+                String::new(),
+            )
+        }
+        Err(e) => {
+            return FetchResult::error(
+                clean_error_message(&e.to_string()),
+                has_uncommitted,
+                String::new(),
+            )
         }
     };
 
@@ -328,17 +366,19 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
     // Get current branch
     let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
         Ok((true, branch, _)) => branch,
-        Ok((false, _, _)) | Err(_) => {
-            return FetchResult {
+        Ok((false, _, stderr)) => {
+            return FetchResult::error(
+                command_error(&stderr, "branch inspection failed"),
                 has_uncommitted,
-                current_branch: String::new(),
-                ahead_count: 0,
-                upstream_exists: false,
-                upstream_remote: None,
-                upstream_branch: None,
-                status: Status::Skip,
-                message: STATUS_DETACHED_HEAD.to_string(),
-            };
+                String::new(),
+            )
+        }
+        Err(e) => {
+            return FetchResult::error(
+                clean_error_message(&e.to_string()),
+                has_uncommitted,
+                String::new(),
+            )
         }
     };
 
@@ -357,23 +397,18 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
     }
 
     // Fetch latest changes to ensure we have up-to-date refs
-    if let Err(e) = run_git(path, GIT_FETCH_ARGS).await {
-        let error_message = clean_error_message(&e.to_string());
+    let fetch_error = match run_git(path, GIT_FETCH_ARGS).await {
+        Ok((true, _, _)) => None,
+        Ok((false, _, stderr)) => Some(command_error(&stderr, "fetch failed")),
+        Err(e) => Some(clean_error_message(&e.to_string())),
+    };
+    if let Some(error_message) = fetch_error {
         let final_message = if is_rate_limit_error(&error_message) {
             format!("⚠️ RATE LIMIT: {error_message}")
         } else {
             error_message
         };
-        return FetchResult {
-            has_uncommitted,
-            current_branch,
-            ahead_count: 0,
-            upstream_exists: false,
-            upstream_remote: None,
-            upstream_branch: None,
-            status: Status::Error,
-            message: final_message,
-        };
+        return FetchResult::error(final_message, has_uncommitted, current_branch);
     }
 
     // Check if current branch has an upstream
@@ -402,17 +437,27 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
         };
 
     // Check if local is ahead of remote
-    let ahead_check = run_git(path, &["rev-list", "--count", "HEAD", "^@{upstream}"]).await;
-    let ahead_count: u32 = match ahead_check {
-        Ok((true, count_str, _)) => count_str.trim().parse().unwrap_or(0),
-        _ => 0,
+    let ahead_count = match count_revisions(path, "HEAD", "^@{upstream}").await {
+        Ok(count) => count,
+        Err(e) => {
+            return FetchResult::error(
+                clean_error_message(&e.to_string()),
+                has_uncommitted,
+                current_branch,
+            )
+        }
     };
 
     // Check if local is behind remote (to detect diverged branches)
-    let behind_check = run_git(path, &["rev-list", "--count", "@{upstream}", "^HEAD"]).await;
-    let behind_count: u32 = match behind_check {
-        Ok((true, count_str, _)) => count_str.trim().parse().unwrap_or(0),
-        _ => 0,
+    let behind_count = match count_revisions(path, "@{upstream}", "^HEAD").await {
+        Ok(count) => count,
+        Err(e) => {
+            return FetchResult::error(
+                clean_error_message(&e.to_string()),
+                has_uncommitted,
+                current_branch,
+            )
+        }
     };
 
     // Branches have diverged - both ahead and behind
@@ -625,27 +670,14 @@ pub async fn unstage_files(path: &Path, pattern: &str) -> Result<(bool, String, 
 /// Gets the staging status of the repository
 /// Returns (stdout, stderr) with git status --porcelain output
 pub async fn get_staging_status(path: &Path) -> Result<(String, String)> {
-    let output = tokio::time::timeout(
-        Duration::from_secs(GIT_OPERATION_TIMEOUT_SECS),
-        Command::new("git")
-            .args(GIT_STATUS_PORCELAIN_ARGS)
-            .current_dir(path)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GCM_INTERACTIVE", "never")
-            .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
-            .output(),
-    )
-    .await
-    .map_err(|_| {
-        anyhow::anyhow!("Git operation timed out after {GIT_OPERATION_TIMEOUT_SECS} seconds")
-    })??;
-
-    let stdout = String::from_utf8_lossy(&output.stdout)
-        .trim_end_matches(['\r', '\n'])
-        .to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-
-    Ok((stdout, stderr))
+    match run_git(path, GIT_STATUS_PORCELAIN_ARGS).await {
+        Ok((true, stdout, stderr)) => Ok((stdout, stderr)),
+        Ok((false, _, stderr)) => Err(anyhow::anyhow!(command_error(
+            &stderr,
+            "status inspection failed"
+        ))),
+        Err(e) => Err(e),
+    }
 }
 
 /// Checks if repository has staged changes ready to commit
@@ -682,14 +714,18 @@ pub async fn commit_changes(
 ///
 /// Note: There are synchronous versions in subrepo/{mod.rs, sync.rs} for use
 /// in non-async contexts.
-pub async fn has_uncommitted_changes(path: &Path) -> bool {
+pub async fn has_uncommitted_changes(path: &Path) -> Result<bool> {
     // Refresh tracked file stat info first. Ignore failures because status below
     // is authoritative and works for unborn repositories.
     let _ = run_git(path, &["update-index", "--refresh"]).await;
 
     match run_git(path, GIT_STATUS_PORCELAIN_ARGS).await {
-        Ok((true, stdout, _)) => !stdout.is_empty(),
-        Ok((false, _, _)) | Err(_) => false,
+        Ok((true, stdout, _)) => Ok(!stdout.is_empty()),
+        Ok((false, _, stderr)) => Err(anyhow::anyhow!(command_error(
+            &stderr,
+            "status inspection failed"
+        ))),
+        Err(e) => Err(e),
     }
 }
 
@@ -705,7 +741,6 @@ pub async fn is_detached_head(path: &Path) -> Result<bool> {
 /// Creates a git tag and pushes it to the remote
 /// Returns (success, message)
 pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) {
-    // Create the tag
     let tag_result = run_git(path, &["tag", tag_name]).await;
 
     let (success, _, stderr) = match tag_result {
@@ -713,31 +748,68 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
         Err(e) => return (false, format!("failed to create tag: {e}")),
     };
 
-    if !success {
-        // Tag might already exist
-        if stderr.contains("already exists") {
-            return (true, "tag already exists".to_string());
-        }
+    let existed = !success && stderr.contains("already exists");
+    if !success && !existed {
         return (false, format!("failed to create tag: {stderr}"));
     }
 
-    // Push the tag
-    let push_result = run_git(path, &["push", "origin", tag_name]).await;
+    let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
+        Ok((true, branch, _)) if branch != DETACHED_HEAD_BRANCH => Some(branch),
+        _ => None,
+    };
+    let upstream_remote = if let Some(branch) = current_branch {
+        get_upstream_push_target(path, &branch)
+            .await
+            .ok()
+            .flatten()
+            .map(|(remote, _)| remote)
+    } else {
+        None
+    };
+    let remote_name = match upstream_remote {
+        Some(remote) => remote,
+        None => match run_git(path, GIT_REMOTE_ARGS).await {
+            Ok((true, remotes, _)) => {
+                let names = remotes.lines().collect::<Vec<_>>();
+                if names.contains(&"origin") {
+                    "origin".to_string()
+                } else if let Some(remote) = names.first() {
+                    (*remote).to_string()
+                } else {
+                    return (
+                        false,
+                        "tag created locally; no remote configured".to_string(),
+                    );
+                }
+            }
+            Ok((false, _, stderr)) => {
+                return (
+                    false,
+                    format!("tag created locally; remote inspection failed: {stderr}"),
+                )
+            }
+            Err(e) => {
+                return (
+                    false,
+                    format!("tag created locally; remote inspection failed: {e}"),
+                )
+            }
+        },
+    };
+
+    let push_result = run_git(path, &["push", &remote_name, tag_name]).await;
 
     match push_result {
+        Ok((true, _, _)) if existed => (true, format!("existing tag pushed {tag_name}")),
         Ok((true, _, _)) => (true, format!("tagged & pushed {tag_name}")),
-        Ok((false, _, stderr)) => {
-            // Tag was created but push failed - that's okay, we'll leave the local tag
-            (
-                true,
-                format!(
-                    "tagged {} (push failed: {})",
-                    tag_name,
-                    stderr.lines().next().unwrap_or("unknown error")
-                ),
-            )
-        }
-        Err(e) => (true, format!("tagged {tag_name} (push failed: {e})")),
+        Ok((false, _, stderr)) => (
+            false,
+            format!(
+                "tag exists locally; push failed: {}",
+                stderr.lines().next().unwrap_or("unknown error")
+            ),
+        ),
+        Err(e) => (false, format!("tag exists locally; push failed: {e}")),
     }
 }
 
@@ -750,23 +822,40 @@ pub struct PullFetchResult {
     pub message: String,
 }
 
+impl PullFetchResult {
+    fn error(message: String, has_uncommitted: bool) -> Self {
+        Self {
+            has_uncommitted,
+            behind_count: 0,
+            status: Status::Error,
+            message,
+        }
+    }
+}
+
 /// Phase 1: Fetch and analyze repository state for pull (read-only, can be highly concurrent)
 /// Returns `PullFetchResult` with repository state after fetching
 pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     use crate::core::clean_error_message;
 
-    let has_uncommitted = has_uncommitted_changes(path).await;
+    let has_uncommitted = match has_uncommitted_changes(path).await {
+        Ok(has_changes) => has_changes,
+        Err(e) => {
+            return PullFetchResult::error(clean_error_message(&e.to_string()), false);
+        }
+    };
 
     // Get list of remotes
     let remotes = match run_git(path, GIT_REMOTE_ARGS).await {
         Ok((true, output, _)) => output,
-        Ok((false, _, _)) | Err(_) => {
-            return PullFetchResult {
+        Ok((false, _, stderr)) => {
+            return PullFetchResult::error(
+                command_error(&stderr, "remote inspection failed"),
                 has_uncommitted,
-                behind_count: 0,
-                status: Status::NoRemote,
-                message: STATUS_NO_REMOTE.to_string(),
-            };
+            )
+        }
+        Err(e) => {
+            return PullFetchResult::error(clean_error_message(&e.to_string()), has_uncommitted)
         }
     };
 
@@ -782,13 +871,14 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     // Get current branch
     let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
         Ok((true, branch, _)) => branch,
-        Ok((false, _, _)) | Err(_) => {
-            return PullFetchResult {
+        Ok((false, _, stderr)) => {
+            return PullFetchResult::error(
+                command_error(&stderr, "branch inspection failed"),
                 has_uncommitted,
-                behind_count: 0,
-                status: Status::Skip,
-                message: STATUS_DETACHED_HEAD.to_string(),
-            };
+            )
+        }
+        Err(e) => {
+            return PullFetchResult::error(clean_error_message(&e.to_string()), has_uncommitted)
         }
     };
 
@@ -803,19 +893,18 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     }
 
     // Fetch latest changes to ensure we have up-to-date refs
-    if let Err(e) = run_git(path, GIT_FETCH_ARGS).await {
-        let error_message = clean_error_message(&e.to_string());
+    let fetch_error = match run_git(path, GIT_FETCH_ARGS).await {
+        Ok((true, _, _)) => None,
+        Ok((false, _, stderr)) => Some(command_error(&stderr, "fetch failed")),
+        Err(e) => Some(clean_error_message(&e.to_string())),
+    };
+    if let Some(error_message) = fetch_error {
         let final_message = if is_rate_limit_error(&error_message) {
             format!("⚠️ RATE LIMIT: {error_message}")
         } else {
             error_message
         };
-        return PullFetchResult {
-            has_uncommitted,
-            behind_count: 0,
-            status: Status::Error,
-            message: final_message,
-        };
+        return PullFetchResult::error(final_message, has_uncommitted);
     }
 
     // Check if current branch has an upstream
@@ -832,17 +921,19 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     }
 
     // Check if local is behind remote
-    let behind_check = run_git(path, &["rev-list", "--count", "@{upstream}", "^HEAD"]).await;
-    let behind_count: u32 = match behind_check {
-        Ok((true, count_str, _)) => count_str.trim().parse().unwrap_or(0),
-        _ => 0,
+    let behind_count = match count_revisions(path, "@{upstream}", "^HEAD").await {
+        Ok(count) => count,
+        Err(e) => {
+            return PullFetchResult::error(clean_error_message(&e.to_string()), has_uncommitted)
+        }
     };
 
     // Check if local is ahead of remote (to detect diverged branches)
-    let ahead_check = run_git(path, &["rev-list", "--count", "HEAD", "^@{upstream}"]).await;
-    let ahead_count: u32 = match ahead_check {
-        Ok((true, count_str, _)) => count_str.trim().parse().unwrap_or(0),
-        _ => 0,
+    let ahead_count = match count_revisions(path, "HEAD", "^@{upstream}").await {
+        Ok(count) => count,
+        Err(e) => {
+            return PullFetchResult::error(clean_error_message(&e.to_string()), has_uncommitted)
+        }
     };
 
     // Branches have diverged - both ahead and behind

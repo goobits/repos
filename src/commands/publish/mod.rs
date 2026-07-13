@@ -42,6 +42,16 @@ pub async fn handle_publish_command(
 
     let plan = plan_publish(repos, options).await;
 
+    if !plan.inspection_errors.is_empty() {
+        for (repo, error) in &plan.inspection_errors {
+            eprintln!("❌ {repo}: status inspection failed: {error}");
+        }
+        anyhow::bail!(
+            "{} repositories could not be inspected safely",
+            plan.inspection_errors.len()
+        );
+    }
+
     // Show filtering feedback
     if plan.skipped_count > 0 {
         let visibility_type = if private_only { "private" } else { "public" };
@@ -75,7 +85,7 @@ pub async fn handle_publish_command(
         }
         println!("\nCommit your changes first, or use --allow-dirty to publish anyway (not recommended).\n");
         set_terminal_title_and_flush("✅ repos");
-        return Ok(());
+        anyhow::bail!("publishing blocked by uncommitted changes");
     }
 
     if plan.packages.is_empty() {

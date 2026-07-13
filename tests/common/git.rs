@@ -3,6 +3,7 @@
 use anyhow::Result;
 use std::path::Path;
 use std::process::Command;
+use tempfile::TempDir;
 
 /// Sets up a git repository with user config
 /// Returns Ok(()) on success, or skips test if git is not available
@@ -108,6 +109,54 @@ pub fn add_git_remote(path: &Path, remote_name: &str, url: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Attaches a temporary bare remote and optionally configures the current branch upstream.
+pub fn add_bare_remote(path: &Path, set_upstream: bool) -> Result<TempDir> {
+    let remote_dir = TempDir::new()?;
+    let remote_path = remote_dir.path().join("remote.git");
+    let init = Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&remote_path)
+        .output()?;
+    if !init.status.success() {
+        anyhow::bail!("Failed to initialize bare remote");
+    }
+
+    let remote_path = remote_path.to_string_lossy();
+    let has_origin = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(path)
+        .output()?
+        .status
+        .success();
+    let remote_args = if has_origin {
+        ["remote", "set-url", "origin", remote_path.as_ref()]
+    } else {
+        ["remote", "add", "origin", remote_path.as_ref()]
+    };
+    let remote = Command::new("git")
+        .args(remote_args)
+        .current_dir(path)
+        .output()?;
+    if !remote.status.success() {
+        anyhow::bail!("Failed to configure bare remote");
+    }
+
+    if set_upstream {
+        let push = Command::new("git")
+            .args(["push", "-u", "origin", "HEAD"])
+            .current_dir(path)
+            .output()?;
+        if !push.status.success() {
+            anyhow::bail!(
+                "Failed to initialize upstream: {}",
+                String::from_utf8_lossy(&push.stderr)
+            );
+        }
+    }
+
+    Ok(remote_dir)
 }
 
 /// Checks if git is available in the system

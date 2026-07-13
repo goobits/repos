@@ -620,7 +620,7 @@ fn append_failed_section(
     lines.push(format!("{BOLD_PURPLE}▌ Failed{RESET}"));
     if failed_repos.is_empty() {
         lines.push(format!("  {RED}!{RESET} {errors} repos failed"));
-        lines.push(format!("    {DIM}↳ Run `repos status --failed`{RESET}"));
+        lines.push(format!("    {DIM}↳ Run `repos doctor`{RESET}"));
     } else {
         for (repo_name, repo_path, error) in failed_repos {
             lines.push(format!(
@@ -729,7 +729,7 @@ fn append_next_section(
     let mut next_index = 1;
     lines.push(format!("{BOLD_PURPLE}▌ Next{RESET}"));
     if errors > 0 {
-        push_next_step(lines, &mut next_index, "`repos status --failed`");
+        push_next_step(lines, &mut next_index, "`repos doctor`");
     }
     if skipped > 0 {
         push_next_step(lines, &mut next_index, "`repos status --skipped`");
@@ -995,7 +995,16 @@ pub(crate) fn clean_error_message(error: &str) -> String {
         } else {
             "timeout".to_string()
         }
-    } else if cleaned.contains("authentication") || cleaned.contains("Permission denied") {
+    } else if lower_contains_any(
+        &cleaned,
+        &[
+            "authentication",
+            "permission denied",
+            "publickey",
+            "could not read username",
+            "terminal prompts disabled",
+        ],
+    ) {
         "authentication failed".to_string()
     } else if cleaned.contains("conflict") || cleaned.contains("diverged") {
         "merge conflict".to_string()
@@ -1003,14 +1012,25 @@ pub(crate) fn clean_error_message(error: &str) -> String {
         "network error".to_string()
     } else {
         // Truncate long messages
-        if cleaned.len() > ERROR_MESSAGE_MAX_LENGTH {
-            format!("{}...", &cleaned[..ERROR_MESSAGE_TRUNCATE_LENGTH])
+        if cleaned.chars().count() > ERROR_MESSAGE_MAX_LENGTH {
+            format!(
+                "{}...",
+                cleaned
+                    .chars()
+                    .take(ERROR_MESSAGE_TRUNCATE_LENGTH)
+                    .collect::<String>()
+            )
         } else {
             cleaned
         }
     };
 
     message
+}
+
+fn lower_contains_any(value: &str, patterns: &[&str]) -> bool {
+    let lower = value.to_lowercase();
+    patterns.iter().any(|pattern| lower.contains(pattern))
 }
 
 /// Gets the list of changed files in a repository using git status --porcelain

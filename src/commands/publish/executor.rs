@@ -109,7 +109,7 @@ pub async fn execute_publish(
 
             let (success, message) = pkg.manager.publish(&pkg.path, false).await;
 
-            let status = if success {
+            let mut status = if success {
                 if message.contains("already") {
                     PublishStatus::AlreadyPublished
                 } else {
@@ -128,7 +128,8 @@ pub async fn execute_publish(
                     if tag_success {
                         final_message = format!("{message}, {tag_message}");
                     } else {
-                        final_message = format!("{message} (tag failed: {tag_message})");
+                        status = PublishStatus::Error;
+                        final_message = format!("{message}; tag failed: {tag_message}");
                     }
                 }
             }
@@ -165,6 +166,12 @@ pub async fn execute_publish(
         println!("{}", "━".repeat(70));
     }
     println!();
+
+    let error_count = final_stats.errors.len();
+    drop(final_stats);
+    if error_count > 0 {
+        anyhow::bail!("{error_count} packages failed to publish completely");
+    }
 
     Ok(())
 }

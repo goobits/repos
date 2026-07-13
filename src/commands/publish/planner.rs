@@ -9,6 +9,7 @@ pub struct PublishPlan {
     pub dirty_repos: Vec<String>,
     pub skipped_count: usize,
     pub unknown_count: usize,
+    pub inspection_errors: Vec<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -54,15 +55,15 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
             let allow_dirty = options.allow_dirty;
             let dry_run = options.dry_run;
             async move {
-                let (visibility, manager, is_dirty) =
+                let (visibility, manager, dirty_result) =
                     tokio::join!(get_repo_visibility(&path), detect_manager(&path), async {
                         if !allow_dirty && !dry_run {
                             has_uncommitted_changes(&path).await
                         } else {
-                            false
+                            Ok(false)
                         }
                     });
-                (name, path, visibility, manager, is_dirty)
+                (name, path, visibility, manager, dirty_result)
             }
         })
         .collect();
@@ -74,9 +75,10 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
         dirty_repos: Vec::new(),
         skipped_count: 0,
         unknown_count: 0,
+        inspection_errors: Vec::new(),
     };
 
-    for (name, path, visibility, manager, is_dirty) in analysis_results {
+    for (name, path, visibility, manager, dirty_result) in analysis_results {
         // Apply visibility filter
         if let Some(desired) = filter_visibility {
             if visibility != desired {
@@ -93,6 +95,13 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
         }
 
         if let Some(mgr) = manager {
+            let is_dirty = match dirty_result {
+                Ok(is_dirty) => is_dirty,
+                Err(e) => {
+                    plan.inspection_errors.push((name, e.to_string()));
+                    continue;
+                }
+            };
             if is_dirty {
                 plan.dirty_repos.push(name.clone());
             }

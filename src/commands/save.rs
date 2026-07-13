@@ -62,7 +62,7 @@ pub async fn handle_save_command(
         auto_upstream,
         dry_run,
     )
-    .await;
+    .await?;
 
     set_terminal_title_and_flush("✅ repos save");
     Ok(())
@@ -74,7 +74,7 @@ async fn process_save_repositories(
     include_untracked: bool,
     auto_upstream: bool,
     dry_run: bool,
-) {
+) -> Result<()> {
     use crate::core::{acquire_stats_lock, create_progress_bar};
 
     let mut progress_bars = Vec::new();
@@ -148,6 +148,16 @@ async fn process_save_repositories(
         println!("{}", "━".repeat(70));
     }
     println!();
+
+    let error_count = final_stats
+        .error_repos
+        .load(std::sync::atomic::Ordering::Relaxed);
+    drop(final_stats);
+    if error_count > 0 {
+        anyhow::bail!("{error_count} repositories failed to save");
+    }
+
+    Ok(())
 }
 
 async fn save_one_repo(

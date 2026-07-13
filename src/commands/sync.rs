@@ -48,8 +48,9 @@ pub async fn handle_sync_command(
     jobs: Option<usize>,
     sequential: bool,
 ) -> Result<()> {
-    handle_pull_command(true, verbose, show_changes, true, jobs, sequential).await?;
-    handle_push_command(
+    let pull_result =
+        handle_pull_command(true, verbose, show_changes, true, jobs, sequential).await;
+    let push_result = handle_push_command(
         auto_upstream,
         verbose,
         show_changes,
@@ -57,7 +58,14 @@ pub async fn handle_sync_command(
         jobs,
         sequential,
     )
-    .await
+    .await;
+
+    match (pull_result, push_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(pull), Ok(())) => Err(pull),
+        (Ok(()), Err(push)) => Err(push),
+        (Err(pull), Err(push)) => Err(anyhow::anyhow!("pull failed: {pull}; push failed: {push}")),
+    }
 }
 
 /// Handles the repository push command
@@ -122,7 +130,7 @@ pub async fn handle_push_command(
         show_changes,
         no_drift_check,
     )
-    .await;
+    .await?;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos");
@@ -140,7 +148,7 @@ async fn process_push_repositories(
     verbose: bool,
     show_changes: bool,
     no_drift_check: bool,
-) {
+) -> Result<()> {
     use crate::core::{acquire_stats_lock, create_progress_bar};
     use crate::git::{fetch_and_analyze, push_if_needed};
     use futures::stream::{FuturesUnordered, StreamExt};
@@ -479,6 +487,16 @@ async fn process_push_repositories(
     };
     println!("{report}");
     println!();
+
+    let error_count = final_stats
+        .error_repos
+        .load(std::sync::atomic::Ordering::Relaxed);
+    drop(final_stats);
+    if error_count > 0 {
+        anyhow::bail!("{error_count} repositories failed to push");
+    }
+
+    Ok(())
 }
 
 fn format_nested_drift_work_items() -> (usize, Vec<String>) {
@@ -556,7 +574,7 @@ pub async fn handle_pull_command(
         };
 
     // Process all repositories concurrently
-    process_pull_repositories(context, use_rebase, verbose, show_changes).await;
+    process_pull_repositories(context, use_rebase, verbose, show_changes).await?;
 
     // Check for nested repository drift unless explicitly skipped
     if !no_drift_check {
@@ -578,7 +596,7 @@ async fn process_pull_repositories(
     use_rebase: bool,
     verbose: bool,
     show_changes: bool,
-) {
+) -> Result<()> {
     use crate::core::{acquire_stats_lock, create_progress_bar};
     use crate::git::{fetch_and_analyze_for_pull, pull_if_needed};
     use futures::stream::{FuturesUnordered, StreamExt};
@@ -913,4 +931,14 @@ async fn process_pull_repositories(
         println!("{}", "━".repeat(70));
     }
     println!();
+
+    let error_count = final_stats
+        .error_repos
+        .load(std::sync::atomic::Ordering::Relaxed);
+    drop(final_stats);
+    if error_count > 0 {
+        anyhow::bail!("{error_count} repositories failed to pull");
+    }
+
+    Ok(())
 }

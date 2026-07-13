@@ -9,6 +9,7 @@
 //! without requiring actual network operations or real remotes.
 
 mod common;
+use common::git::add_bare_remote;
 use common::{is_git_available, TestRepoBuilder};
 
 use goobits_repos::commands::staging::{
@@ -93,16 +94,14 @@ async fn test_push_command_with_single_repo_no_changes() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository with a remote
-    let repo = match TestRepoBuilder::new("test-repo")
-        .with_github_remote("https://github.com/test/repo.git")
-        .build()
-    {
+    let repo = match TestRepoBuilder::new("test-repo").build() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
             return;
         }
     };
+    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
 
     // Change to repo directory so it gets discovered
     env::set_current_dir(repo.path()).expect("Failed to change dir");
@@ -155,6 +154,40 @@ async fn test_push_command_with_no_remote() {
     );
 }
 
+#[test]
+fn test_cli_fails_when_remote_is_unreachable() {
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepoBuilder::new("test-unreachable")
+        .build()
+        .expect("Failed to create test repo");
+    let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    drop(remote);
+
+    let push = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["push", "--sequential", "--no-drift-check"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos push");
+    assert!(!push.status.success(), "unreachable push must exit nonzero");
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .arg("doctor")
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos doctor");
+    assert!(
+        !doctor.status.success(),
+        "unreachable remote must make doctor exit nonzero"
+    );
+    assert!(
+        String::from_utf8_lossy(&doctor.stdout).contains("access failed"),
+        "doctor should identify remote access failure"
+    );
+}
+
 #[tokio::test]
 async fn test_push_command_with_uncommitted_changes() {
     let _lock = common::lock_test().await;
@@ -166,16 +199,14 @@ async fn test_push_command_with_uncommitted_changes() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-repo-uncommitted")
-        .with_github_remote("https://github.com/test/repo.git")
-        .build()
-    {
+    let repo = match TestRepoBuilder::new("test-repo-uncommitted").build() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
             return;
         }
     };
+    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
 
     // Create an uncommitted file
     let test_file = repo.path().join("uncommitted.txt");
@@ -208,16 +239,14 @@ async fn test_pull_command_with_single_repo() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository with a remote
-    let repo = match TestRepoBuilder::new("test-repo-pull")
-        .with_github_remote("https://github.com/test/repo.git")
-        .build()
-    {
+    let repo = match TestRepoBuilder::new("test-repo-pull").build() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
             return;
         }
     };
+    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
 
     // Change to repo directory
     env::set_current_dir(repo.path()).expect("Failed to change dir");
@@ -246,16 +275,14 @@ async fn test_push_command_with_auto_upstream() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository with remote
-    let repo = match TestRepoBuilder::new("test-repo-force")
-        .with_github_remote("https://github.com/test/repo.git")
-        .build()
-    {
+    let repo = match TestRepoBuilder::new("test-repo-force").build() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
             return;
         }
     };
+    let _remote = add_bare_remote(repo.path(), false).expect("Failed to attach bare remote");
 
     // Change to repo directory
     env::set_current_dir(repo.path()).expect("Failed to change dir");
@@ -807,16 +834,14 @@ async fn test_push_command_with_sequential_flag() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-sequential")
-        .with_github_remote("https://github.com/test/repo.git")
-        .build()
-    {
+    let repo = match TestRepoBuilder::new("test-sequential").build() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
             return;
         }
     };
+    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
 
     // Change to repo directory
     let original_dir = env::current_dir().expect("Failed to get current dir");
@@ -844,16 +869,14 @@ async fn test_push_command_with_custom_jobs_limit() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-jobs-limit")
-        .with_github_remote("https://github.com/test/repo.git")
-        .build()
-    {
+    let repo = match TestRepoBuilder::new("test-jobs-limit").build() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
             return;
         }
     };
+    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
 
     // Change to repo directory
     let original_dir = env::current_dir().expect("Failed to get current dir");

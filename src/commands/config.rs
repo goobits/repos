@@ -245,7 +245,7 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     if target_config.is_empty() {
         println!("\r❌ No git configuration found to sync");
         set_terminal_title_and_flush("✅ repos");
-        return Ok(());
+        anyhow::bail!("no git configuration found to sync");
     }
 
     let total_repos = repos.len();
@@ -285,7 +285,7 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
         };
 
     // Process all repositories concurrently for config sync
-    process_config_repositories(context, resolved_args.command, target_config).await;
+    process_config_repositories(context, resolved_args.command, target_config).await?;
 
     set_terminal_title_and_flush("✅ repos");
     Ok(())
@@ -296,7 +296,7 @@ async fn process_config_repositories(
     context: ProcessingContext,
     command: ConfigCommand,
     target_config: UserConfig,
-) {
+) -> Result<()> {
     use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
@@ -403,4 +403,14 @@ async fn process_config_repositories(
 
     // Add final spacing
     println!();
+
+    let error_count = final_stats
+        .error_repos
+        .load(std::sync::atomic::Ordering::Relaxed);
+    drop(final_stats);
+    if error_count > 0 {
+        anyhow::bail!("{error_count} repositories failed config synchronization");
+    }
+
+    Ok(())
 }

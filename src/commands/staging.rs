@@ -108,7 +108,7 @@ pub async fn handle_stage_command(pattern: String) -> Result<()> {
         return Ok(());
     };
 
-    process_staging_repositories(context, pattern, true).await;
+    process_staging_repositories(context, pattern, true).await?;
     set_terminal_title_and_flush("✅ repos stage");
     Ok(())
 }
@@ -125,7 +125,7 @@ pub async fn handle_unstage_command(pattern: String) -> Result<()> {
         return Ok(());
     };
 
-    process_staging_repositories(context, pattern, false).await;
+    process_staging_repositories(context, pattern, false).await?;
     set_terminal_title_and_flush("✅ repos unstage");
     Ok(())
 }
@@ -264,7 +264,7 @@ async fn process_staging_repositories(
     context: crate::core::ProcessingContext,
     pattern: String,
     is_staging: bool,
-) {
+) -> Result<()> {
     use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
@@ -367,6 +367,16 @@ async fn process_staging_repositories(
 
     // Add final spacing
     println!();
+
+    let error_count = final_stats
+        .error_repos
+        .load(std::sync::atomic::Ordering::Relaxed);
+    drop(final_stats);
+    if error_count > 0 {
+        anyhow::bail!("{error_count} repositories failed staging operations");
+    }
+
+    Ok(())
 }
 
 /// Processes all repositories concurrently for status checking
@@ -669,7 +679,7 @@ pub async fn handle_commit_command(message: String, include_empty: bool) -> Resu
         return Ok(());
     };
 
-    process_commit_repositories(context, message, include_empty).await;
+    process_commit_repositories(context, message, include_empty).await?;
     set_terminal_title_and_flush("✅ repos commit");
     Ok(())
 }
@@ -679,7 +689,7 @@ async fn process_commit_repositories(
     context: crate::core::ProcessingContext,
     message: String,
     include_empty: bool,
-) {
+) -> Result<()> {
     use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
@@ -774,6 +784,16 @@ async fn process_commit_repositories(
 
     // Add final spacing
     println!();
+
+    let error_count = final_stats
+        .error_repos
+        .load(std::sync::atomic::Ordering::Relaxed);
+    drop(final_stats);
+    if error_count > 0 {
+        anyhow::bail!("{error_count} repositories failed to commit");
+    }
+
+    Ok(())
 }
 
 /// Performs a staging operation on a single repository
@@ -783,11 +803,10 @@ async fn perform_staging_operation(repo_path: &std::path::Path, pattern: &str) -
     match stage_files(repo_path, pattern).await {
         Ok((true, _, _)) => (Status::Staged, format!("staged {pattern}")),
         Ok((false, _, stderr)) => {
-            let error_message = clean_error_message(&stderr);
-            if error_message.contains("pathspec") && error_message.contains("did not match") {
+            if stderr.contains("pathspec") && stderr.contains("did not match") {
                 (Status::NoChanges, format!("no files match {pattern}"))
             } else {
-                (Status::StagingError, error_message)
+                (Status::StagingError, clean_error_message(&stderr))
             }
         }
         Err(e) => {
@@ -885,14 +904,13 @@ async fn perform_unstaging_operation(
     match unstage_files(repo_path, pattern).await {
         Ok((true, _, _)) => (Status::Unstaged, format!("unstaged {pattern}")),
         Ok((false, _, stderr)) => {
-            let error_message = clean_error_message(&stderr);
-            if error_message.contains("pathspec") && error_message.contains("did not match") {
+            if stderr.contains("pathspec") && stderr.contains("did not match") {
                 (
                     Status::NoChanges,
                     format!("no staged files match {pattern}"),
                 )
             } else {
-                (Status::StagingError, error_message)
+                (Status::StagingError, clean_error_message(&stderr))
             }
         }
         Err(e) => {

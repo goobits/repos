@@ -4,8 +4,8 @@ use anyhow::Result;
 use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::core::{
-    acquire_semaphore_permit, create_processing_context, init_command, set_terminal_title,
-    set_terminal_title_and_flush, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
+    acquire_semaphore_permit, clean_error_message, create_processing_context, init_command,
+    set_terminal_title, set_terminal_title_and_flush, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
 use crate::git::operations::run_git;
 
@@ -40,12 +40,15 @@ pub async fn handle_doctor_command() -> Result<()> {
             }
         };
 
-    run_diagnostics(context).await;
+    let unhealthy_repos = run_diagnostics(context).await;
     set_terminal_title_and_flush("✅ repos doctor");
+    if unhealthy_repos > 0 {
+        anyhow::bail!("{unhealthy_repos} repositories need attention");
+    }
     Ok(())
 }
 
-async fn run_diagnostics(context: crate::core::ProcessingContext) {
+async fn run_diagnostics(context: crate::core::ProcessingContext) -> usize {
     let mut futures = FuturesUnordered::new();
     let max_name_length = context.max_name_length;
 
@@ -65,20 +68,27 @@ async fn run_diagnostics(context: crate::core::ProcessingContext) {
                 "{symbol} {repo_name:width$}  {message}",
                 width = max_name_length
             );
+            !findings.is_empty()
         };
 
         futures.push(future);
     }
 
-    while futures.next().await.is_some() {}
+    let mut unhealthy_repos = 0;
+    while let Some(unhealthy) = futures.next().await {
+        unhealthy_repos += usize::from(unhealthy);
+    }
 
+    let mut nested_drift = false;
     if let Ok(statuses) = crate::subrepo::status::analyze_subrepos() {
         if statuses.iter().any(|status| status.has_drift) {
+            nested_drift = true;
             crate::subrepo::status::display_drift_summary(&statuses);
         }
     }
 
     println!();
+    unhealthy_repos + usize::from(nested_drift)
 }
 
 async fn diagnose_repo(path: &std::path::Path) -> Vec<String> {
@@ -91,13 +101,34 @@ async fn diagnose_repo(path: &std::path::Path) -> Vec<String> {
         Err(e) => findings.push(format!("branch check failed: {e}")),
     }
 
-    match run_git(path, &["remote"]).await {
+    let remotes = match run_git(path, &["remote"]).await {
         Ok((true, remotes, _)) if remotes.trim().is_empty() => {
             findings.push("no remote".to_string());
+            Vec::new()
         }
-        Ok((true, _, _)) => {}
-        Ok((false, _, stderr)) => findings.push(format!("remote check failed: {stderr}")),
-        Err(e) => findings.push(format!("remote check failed: {e}")),
+        Ok((true, remotes, _)) => remotes.lines().map(str::to_string).collect(),
+        Ok((false, _, stderr)) => {
+            findings.push(format!("remote check failed: {stderr}"));
+            Vec::new()
+        }
+        Err(e) => {
+            findings.push(format!("remote check failed: {e}"));
+            Vec::new()
+        }
+    };
+
+    for remote in remotes {
+        match run_git(path, &["ls-remote", "--heads", &remote]).await {
+            Ok((true, _, _)) => {}
+            Ok((false, _, stderr)) => findings.push(format!(
+                "{remote} access failed: {}",
+                clean_error_message(&stderr)
+            )),
+            Err(e) => findings.push(format!(
+                "{remote} access failed: {}",
+                clean_error_message(&e.to_string())
+            )),
+        }
     }
 
     match run_git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await {

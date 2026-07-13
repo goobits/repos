@@ -11,10 +11,11 @@
 //! use goobits_repos::git::has_uncommitted_changes;
 //! use std::path::Path;
 //!
-//! async fn check(path: &Path) {
-//!     if has_uncommitted_changes(path).await {
+//! async fn check(path: &Path) -> anyhow::Result<()> {
+//!     if has_uncommitted_changes(path).await? {
 //!         println!("Repository has changes");
 //!     }
+//!     Ok(())
 //! }
 //! ```
 
