@@ -27,16 +27,15 @@ pub struct PlannerOptions {
     pub dry_run: bool,
 }
 
+fn is_targeted(name: &str, targets: &[String]) -> bool {
+    targets.iter().any(|target| name == target)
+}
+
 pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions) -> PublishPlan {
     // Filter repositories if specific targets were requested
     let mut filtered_repos = repos;
     if !options.target_repos.is_empty() {
-        filtered_repos.retain(|(name, _)| {
-            options
-                .target_repos
-                .iter()
-                .any(|target| name.contains(target))
-        });
+        filtered_repos.retain(|(name, _)| is_targeted(name, &options.target_repos));
     }
 
     // Determine visibility filter
@@ -114,4 +113,18 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
     }
 
     plan
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_targeted;
+
+    #[test]
+    fn publish_targets_match_repository_names_exactly() {
+        let targets = vec!["api".to_string()];
+
+        assert!(is_targeted("api", &targets));
+        assert!(!is_targeted("api-client", &targets));
+        assert!(!is_targeted("my-api", &targets));
+    }
 }

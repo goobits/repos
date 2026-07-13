@@ -122,7 +122,7 @@ fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<Su
 
         let short_hash = commit_hash.chars().take(7).collect();
         let remote_url = get_remote_url(path).ok();
-        let uncommitted = has_uncommitted_changes(path);
+        let uncommitted = has_uncommitted_changes(path)?;
         let commit_timestamp = get_commit_timestamp(path, &commit_hash);
 
         nested.push(SubrepoInstance {

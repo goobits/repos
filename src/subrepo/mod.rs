@@ -103,10 +103,37 @@ fn get_remote_url(path: &Path) -> Result<String> {
 
 /// Normalize remote URLs to group equivalent URLs together
 fn normalize_remote_url(url: &str) -> String {
-    url.trim_end_matches(".git")
-        .trim_end_matches('/')
-        .replace("git@github.com:", "https://github.com/")
-        .to_lowercase()
+    let trimmed = url.trim().trim_end_matches('/');
+    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
+
+    if let Some((authority, path)) = trimmed.split_once(':') {
+        if authority.contains('@') && !authority.contains('/') {
+            let host = authority.rsplit('@').next().unwrap_or(authority);
+            return remote_key(host, path);
+        }
+    }
+
+    for scheme in ["https://", "http://", "ssh://", "git://"] {
+        if let Some(remote) = trimmed.strip_prefix(scheme) {
+            if let Some((authority, path)) = remote.split_once('/') {
+                let host = authority.rsplit('@').next().unwrap_or(authority);
+                return remote_key(host, path);
+            }
+        }
+    }
+
+    trimmed.to_string()
+}
+
+fn remote_key(host: &str, path: &str) -> String {
+    let host = host.to_ascii_lowercase();
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    if host == "github.com" {
+        format!("{host}/{}", path.to_ascii_lowercase())
+    } else {
+        format!("{host}/{path}")
+    }
 }
 
 /// Check if repo has uncommitted changes.
@@ -114,16 +141,8 @@ fn normalize_remote_url(url: &str) -> String {
 /// Note: This is a synchronous version for use in the validation module.
 /// There's an async version in `git::operations`, but this module requires
 /// sync operations.
-fn has_uncommitted_changes(path: &Path) -> bool {
-    let path_str = match path_to_str(path) {
-        Ok(s) => s,
-        Err(_) => return false, // Treat invalid paths as no changes
-    };
-
-    let _ = Command::new("git")
-        .args(["-C", path_str, "update-index", "--refresh"])
-        .output();
-
+fn has_uncommitted_changes(path: &Path) -> Result<bool> {
+    let path_str = path_to_str(path)?;
     let output = Command::new("git")
         .args([
             "-C",
@@ -133,13 +152,17 @@ fn has_uncommitted_changes(path: &Path) -> bool {
             "--untracked-files=normal",
             "--ignore-submodules=dirty",
         ])
-        .output();
+        .output()
+        .context("Failed to inspect nested repository status")?;
 
-    match output {
-        Ok(out) if out.status.success() => !out.stdout.is_empty(),
-        Err(_) => false,
-        _ => false,
+    if !output.status.success() {
+        anyhow::bail!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
+
+    Ok(!output.stdout.is_empty())
 }
 
 /// Get commit timestamp (Unix epoch seconds)
@@ -159,5 +182,36 @@ pub(crate) fn get_commit_timestamp(path: &Path, commit_hash: &str) -> i64 {
             .parse()
             .unwrap_or(0),
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_remote_url;
+
+    #[test]
+    fn normalizes_equivalent_github_transports() {
+        let expected = "github.com/owner/repo";
+
+        assert_eq!(
+            normalize_remote_url("git@github.com:Owner/Repo.git"),
+            expected
+        );
+        assert_eq!(
+            normalize_remote_url("https://github.com/owner/repo/"),
+            expected
+        );
+        assert_eq!(
+            normalize_remote_url("ssh://git@github.com/OWNER/REPO.git"),
+            expected
+        );
+    }
+
+    #[test]
+    fn preserves_case_for_case_sensitive_remote_paths() {
+        assert_eq!(
+            normalize_remote_url("https://git.example.com/Team/Repo.git"),
+            "git.example.com/Team/Repo"
+        );
     }
 }

@@ -11,42 +11,36 @@ fn path_to_str(path: &Path) -> Result<&str> {
         .context("Path contains invalid UTF-8 characters")
 }
 
-/// Find all instances of a subrepo by name
-///
-/// Note: If multiple different remotes have subrepos with the same name,
-/// this will return ALL instances across all remotes. This is intentional
-/// to avoid confusion when syncing.
+/// Find the remote group identified by a subrepo name.
 fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<SubrepoInstance>> {
-    let mut instances = Vec::new();
+    let mut matching_groups: Vec<_> = report
+        .by_remote
+        .iter()
+        .filter(|(_, instances)| {
+            instances
+                .iter()
+                .any(|instance| instance.subrepo_name == name)
+        })
+        .collect();
+    matching_groups.sort_by_key(|(remote, _)| *remote);
 
-    // Collect ALL instances with matching name, even from different remotes
-    for instance_list in report.by_remote.values() {
-        if let Some(first) = instance_list.first() {
-            if first.subrepo_name == name {
-                instances.extend(instance_list.clone());
-                // Don't break - continue checking other remotes
-            }
+    match matching_groups.as_slice() {
+        [] => anyhow::bail!("Subrepo '{name}' not found"),
+        [(_, instances)] => Ok((*instances).clone()),
+        groups => {
+            let remotes = groups
+                .iter()
+                .map(|(remote, _)| remote.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!("Subrepo name '{name}' is ambiguous across different remotes: {remotes}")
         }
     }
-
-    if instances.is_empty() {
-        anyhow::bail!("Subrepo '{name}' not found or not shared across multiple repos");
-    }
-
-    Ok(instances)
 }
 
 /// Check if a repository has uncommitted changes.
-fn has_uncommitted_changes(path: &Path) -> bool {
-    let path_str = match path_to_str(path) {
-        Ok(s) => s,
-        Err(_) => return false, // Treat invalid paths as no changes
-    };
-
-    let _ = Command::new("git")
-        .args(["-C", path_str, "update-index", "--refresh"])
-        .output();
-
+fn has_uncommitted_changes(path: &Path) -> Result<bool> {
+    let path_str = path_to_str(path)?;
     let output = Command::new("git")
         .args([
             "-C",
@@ -56,13 +50,17 @@ fn has_uncommitted_changes(path: &Path) -> bool {
             "--untracked-files=normal",
             "--ignore-submodules=dirty",
         ])
-        .output();
+        .output()
+        .context("Failed to inspect nested repository status")?;
 
-    match output {
-        Ok(out) if out.status.success() => !out.stdout.is_empty(),
-        Err(_) => false,
-        _ => false,
+    if !output.status.success() {
+        anyhow::bail!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
+
+    Ok(!output.stdout.is_empty())
 }
 
 /// Stash uncommitted changes in a repository
@@ -160,7 +158,7 @@ pub fn sync_subrepo_with_report(
     let mut stashed_count = 0;
 
     for instance in &instances {
-        let has_changes = has_uncommitted_changes(&instance.subrepo_path);
+        let has_changes = has_uncommitted_changes(&instance.subrepo_path)?;
 
         // Handle uncommitted changes
         if has_changes {
@@ -260,7 +258,7 @@ pub fn update_subrepo_with_report(
         }
 
         // Check for uncommitted changes
-        if !force && has_uncommitted_changes(&instance.subrepo_path) {
+        if !force && has_uncommitted_changes(&instance.subrepo_path)? {
             println!("  ⚠️  {} (uncommitted changes)", instance.parent_repo);
             skip_count += 1;
             continue;
@@ -308,4 +306,49 @@ pub fn update_subrepo_with_report(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_instances_by_name;
+    use crate::subrepo::{SubrepoInstance, ValidationReport};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn instance(name: &str, remote: &str) -> SubrepoInstance {
+        SubrepoInstance {
+            parent_repo: "parent".to_string(),
+            parent_path: PathBuf::from("parent"),
+            subrepo_name: name.to_string(),
+            subrepo_path: PathBuf::from("parent/subrepo"),
+            relative_path: "subrepo".to_string(),
+            commit_hash: "0123456789".to_string(),
+            short_hash: "0123456".to_string(),
+            remote_url: Some(remote.to_string()),
+            has_uncommitted: false,
+            commit_timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn rejects_same_name_across_different_remotes() {
+        let by_remote = HashMap::from([
+            (
+                "example.com/team-one/shared".to_string(),
+                vec![instance("shared", "example.com/team-one/shared")],
+            ),
+            (
+                "example.com/team-two/shared".to_string(),
+                vec![instance("shared", "example.com/team-two/shared")],
+            ),
+        ]);
+        let report = ValidationReport {
+            total_nested: 2,
+            by_remote,
+            no_remote: Vec::new(),
+        };
+
+        let error = find_instances_by_name(&report, "shared").unwrap_err();
+        assert!(error.to_string().contains("ambiguous"));
+    }
 }

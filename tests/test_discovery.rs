@@ -81,18 +81,19 @@ fn test_find_repos_with_duplicate_names() {
     setup_git_repo(&repo1).expect("Failed to setup repo1");
     setup_git_repo(&repo2).expect("Failed to setup repo2");
 
-    // Find repositories from the temp directory
-    let found_repos = find_repos_from_path(temp_dir.path());
+    for _ in 0..10 {
+        let found_repos = find_repos_from_path(temp_dir.path());
 
-    assert_eq!(found_repos.len(), 2, "Should find both repositories");
-
-    // Verify that duplicate names have suffixes
-    let repo_names: Vec<_> = found_repos.iter().map(|(name, _)| name.as_str()).collect();
-    assert!(
-        repo_names.contains(&"my-app") && repo_names.contains(&"my-app-2"),
-        "Should have 'my-app' and 'my-app-2', got: {:?}",
-        repo_names
-    );
+        assert_eq!(found_repos.len(), 2, "Should find both repositories");
+        assert_eq!(
+            found_repos,
+            vec![
+                ("my-app".to_string(), repo1.clone()),
+                ("my-app-2".to_string(), repo2.clone()),
+            ],
+            "Duplicate suffixes should be assigned by stable path order"
+        );
+    }
 }
 
 #[test]

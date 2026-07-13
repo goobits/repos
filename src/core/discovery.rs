@@ -1,9 +1,8 @@
 //! Repository discovery and initialization utilities
 
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use ignore::WalkBuilder;
-use rayon::prelude::*;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -33,19 +32,12 @@ fn is_git_file(path: &Path) -> bool {
 /// Recursively searches for git repositories from a specific path
 /// Returns a vector of (`repository_name`, path) tuples with deduplication
 ///
-/// This function uses parallel directory walking for significantly better performance
-/// with large directory trees (5-10x faster than sequential walking).
-/// Uses `DashMap` for lock-free concurrent access, eliminating mutex contention.
+/// Directory walking is parallel, while naming happens after paths are sorted so
+/// duplicate-name suffixes are stable across runs.
 pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathBuf)> {
     let search_path = search_path.as_ref();
 
-    // Use DashMap for lock-free concurrent access (20-40% faster than Mutex<HashMap>)
-    // Using a single DashMap<PathBuf, String> avoids:
-    // 1. Mutex contention on a separate Vec
-    // 2. Double allocation of PathBuf (once for set, once for list)
-    let repos_map = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
-    let name_counts = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
-    let search_path_buf = search_path.to_path_buf();
+    let repos_seen = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
 
     // Build parallel walker with optimizations
     let walker = WalkBuilder::new(search_path)
@@ -72,9 +64,7 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 
     // Walk the directory tree in parallel
     walker.run(|| {
-        let repos_map = Arc::clone(&repos_map);
-        let name_counts = Arc::clone(&name_counts);
-        let search_path_buf = search_path_buf.clone();
+        let repos_seen = Arc::clone(&repos_seen);
 
         Box::new(move |result| {
             use ignore::WalkState;
@@ -101,50 +91,7 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
                     };
 
                     if is_git_repo {
-                        // Skip if we've already seen this exact path
-                        // Check existence first to avoid allocation
-                        if repos_map.contains_key(path) {
-                            return WalkState::Continue;
-                        }
-
-                        let path_buf = path.to_path_buf();
-
-                        // Use entry API to atomically check and insert
-                        // This avoids allocating a second PathBuf copy if the entry is new
-                        match repos_map.entry(path_buf) {
-                            Entry::Occupied(_) => return WalkState::Continue,
-                            Entry::Vacant(entry) => {
-                                let base_name = if path == search_path_buf {
-                                    // If this is the search path itself, use its directory name
-                                    search_path_buf
-                                        .file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or(DEFAULT_REPO_NAME)
-                                        .to_string()
-                                } else {
-                                    path.file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or(UNKNOWN_REPO_NAME)
-                                        .to_string()
-                                };
-
-                                // Handle duplicate names by adding a suffix
-                                // DashMap's entry API provides atomic counter increment
-                                let repo_name = {
-                                    let mut entry =
-                                        name_counts.entry(base_name.clone()).or_insert(0);
-                                    *entry += 1;
-                                    let count = *entry;
-                                    if count > 1 {
-                                        format!("{base_name}-{count}")
-                                    } else {
-                                        base_name
-                                    }
-                                };
-
-                                entry.insert(repo_name);
-                            }
-                        }
+                        repos_seen.insert(path.to_path_buf(), ());
                     }
                 }
             }
@@ -153,19 +100,42 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
         })
     });
 
-    // Extract repositories from DashMap
-    // Convert DashMap to Vec<(String, PathBuf)>
-    let mut repos: Vec<(String, PathBuf)> = Arc::try_unwrap(repos_map)
-        .map(|map| map.into_iter().map(|(p, n)| (n, p)).collect())
-        .unwrap_or_else(|arc| {
-            // Fallback if Arc has other references (should not happen in normal flow)
-            arc.iter()
-                .map(|r| (r.value().clone(), r.key().clone()))
-                .collect()
-        });
+    let mut paths: Vec<PathBuf> = Arc::try_unwrap(repos_seen)
+        .map(|map| map.into_iter().map(|(path, ())| path).collect())
+        .unwrap_or_else(|arc| arc.iter().map(|entry| entry.key().clone()).collect());
+    paths.sort();
 
-    // Sort repositories alphabetically by name (case-insensitive) using parallel sort
-    repos.par_sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    let mut name_counts = HashMap::with_capacity(paths.len());
+    let mut repos: Vec<(String, PathBuf)> = paths
+        .into_iter()
+        .map(|path| {
+            let base_name = if path == search_path {
+                search_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(DEFAULT_REPO_NAME)
+            } else {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(UNKNOWN_REPO_NAME)
+            };
+            let count = name_counts.entry(base_name.to_string()).or_insert(0);
+            *count += 1;
+            let name = if *count == 1 {
+                base_name.to_string()
+            } else {
+                format!("{base_name}-{count}")
+            };
+            (name, path)
+        })
+        .collect();
+
+    repos.sort_by(|a, b| {
+        a.0.to_lowercase()
+            .cmp(&b.0.to_lowercase())
+            .then_with(|| a.0.cmp(&b.0))
+            .then_with(|| a.1.cmp(&b.1))
+    });
 
     repos
 }
