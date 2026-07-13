@@ -1,3 +1,0 @@
-[submodule "infra/aw"]
-	path = infra/aw
-	url = https://github.com/goobits/aw.git

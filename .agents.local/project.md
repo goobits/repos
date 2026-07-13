@@ -16,7 +16,7 @@ Repo-specific facts for this checkout. Keep reusable agent behavior in
 - `src/`: CLI, Git operations, discovery, audit, package, and nested-repo code.
 - `tests/`: integration and scenario tests.
 - `docs/`: user-facing guides and examples.
-- `infra/aw/`: pinned Agent Workspace submodule.
+- `infra/aw/`: local-only Agent Workspace checkout, ignored by Git.
 - `config/aw/`: repo-owned Agent Workspace profile.
 
 ## Commands
@@ -36,7 +36,7 @@ make aw-doctor                  # validate Agent Workspace repo setup
 - Commit command: use normal Git unless the user requests an AW commit workflow.
 - Agent-authored commits and AW commit requests should include `Co-authored-by: Miko Meow <101564+mudcube@users.noreply.github.com>`.
 - Package-manager mutation command: `cargo add`, `cargo rm`, or direct `Cargo.toml` edits as appropriate.
-- Submodule/worktree notes: initialize/update `infra/aw` with `git submodule update --init --recursive`; update via `make aw-update`.
+- Local tool notes: clone Agent Workspace to `infra/aw` when needed; update via `make aw-update`.
 - Commands that require explicit approval: destructive Git commands, credential changes, publishing, or history rewrites.
 
 ## Testing
@@ -73,7 +73,7 @@ make aw-doctor                  # validate Agent Workspace repo setup
 
 ## Local Cautions
 
-- Active generated folders: `target/` and `infra/aw/target/`.
+- Active generated folders: `target/` and ignored local checkout outputs under `infra/aw/`.
 - Slow/expensive commands: full `cargo test` and first AW build can compile many dependencies.
 - Shared resources: tests mutate current working directory and use a global test lock.
 - Deployment or credential constraints: package publishing commands may require registry credentials.

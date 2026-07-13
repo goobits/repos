@@ -20,3 +20,6 @@ Thumbs.db
 # Symbolic links directory
 .links
 test_output.txt
+
+# Local Agent Workspace checkout
+/infra/aw/

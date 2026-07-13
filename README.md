@@ -116,14 +116,15 @@ cargo test                      # Run tests
 
 ### Agent Workspace
 
-This repo pins [Agent Workspace](https://github.com/goobits/agent-workspace)
-as a submodule under `infra/aw`.
+This repo expects a local [Agent Workspace](https://github.com/goobits/aw)
+checkout at `infra/aw`. The checkout is ignored by Git so each developer can
+update it locally.
 
 ```bash
-git submodule update --init --recursive
+git clone https://github.com/goobits/aw.git infra/aw
 make aw-install                 # Install aw, Zellij setup, and repo adapters
 make aw-doctor                  # Validate repo adapters and config/aw
-make aw-update                  # Fast-forward the submodule and reinstall
+make aw-update                  # Fast-forward the local checkout and reinstall
 ```
 
 The default local workspace is `main` with `dev`, `git`, and `scratch` tabs.

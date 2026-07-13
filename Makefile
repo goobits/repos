@@ -45,7 +45,7 @@ fmt:
 lint:
 	cargo clippy -- -D warnings
 
-# Run the Agent Workspace CLI from the pinned submodule
+# Run the Agent Workspace CLI from the local checkout
 aw:
 	cargo run --manifest-path $(AW_MANIFEST) --
 
@@ -62,7 +62,7 @@ aw-doctor:
 	cargo run --manifest-path $(AW_MANIFEST) -- doctor
 	cargo run --manifest-path $(AW_MANIFEST) -- repo doctor
 
-# Update the pinned Agent Workspace submodule and refresh local install
+# Update the local Agent Workspace checkout and refresh local install
 aw-update:
 	git -C infra/aw pull --ff-only
 	$(MAKE) aw-install
@@ -78,9 +78,9 @@ help:
 	@echo "  test        - Run all tests"
 	@echo "  fmt         - Format code with rustfmt"
 	@echo "  lint        - Lint code with clippy"
-	@echo "  aw          - Run Agent Workspace CLI from submodule"
+	@echo "  aw          - Run Agent Workspace CLI from local checkout"
 	@echo "  aw-install  - Install Agent Workspace and repo adapters"
 	@echo "  aw-doctor   - Validate Agent Workspace repo setup"
-	@echo "  aw-update   - Update Agent Workspace submodule and reinstall"
+	@echo "  aw-update   - Update Agent Workspace checkout and reinstall"
 	@echo "  release-all - Build for multiple platforms"
 	@echo "  help        - Show this help message"
