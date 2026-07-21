@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::process::Command;
 
+use super::remote::{remote_policy_violation, transport_policy, RemoteDirection, TransportPolicy};
 use super::status::Status;
 
 // Timeout constants
@@ -59,6 +60,14 @@ pub async fn run_git(path: &Path, args: &[&str]) -> Result<(bool, String, String
         let mut command = Command::new("git");
 
         command.kill_on_drop(true);
+        if is_network && transport_policy()? == TransportPolicy::SshOnly {
+            command.args([
+                "-c",
+                "credential.helper=",
+                "-c",
+                "credential.interactive=false",
+            ]);
+        }
         if std::env::var_os("GIT_SSH_COMMAND").is_none() {
             command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
         }
@@ -319,6 +328,31 @@ async fn get_upstream_push_target(
     Ok(None)
 }
 
+async fn get_branch_remote_name(path: &Path, current_branch: &str, remotes: &str) -> String {
+    let remote_key = format!("branch.{current_branch}.remote");
+    if let Ok(Some(remote)) = get_git_config(path, &remote_key).await {
+        return remote;
+    }
+
+    remotes.lines().next().unwrap_or("origin").to_string()
+}
+
+async fn fetch_policy_error(path: &Path, remote: &str) -> Option<String> {
+    match remote_policy_violation(path, remote, RemoteDirection::Fetch).await {
+        Ok(Some(violation)) => Some(violation.message()),
+        Ok(None) => None,
+        Err(error) => Some(format!("remote inspection failed: {error}")),
+    }
+}
+
+async fn push_policy_error(path: &Path, remote: &str) -> Option<String> {
+    match remote_policy_violation(path, remote, RemoteDirection::Push).await {
+        Ok(Some(violation)) => Some(violation.message()),
+        Ok(None) => None,
+        Err(error) => Some(format!("remote inspection failed: {error}")),
+    }
+}
+
 /// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
 /// Returns `FetchResult` with repository state after fetching
 pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult {
@@ -394,6 +428,11 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             status: Status::Skip,
             message: STATUS_DETACHED_HEAD.to_string(),
         };
+    }
+
+    let fetch_remote = get_branch_remote_name(path, &current_branch, &remotes).await;
+    if let Some(error) = fetch_policy_error(path, &fetch_remote).await {
+        return FetchResult::error(error, has_uncommitted, current_branch);
     }
 
     // Fetch latest changes to ensure we have up-to-date refs
@@ -532,6 +571,10 @@ pub async fn push_if_needed(
         .upstream_branch
         .clone()
         .unwrap_or_else(|| fetch_result.current_branch.clone());
+
+    if let Some(error) = push_policy_error(path, &remote_name).await {
+        return (Status::Error, error, fetch_result.has_uncommitted);
+    }
 
     // Check if repo uses Git LFS and push LFS objects FIRST
     let uses_lfs = check_uses_git_lfs(path).await;
@@ -797,6 +840,10 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
         },
     };
 
+    if let Some(error) = push_policy_error(path, &remote_name).await {
+        return (false, format!("tag created locally; {error}"));
+    }
+
     let push_result = run_git(path, &["push", &remote_name, tag_name]).await;
 
     match push_result {
@@ -890,6 +937,11 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
             status: Status::Skip,
             message: STATUS_DETACHED_HEAD.to_string(),
         };
+    }
+
+    let fetch_remote = get_branch_remote_name(path, &current_branch, &remotes).await;
+    if let Some(error) = fetch_policy_error(path, &fetch_remote).await {
+        return PullFetchResult::error(error, has_uncommitted);
     }
 
     // Fetch latest changes to ensure we have up-to-date refs

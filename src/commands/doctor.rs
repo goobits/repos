@@ -8,6 +8,7 @@ use crate::core::{
     set_terminal_title, set_terminal_title_and_flush, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
 use crate::git::operations::run_git;
+use crate::git::remote::{remote_policy_violation, RemoteDirection};
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 
@@ -132,6 +133,18 @@ async fn diagnose_repo(path: &std::path::Path) -> (Vec<String>, Vec<String>) {
         if let Ok((true, url, _)) = run_git(path, &["config", "--get", &url_key]).await {
             if let Some(advisory) = transport_advisory(&remote, &url) {
                 advisories.push(advisory);
+            }
+        }
+
+        match remote_policy_violation(path, &remote, RemoteDirection::Fetch).await {
+            Ok(Some(violation)) => {
+                findings.push(violation.message());
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                findings.push(format!("{remote} URL inspection failed: {error}"));
+                continue;
             }
         }
 
