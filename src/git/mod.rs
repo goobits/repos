@@ -1,5 +1,6 @@
 // Internal modules - not part of public API
 pub(crate) mod config;
+pub(crate) mod failure;
 pub(crate) mod operations;
 pub(crate) mod remote;
 pub(crate) mod status;

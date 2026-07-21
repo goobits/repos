@@ -95,19 +95,35 @@ impl RemoteTransport {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RemotePolicyViolation {
+pub(crate) struct RemoteContext {
     pub(crate) remote: String,
     pub(crate) direction: RemoteDirection,
     pub(crate) transport: RemoteTransport,
+    pub(crate) identity: Option<String>,
+    pub(crate) ssh_url: Option<String>,
+}
+
+impl RemoteContext {
+    pub(crate) fn display(&self) -> String {
+        self.identity.as_ref().map_or_else(
+            || format!("{} ({})", self.remote, self.transport.label()),
+            |identity| format!("{} ({}, {identity})", self.remote, self.transport.label()),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RemotePolicyViolation {
+    pub(crate) context: RemoteContext,
 }
 
 impl RemotePolicyViolation {
     pub(crate) fn message(&self) -> String {
         format!(
             "ssh-only policy blocked {}: remote {} uses {}",
-            self.direction.label(),
-            self.remote,
-            self.transport.label()
+            self.context.direction.label(),
+            self.context.remote,
+            self.context.transport.label()
         )
     }
 }
@@ -147,8 +163,27 @@ pub(crate) async fn remote_policy_violation(
     remote: &str,
     direction: RemoteDirection,
 ) -> Result<Option<RemotePolicyViolation>> {
-    if transport_policy()? == TransportPolicy::Preserve || remote == "." {
+    if remote == "." {
         return Ok(None);
+    }
+
+    let contexts = inspect_remote(path, remote, direction).await?;
+    policy_violation(&contexts)
+}
+
+pub(crate) async fn inspect_remote(
+    path: &Path,
+    remote: &str,
+    direction: RemoteDirection,
+) -> Result<Vec<RemoteContext>> {
+    if remote == "." {
+        return Ok(vec![RemoteContext {
+            remote: remote.to_string(),
+            direction,
+            transport: RemoteTransport::Local,
+            identity: None,
+            ssh_url: None,
+        }]);
     }
 
     let mut args = vec!["remote", "get-url"];
@@ -170,19 +205,91 @@ pub(crate) async fn remote_policy_violation(
         ));
     }
 
-    Ok(urls.lines().find_map(|url| {
-        let transport = RemoteTransport::from_url(url);
-        transport.is_http().then(|| RemotePolicyViolation {
-            remote: remote.to_string(),
-            direction,
-            transport,
+    Ok(urls
+        .lines()
+        .map(|url| {
+            let transport = RemoteTransport::from_url(url);
+            let (identity, ssh_url) = safe_remote_details(url, transport);
+            RemoteContext {
+                remote: remote.to_string(),
+                direction,
+                transport,
+                identity,
+                ssh_url,
+            }
+        })
+        .collect())
+}
+
+pub(crate) fn policy_violation(
+    contexts: &[RemoteContext],
+) -> Result<Option<RemotePolicyViolation>> {
+    if transport_policy()? == TransportPolicy::Preserve {
+        return Ok(None);
+    }
+
+    Ok(contexts.iter().find_map(|context| {
+        context.transport.is_http().then(|| RemotePolicyViolation {
+            context: context.clone(),
         })
     }))
 }
 
+fn safe_remote_details(url: &str, transport: RemoteTransport) -> (Option<String>, Option<String>) {
+    match transport {
+        RemoteTransport::Http | RemoteTransport::Https => safe_http_details(url),
+        RemoteTransport::Ssh => (safe_ssh_identity(url), None),
+        RemoteTransport::Local | RemoteTransport::Other => (None, None),
+    }
+}
+
+fn safe_http_details(url: &str) -> (Option<String>, Option<String>) {
+    let Some((_, remainder)) = url.trim().split_once("://") else {
+        return (None, None);
+    };
+    let (authority, path) = remainder.split_once('/').unwrap_or((remainder, ""));
+    let host_with_port = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host_with_port
+        .strip_prefix('[')
+        .and_then(|value| value.split_once(']').map(|(host, _)| host))
+        .unwrap_or_else(|| host_with_port.split(':').next().unwrap_or(host_with_port));
+    let path = path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_matches('/');
+
+    if host.is_empty() || path.is_empty() {
+        return (None, None);
+    }
+
+    let identity = format!("{host}/{path}");
+    let standard_ssh_host = matches!(
+        host.to_ascii_lowercase().as_str(),
+        "github.com" | "gitlab.com" | "bitbucket.org"
+    );
+    let ssh_url = standard_ssh_host.then(|| format!("git@{host}:{path}"));
+
+    (Some(identity), ssh_url)
+}
+
+fn safe_ssh_identity(url: &str) -> Option<String> {
+    let url = url.trim();
+    if let Some((_, remainder)) = url.split_once("://") {
+        let (authority, path) = remainder.split_once('/')?;
+        let host = authority.rsplit('@').next()?.split(':').next()?;
+        let path = path.trim_matches('/');
+        return (!host.is_empty() && !path.is_empty()).then(|| format!("{host}/{path}"));
+    }
+
+    let (authority, path) = url.split_once(':')?;
+    let host = authority.rsplit('@').next()?;
+    (!host.is_empty() && !path.is_empty()).then(|| format!("{host}/{path}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{RemoteTransport, TransportPolicy};
+    use super::{safe_http_details, safe_ssh_identity, RemoteTransport, TransportPolicy};
 
     #[test]
     fn parses_transport_policy_values() {
@@ -218,6 +325,20 @@ mod tests {
         assert_eq!(
             RemoteTransport::from_url("../remote.git"),
             RemoteTransport::Local
+        );
+    }
+
+    #[test]
+    fn sanitizes_remote_identity_and_builds_known_host_ssh_urls() {
+        let (identity, ssh_url) =
+            safe_http_details("https://secret@github.com/goobits/repos.git?token=hidden");
+        assert_eq!(identity.as_deref(), Some("github.com/goobits/repos.git"));
+        assert_eq!(ssh_url.as_deref(), Some("git@github.com:goobits/repos.git"));
+        assert!(!identity.unwrap().contains("secret"));
+
+        assert_eq!(
+            safe_ssh_identity("git@github.com:goobits/repos.git").as_deref(),
+            Some("github.com/goobits/repos.git")
         );
     }
 }

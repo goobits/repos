@@ -7,7 +7,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::remote::{remote_policy_violation, transport_policy, RemoteDirection, TransportPolicy};
+use super::failure::{GitFailure, GitOperationPhase, GitOperationResult};
+use super::remote::{
+    inspect_remote, policy_violation, transport_policy, RemoteContext, RemoteDirection,
+    TransportPolicy,
+};
 use super::status::Status;
 
 // Timeout constants
@@ -261,6 +265,7 @@ pub struct FetchResult {
     pub upstream_branch: Option<String>,
     pub status: Status,
     pub message: String,
+    pub(crate) failure: Option<GitFailure>,
 }
 
 impl FetchResult {
@@ -274,6 +279,21 @@ impl FetchResult {
             upstream_branch: None,
             status: Status::Error,
             message,
+            failure: None,
+        }
+    }
+
+    fn failed(failure: GitFailure, has_uncommitted: bool, current_branch: String) -> Self {
+        Self {
+            has_uncommitted,
+            current_branch,
+            ahead_count: 0,
+            upstream_exists: false,
+            upstream_remote: None,
+            upstream_branch: None,
+            status: Status::Error,
+            message: failure.message.clone(),
+            failure: Some(failure),
         }
     }
 }
@@ -337,20 +357,14 @@ async fn get_branch_remote_name(path: &Path, current_branch: &str, remotes: &str
     remotes.lines().next().unwrap_or("origin").to_string()
 }
 
-async fn fetch_policy_error(path: &Path, remote: &str) -> Option<String> {
-    match remote_policy_violation(path, remote, RemoteDirection::Fetch).await {
-        Ok(Some(violation)) => Some(violation.message()),
-        Ok(None) => None,
-        Err(error) => Some(format!("remote inspection failed: {error}")),
-    }
-}
-
-async fn push_policy_error(path: &Path, remote: &str) -> Option<String> {
-    match remote_policy_violation(path, remote, RemoteDirection::Push).await {
-        Ok(Some(violation)) => Some(violation.message()),
-        Ok(None) => None,
-        Err(error) => Some(format!("remote inspection failed: {error}")),
-    }
+async fn inspect_operation_remote(
+    path: &Path,
+    remote: &str,
+    direction: RemoteDirection,
+) -> Result<(Option<RemoteContext>, Option<GitFailure>)> {
+    let contexts = inspect_remote(path, remote, direction).await?;
+    let failure = policy_violation(&contexts)?.map(GitFailure::from_policy);
+    Ok((contexts.into_iter().next(), failure))
 }
 
 /// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
@@ -394,6 +408,7 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             upstream_branch: None,
             status: Status::NoRemote,
             message: STATUS_NO_REMOTE.to_string(),
+            failure: None,
         };
     }
 
@@ -427,12 +442,25 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             upstream_branch: None,
             status: Status::Skip,
             message: STATUS_DETACHED_HEAD.to_string(),
+            failure: None,
         };
     }
 
     let fetch_remote = get_branch_remote_name(path, &current_branch, &remotes).await;
-    if let Some(error) = fetch_policy_error(path, &fetch_remote).await {
-        return FetchResult::error(error, has_uncommitted, current_branch);
+    let (fetch_context, policy_failure) =
+        match inspect_operation_remote(path, &fetch_remote, RemoteDirection::Fetch).await {
+            Ok(result) => result,
+            Err(error) => {
+                let failure = GitFailure::from_message(
+                    GitOperationPhase::RemoteInspection,
+                    format!("remote inspection failed: {error}"),
+                    None,
+                );
+                return FetchResult::failed(failure, has_uncommitted, current_branch);
+            }
+        };
+    if let Some(failure) = policy_failure {
+        return FetchResult::failed(failure, has_uncommitted, current_branch);
     }
 
     // Fetch latest changes to ensure we have up-to-date refs
@@ -447,7 +475,9 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
         } else {
             error_message
         };
-        return FetchResult::error(final_message, has_uncommitted, current_branch);
+        let failure =
+            GitFailure::from_message(GitOperationPhase::Fetch, final_message, fetch_context);
+        return FetchResult::failed(failure, has_uncommitted, current_branch);
     }
 
     // Check if current branch has an upstream
@@ -466,6 +496,7 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             upstream_branch: None,
             status,
             message: STATUS_NO_UPSTREAM.to_string(),
+            failure: None,
         };
     }
 
@@ -512,6 +543,7 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             message: format!(
                 "diverged: {ahead_count} ahead, {behind_count} behind (run repos sync or resolve manually)"
             ),
+            failure: None,
         };
     }
 
@@ -525,6 +557,7 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             upstream_branch,
             status: Status::Synced,
             message: STATUS_SYNCED.to_string(),
+            failure: None,
         }
     } else {
         FetchResult {
@@ -536,6 +569,7 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             upstream_branch,
             status: Status::Synced, // Will be pushed in phase 2
             message: format!("{ahead_count} commits ahead"),
+            failure: None,
         }
     }
 }
@@ -547,14 +581,54 @@ pub async fn push_if_needed(
     fetch_result: &FetchResult,
     auto_upstream: bool,
 ) -> (Status, String, bool) {
+    push_if_needed_with_context(path, fetch_result, auto_upstream)
+        .await
+        .into_tuple()
+}
+
+/// Internal push entry point that retains safe remote context for reporting.
+pub(crate) async fn push_if_needed_with_context(
+    path: &Path,
+    fetch_result: &FetchResult,
+    auto_upstream: bool,
+) -> GitOperationResult {
     use crate::core::clean_error_message;
 
     // If already synced or has errors, return immediately
     if fetch_result.status != Status::Synced && fetch_result.status != Status::NoUpstream {
-        return (
-            fetch_result.status,
-            fetch_result.message.clone(),
-            fetch_result.has_uncommitted,
+        let failure = fetch_result.failure.clone().or_else(|| {
+            matches!(
+                fetch_result.status,
+                Status::Error
+                    | Status::ConfigError
+                    | Status::StagingError
+                    | Status::CommitError
+                    | Status::PullError
+            )
+            .then(|| {
+                GitFailure::from_message(
+                    GitOperationPhase::Fetch,
+                    fetch_result.message.clone(),
+                    None,
+                )
+            })
+        });
+
+        return failure.map_or_else(
+            || {
+                GitOperationResult::new(
+                    fetch_result.status,
+                    fetch_result.message.clone(),
+                    fetch_result.has_uncommitted,
+                )
+            },
+            |failure| {
+                GitOperationResult::failed(
+                    fetch_result.status,
+                    failure,
+                    fetch_result.has_uncommitted,
+                )
+            },
         );
     }
 
@@ -572,8 +646,24 @@ pub async fn push_if_needed(
         .clone()
         .unwrap_or_else(|| fetch_result.current_branch.clone());
 
-    if let Some(error) = push_policy_error(path, &remote_name).await {
-        return (Status::Error, error, fetch_result.has_uncommitted);
+    let (push_context, policy_failure) =
+        match inspect_operation_remote(path, &remote_name, RemoteDirection::Push).await {
+            Ok(result) => result,
+            Err(error) => {
+                let failure = GitFailure::from_message(
+                    GitOperationPhase::RemoteInspection,
+                    format!("remote inspection failed: {error}"),
+                    None,
+                );
+                return GitOperationResult::failed(
+                    Status::Error,
+                    failure,
+                    fetch_result.has_uncommitted,
+                );
+            }
+        };
+    if let Some(failure) = policy_failure {
+        return GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted);
     }
 
     // Check if repo uses Git LFS and push LFS objects FIRST
@@ -593,7 +683,16 @@ pub async fn push_if_needed(
             } else {
                 lfs_error
             };
-            return (Status::Error, error_msg, fetch_result.has_uncommitted);
+            let failure = GitFailure::from_message(
+                GitOperationPhase::LfsPush,
+                error_msg,
+                push_context.clone(),
+            );
+            return GitOperationResult::failed(
+                Status::Error,
+                failure,
+                fetch_result.has_uncommitted,
+            );
         }
     }
 
@@ -608,19 +707,41 @@ pub async fn push_if_needed(
                     } else {
                         format!("set upstream ({remote_name}) & pushed")
                     };
-                    return (Status::Pushed, msg, fetch_result.has_uncommitted);
+                    return GitOperationResult::new(
+                        Status::Pushed,
+                        msg,
+                        fetch_result.has_uncommitted,
+                    );
                 }
                 Ok((false, _, stderr)) => {
                     let error_message = clean_error_message(&stderr);
-                    return (Status::Error, error_message, fetch_result.has_uncommitted);
+                    let failure = GitFailure::from_message(
+                        GitOperationPhase::Push,
+                        error_message,
+                        push_context,
+                    );
+                    return GitOperationResult::failed(
+                        Status::Error,
+                        failure,
+                        fetch_result.has_uncommitted,
+                    );
                 }
                 Err(e) => {
                     let error_message = clean_error_message(&e.to_string());
-                    return (Status::Error, error_message, fetch_result.has_uncommitted);
+                    let failure = GitFailure::from_message(
+                        GitOperationPhase::Push,
+                        error_message,
+                        push_context,
+                    );
+                    return GitOperationResult::failed(
+                        Status::Error,
+                        failure,
+                        fetch_result.has_uncommitted,
+                    );
                 }
             }
         }
-        return (
+        return GitOperationResult::new(
             Status::NoUpstream,
             STATUS_NO_UPSTREAM.to_string(),
             fetch_result.has_uncommitted,
@@ -629,7 +750,7 @@ pub async fn push_if_needed(
 
     // If no commits ahead, already synced
     if fetch_result.ahead_count == 0 {
-        return (
+        return GitOperationResult::new(
             Status::Synced,
             STATUS_SYNCED.to_string(),
             fetch_result.has_uncommitted,
@@ -658,7 +779,7 @@ pub async fn push_if_needed(
             } else {
                 format!("{} {} pushed", fetch_result.ahead_count, commits_word)
             };
-            (Status::Pushed, msg, fetch_result.has_uncommitted)
+            GitOperationResult::new(Status::Pushed, msg, fetch_result.has_uncommitted)
         }
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
@@ -667,7 +788,9 @@ pub async fn push_if_needed(
             } else {
                 error_message
             };
-            (Status::Error, final_message, fetch_result.has_uncommitted)
+            let failure =
+                GitFailure::from_message(GitOperationPhase::Push, final_message, push_context);
+            GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted)
         }
         Err(e) => {
             let error_message = clean_error_message(&e.to_string());
@@ -676,7 +799,9 @@ pub async fn push_if_needed(
             } else {
                 error_message
             };
-            (Status::Error, final_message, fetch_result.has_uncommitted)
+            let failure =
+                GitFailure::from_message(GitOperationPhase::Push, final_message, push_context);
+            GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted)
         }
     }
 }
@@ -840,8 +965,17 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
         },
     };
 
-    if let Some(error) = push_policy_error(path, &remote_name).await {
-        return (false, format!("tag created locally; {error}"));
+    match inspect_operation_remote(path, &remote_name, RemoteDirection::Push).await {
+        Ok((_, Some(failure))) => {
+            return (false, format!("tag created locally; {}", failure.message));
+        }
+        Ok((_, None)) => {}
+        Err(error) => {
+            return (
+                false,
+                format!("tag created locally; remote inspection failed: {error}"),
+            );
+        }
     }
 
     let push_result = run_git(path, &["push", &remote_name, tag_name]).await;
@@ -940,8 +1074,17 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     }
 
     let fetch_remote = get_branch_remote_name(path, &current_branch, &remotes).await;
-    if let Some(error) = fetch_policy_error(path, &fetch_remote).await {
-        return PullFetchResult::error(error, has_uncommitted);
+    match inspect_operation_remote(path, &fetch_remote, RemoteDirection::Fetch).await {
+        Ok((_, Some(failure))) => {
+            return PullFetchResult::error(failure.message, has_uncommitted);
+        }
+        Ok((_, None)) => {}
+        Err(error) => {
+            return PullFetchResult::error(
+                format!("remote inspection failed: {error}"),
+                has_uncommitted,
+            );
+        }
     }
 
     // Fetch latest changes to ensure we have up-to-date refs

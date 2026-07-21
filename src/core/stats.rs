@@ -3,6 +3,7 @@
 use crate::core::config::{
     ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, TIMEOUT_SECONDS_DISPLAY,
 };
+use crate::git::failure::GitFailure;
 use crate::git::Status;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -40,6 +41,7 @@ pub struct SyncStatistics {
     pub uncommitted_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
     pub pushed_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
     pub skipped_reasons: Mutex<Vec<String>>,
+    pub(crate) git_failures: Mutex<HashMap<(String, String), GitFailure>>,
 }
 
 impl Default for SyncStatistics {
@@ -67,6 +69,7 @@ impl SyncStatistics {
             uncommitted_repos: Mutex::new(Vec::new()),
             pushed_repo_details: Mutex::new(Vec::new()),
             skipped_reasons: Mutex::new(Vec::new()),
+            git_failures: Mutex::new(HashMap::new()),
         }
     }
 
@@ -172,6 +175,30 @@ impl SyncStatistics {
         }
     }
 
+    /// Updates statistics and retains structured Git context for actionable reports.
+    pub(crate) fn update_with_failure(
+        &self,
+        repo_name: &str,
+        repo_path: &str,
+        status: &Status,
+        message: &str,
+        has_uncommitted: bool,
+        failure: Option<&GitFailure>,
+    ) {
+        self.update(repo_name, repo_path, status, message, has_uncommitted);
+
+        if let Some(failure) = failure {
+            if let Ok(mut failures) = self.git_failures.lock() {
+                failures.insert(
+                    (repo_name.to_string(), repo_path.to_string()),
+                    failure.clone(),
+                );
+            } else {
+                eprintln!("Warning: Failed to retain Git failure context for repo: {repo_name}");
+            }
+        }
+    }
+
     fn record_skipped_reason(&self, repo_name: &str, reason: &str) {
         if let Ok(mut guard) = self.skipped_reasons.lock() {
             guard.push(reason.to_string());
@@ -269,8 +296,14 @@ impl SyncStatistics {
         let no_remote_repos = clone_vec(&self.no_remote_repos, "no_remote_repos");
         let uncommitted_repos = clone_vec(&self.uncommitted_repos, "uncommitted_repos");
         let skipped_reasons = clone_vec(&self.skipped_reasons, "skipped_reasons");
+        let git_failures = clone_failure_map(&self.git_failures);
 
-        let mut issue_rows = build_issue_rows(&failed_repos, &no_upstream_repos, &no_remote_repos);
+        let mut issue_rows = build_issue_rows(
+            &failed_repos,
+            &no_upstream_repos,
+            &no_remote_repos,
+            &git_failures,
+        );
         let issue_index = issue_rows
             .iter()
             .enumerate()
@@ -328,7 +361,7 @@ impl SyncStatistics {
         }
         lines.push(String::new());
 
-        append_failed_section(&mut lines, errors, &failed_repos);
+        append_failed_section(&mut lines, errors, &failed_repos, &git_failures);
 
         if skipped > 0 {
             append_skipped_section(&mut lines, skipped, &skipped_reasons);
@@ -608,10 +641,23 @@ fn clone_vec<T: Clone>(values: &Mutex<Vec<T>>, label: &str) -> Vec<T> {
     }
 }
 
+fn clone_failure_map(
+    failures: &Mutex<HashMap<(String, String), GitFailure>>,
+) -> HashMap<(String, String), GitFailure> {
+    match failures.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => {
+            eprintln!("Warning: Failed to acquire lock for git_failures");
+            HashMap::new()
+        }
+    }
+}
+
 fn append_failed_section(
     lines: &mut Vec<String>,
     errors: u64,
     failed_repos: &[(String, String, String)],
+    git_failures: &HashMap<(String, String), GitFailure>,
 ) {
     if errors == 0 {
         return;
@@ -623,19 +669,25 @@ fn append_failed_section(
         lines.push(format!("    {DIM}↳ Run `repos doctor`{RESET}"));
     } else {
         for (repo_name, repo_path, error) in failed_repos {
+            let failure = git_failures.get(&(repo_name.clone(), repo_path.clone()));
+            let reason = failure
+                .map(GitFailure::reason)
+                .unwrap_or_else(|| compact_push_error(error));
+            let display_path = format_relative_repo_path(repo_path);
             lines.push(format!(
                 "  {RED}!{RESET} {:24} {}",
                 truncate_text(repo_name, 24),
-                compact_push_error(error)
+                reason
             ));
-            lines.push(format!(
-                "    {DIM}↳ path: {}{RESET}",
-                format_relative_repo_path(repo_path)
-            ));
-            lines.push(format!(
-                "    {DIM}↳ next: {}{RESET}",
-                next_for_push_error(error)
-            ));
+            lines.push(format!("    {DIM}↳ path: {}{RESET}", display_path));
+            if let Some(remote) = failure.and_then(|failure| failure.remote.as_ref()) {
+                lines.push(format!("    {DIM}↳ remote: {}{RESET}", remote.display()));
+            }
+            let next = failure.map_or_else(
+                || next_for_push_error(error),
+                |failure| failure.next_action(&display_path),
+            );
+            lines.push(format!("    {DIM}↳ next: {}{RESET}", next));
         }
     }
     lines.push(String::new());
@@ -760,17 +812,25 @@ fn build_issue_rows(
     failed_repos: &[(String, String, String)],
     no_upstream_repos: &[(String, String)],
     no_remote_repos: &[(String, String)],
+    git_failures: &HashMap<(String, String), GitFailure>,
 ) -> Vec<IssueRow> {
     let mut rows = Vec::new();
     let mut seen = HashSet::new();
 
     for (repo_name, repo_path, error) in failed_repos {
         if seen.insert(repo_name.clone()) {
+            let failure = git_failures.get(&(repo_name.clone(), repo_path.clone()));
+            let display_path = format_relative_repo_path(repo_path);
             rows.push(IssueRow {
                 repo: repo_name.clone(),
                 path: repo_path.clone(),
-                reason: compact_push_error(error),
-                next: next_for_push_error(error),
+                reason: failure
+                    .map(GitFailure::reason)
+                    .unwrap_or_else(|| compact_push_error(error)),
+                next: failure.map_or_else(
+                    || next_for_push_error(error),
+                    |failure| failure.next_action(&display_path),
+                ),
             });
         }
     }

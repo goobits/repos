@@ -224,7 +224,8 @@ async fn process_push_repositories(
     no_drift_check: bool,
 ) -> Result<()> {
     use crate::core::acquire_stats_lock;
-    use crate::git::{fetch_and_analyze, push_if_needed};
+    use crate::git::fetch_and_analyze;
+    use crate::git::operations::push_if_needed_with_context;
     use futures::stream::{FuturesUnordered, StreamExt};
 
     // Use 2x concurrency for fetch phase (I/O bound), standard concurrency for push phase
@@ -273,11 +274,29 @@ async fn process_push_repositories(
 
             // Track start time for this repo
             let repo_start_time = std::time::Instant::now();
+            let slow_repo_watchdog = if verbose_clone {
+                None
+            } else {
+                single_pb_clone.as_ref().map(|progress_bar| {
+                    let progress_bar = progress_bar.clone();
+                    let repo_name = repo_name.to_string();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(
+                            SLOW_REPO_THRESHOLD_SECS,
+                        ))
+                        .await;
+                        progress_bar.set_message(format!("{repo_name} · still running..."));
+                    })
+                })
+            };
 
             // PHASE 1: Fetch with high concurrency
             let _fetch_permit = match fetch_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
+                    if let Some(watchdog) = &slow_repo_watchdog {
+                        watchdog.abort();
+                    }
                     record_semaphore_error(
                         "fetch",
                         repo_name,
@@ -297,6 +316,9 @@ async fn process_push_repositories(
             let _push_permit = match push_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
+                    if let Some(watchdog) = &slow_repo_watchdog {
+                        watchdog.abort();
+                    }
                     record_semaphore_error(
                         "push",
                         repo_name,
@@ -315,11 +337,11 @@ async fn process_push_repositories(
             let max_attempts = 2;
             let result = loop {
                 attempt += 1;
-                let (status, message, has_uncommitted) =
-                    push_if_needed(repo_path, &fetch_result, auto_upstream).await;
+                let mut result =
+                    push_if_needed_with_context(repo_path, &fetch_result, auto_upstream).await;
 
                 // Check for rate limit error
-                if message.contains("⚠️ RATE LIMIT") {
+                if result.message.contains("⚠️ RATE LIMIT") {
                     has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Release);
                     rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Release);
 
@@ -331,15 +353,25 @@ async fn process_push_repositories(
                     // Max attempts reached, return with suggestion
                     let suggestion = format!(
                         "{} (try reducing concurrency with --jobs N or --sequential)",
-                        message.replace("⚠️ RATE LIMIT: ", "")
+                        result.message.replace("⚠️ RATE LIMIT: ", "")
                     );
-                    break (status, suggestion, has_uncommitted);
+                    result.message.clone_from(&suggestion);
+                    if let Some(failure) = &mut result.failure {
+                        failure.message = suggestion;
+                    }
+                    break result;
                 }
 
-                break (status, message, has_uncommitted);
+                break result;
             };
 
-            let (status, message, has_uncommitted_changes) = result;
+            if let Some(watchdog) = &slow_repo_watchdog {
+                watchdog.abort();
+            }
+
+            let status = result.status;
+            let message = &result.message;
+            let has_uncommitted_changes = result.has_uncommitted;
 
             // Calculate elapsed time for this repo
             let repo_elapsed = repo_start_time.elapsed();
@@ -380,12 +412,13 @@ async fn process_push_repositories(
             }
 
             let stats_guard = acquire_stats_lock(&stats_clone);
-            stats_guard.update(
+            stats_guard.update_with_failure(
                 repo_name,
                 &repo_path.to_string_lossy(),
                 &status,
-                &message,
+                message,
                 has_uncommitted_changes,
+                result.failure.as_ref(),
             );
 
             let duration = start_time_clone.elapsed();
