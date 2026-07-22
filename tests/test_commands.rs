@@ -9,7 +9,7 @@
 //! without requiring actual network operations or real remotes.
 
 mod common;
-use common::fixtures::TestRepoBuilder;
+use common::fixtures::TestRepo;
 use common::git::{add_bare_remote, is_git_available, run_git_ok, IsolatedGitConfig};
 
 use goobits_repos::commands::staging::{
@@ -62,7 +62,7 @@ async fn test_sync_command_with_single_repo_no_remote() {
 
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
-    let repo = match TestRepoBuilder::new("test-sync-no-remote").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -94,7 +94,7 @@ async fn test_push_command_with_single_repo_no_changes() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository with a remote
-    let repo = match TestRepoBuilder::new("test-repo").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -130,7 +130,7 @@ async fn test_push_command_with_no_remote() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository without a remote
-    let repo = match TestRepoBuilder::new("test-repo-no-remote").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -160,9 +160,7 @@ fn test_cli_fails_when_remote_is_unreachable() {
         return;
     }
 
-    let repo = TestRepoBuilder::new("test-unreachable")
-        .build()
-        .expect("Failed to create test repo");
+    let repo = TestRepo::new().expect("Failed to create test repo");
     let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
     drop(remote);
 
@@ -194,9 +192,7 @@ fn test_doctor_ssh_only_policy_uses_effective_instead_of_url() {
         return;
     }
 
-    let repo = TestRepoBuilder::new("test-https-warning")
-        .build()
-        .expect("Failed to create test repo");
+    let repo = TestRepo::new().expect("Failed to create test repo");
     let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
     let https_url = "https://example.invalid/team/repo.git";
     let git_config = IsolatedGitConfig::new("").expect("Failed to isolate Git config");
@@ -233,9 +229,7 @@ fn test_ssh_only_push_blocks_https_fetch_before_credential_helper() {
         return;
     }
 
-    let repo = TestRepoBuilder::new("test-ssh-only-fetch")
-        .build()
-        .expect("Failed to create test repo");
+    let repo = TestRepo::new().expect("Failed to create test repo");
     let helper_marker = repo.path().join("credential-helper-ran");
     let helper = format!("!touch {}", helper_marker.display());
     let remote = "https://secret-token@github.com/goobits/keychain-test.git?access_token=hidden";
@@ -282,9 +276,7 @@ fn test_ssh_only_push_reports_https_pushurl_fix() {
         return;
     }
 
-    let repo = TestRepoBuilder::new("test-ssh-only-pushurl")
-        .build()
-        .expect("Failed to create test repo");
+    let repo = TestRepo::new().expect("Failed to create test repo");
     let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
     let helper_marker = repo.path().join("credential-helper-ran");
     let helper = format!("!touch {}", helper_marker.display());
@@ -338,7 +330,7 @@ async fn test_push_command_with_uncommitted_changes() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-repo-uncommitted").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -378,7 +370,7 @@ async fn test_pull_command_with_single_repo() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository with a remote
-    let repo = match TestRepoBuilder::new("test-repo-pull").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -414,7 +406,7 @@ async fn test_push_command_with_auto_upstream() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository with remote
-    let repo = match TestRepoBuilder::new("test-repo-force").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -465,9 +457,7 @@ async fn test_push_if_needed_uses_upstream_remote_for_current_branch() {
         );
     }
 
-    let repo = TestRepoBuilder::new("test-push-upstream-remote")
-        .build()
-        .expect("Failed to create test repo");
+    let repo = TestRepo::new().expect("Failed to create test repo");
 
     for (name, path) in [
         ("aaa", wrong_remote.to_string_lossy().to_string()),
@@ -591,7 +581,7 @@ async fn test_stage_command_with_simple_pattern() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-stage-simple").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -639,7 +629,7 @@ async fn test_stage_command_with_wildcard_pattern() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-stage-wildcard").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -678,7 +668,7 @@ async fn test_unstage_command_with_pattern() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-unstage").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -724,7 +714,7 @@ async fn test_commit_command_with_staged_changes() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-commit").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -784,8 +774,8 @@ async fn test_commit_command_with_no_staged_changes() {
         return;
     }
 
-    // Create a test repository (already has initial commit from builder)
-    let repo = match TestRepoBuilder::new("test-commit-no-changes").build() {
+    // The fixture already has an initial commit.
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -819,7 +809,7 @@ async fn test_commit_command_with_allow_empty_flag() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-commit-empty").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -853,7 +843,7 @@ async fn test_staging_status_command_with_changes() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-status-changes").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -900,8 +890,8 @@ async fn test_staging_status_command_with_no_changes() {
         return;
     }
 
-    // Create a test repository (already clean from builder)
-    let repo = match TestRepoBuilder::new("test-status-no-changes").build() {
+    // The fixture starts clean.
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -935,7 +925,7 @@ async fn test_stage_command_with_nonexistent_file() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-stage-nonexistent").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);

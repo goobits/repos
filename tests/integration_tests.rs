@@ -4,7 +4,7 @@ use goobits_repos::git::UserConfig;
 use std::sync::atomic::Ordering;
 
 mod common;
-use common::fixtures::TestRepoBuilder;
+use common::fixtures::TestRepo;
 use common::git::is_git_available;
 
 #[test]
@@ -62,7 +62,7 @@ async fn test_git_staging_operations() {
     }
 
     // Create a test repository using helper
-    let repo = match TestRepoBuilder::new("test-repo").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");
@@ -704,7 +704,7 @@ async fn test_check_uses_git_lfs_without_lfs() {
     }
 
     // Create a test repository without LFS
-    let repo = match TestRepoBuilder::new("test-repo-no-lfs").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");
@@ -735,7 +735,7 @@ async fn test_check_uses_git_lfs_with_gitattributes() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-repo-with-lfs").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");
@@ -770,7 +770,7 @@ async fn test_check_uses_git_lfs_without_git_lfs_installed() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-repo-no-lfs-cmd").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");
@@ -813,7 +813,7 @@ async fn test_has_pending_lfs_objects_without_lfs() {
     }
 
     // Create a test repository without LFS
-    let repo = match TestRepoBuilder::new("test-repo-no-lfs-pending").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");
@@ -847,7 +847,7 @@ async fn test_has_pending_lfs_objects_with_lfs_but_no_objects() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-repo-lfs-no-pending").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");
@@ -880,7 +880,7 @@ async fn test_push_lfs_objects_without_lfs() {
     }
 
     // Create a test repository without LFS
-    let repo = match TestRepoBuilder::new("test-repo-push-no-lfs").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");
@@ -925,7 +925,7 @@ async fn test_push_lfs_objects_without_remote() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-repo-lfs-no-remote").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");
@@ -962,7 +962,7 @@ async fn test_push_lfs_objects_invalid_branch() {
     }
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-repo-lfs-invalid-branch").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Failed to create test repo, skipping");

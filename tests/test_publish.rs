@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 
 mod common;
-use common::fixtures::TestRepoBuilder;
+use common::fixtures::TestRepo;
 use common::git::is_git_available;
 
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn test_publish_dry_run_cargo() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-publish-cargo").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);
@@ -67,7 +67,7 @@ async fn test_publish_dry_run_npm() {
     let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository
-    let repo = match TestRepoBuilder::new("test-publish-npm").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);

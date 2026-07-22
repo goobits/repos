@@ -12,7 +12,7 @@ use goobits_repos::audit::scanner::{SecretFinding, TruffleStatistics};
 use std::time::Duration;
 
 mod common;
-use common::fixtures::TestRepoBuilder;
+use common::fixtures::TestRepo;
 use common::git::is_git_available;
 
 // =====================================================================================
@@ -748,7 +748,7 @@ async fn test_hygiene_statistics_with_git_repo() {
         return;
     }
 
-    let repo = match TestRepoBuilder::new("test-hygiene-repo").build() {
+    let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to create test repo: {}, skipping", e);

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::fixtures::TestRepoBuilder;
+use common::fixtures::TestRepo;
 use common::git::{create_multiple_repos, is_git_available, setup_git_repo};
 use goobits_repos::core::find_repos_from_path;
 use std::fs;
@@ -16,9 +16,7 @@ fn test_find_single_repo() {
     }
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let repo = TestRepoBuilder::new("test-repo")
-        .build()
-        .expect("Failed to create test repo");
+    let repo = TestRepo::new().expect("Failed to create test repo");
 
     // Move repo to a known location
     let repos_dir = temp_dir.path().join("repos");
