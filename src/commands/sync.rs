@@ -109,6 +109,28 @@ fn record_semaphore_error(
     }
 }
 
+fn spawn_slow_repo_watchdog(
+    progress_bar: Option<&indicatif::ProgressBar>,
+    repo_name: &str,
+    delay: std::time::Duration,
+) -> Option<tokio::task::JoinHandle<()>> {
+    progress_bar.map(|progress_bar| {
+        let progress_bar = progress_bar.clone();
+        let repo_name = repo_name.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            progress_bar.set_message(format!("{repo_name} · still running..."));
+        })
+    })
+}
+
+async fn stop_slow_repo_watchdog(watchdog: &mut Option<tokio::task::JoinHandle<()>>) {
+    if let Some(watchdog) = watchdog.take() {
+        watchdog.abort();
+        let _ = watchdog.await;
+    }
+}
+
 /// Handles the two-way repository sync command.
 ///
 /// Sync is the daily workflow: pull safe remote changes with rebase, then push
@@ -274,29 +296,17 @@ async fn process_push_repositories(
 
             // Track start time for this repo
             let repo_start_time = std::time::Instant::now();
-            let slow_repo_watchdog = if verbose_clone {
-                None
-            } else {
-                single_pb_clone.as_ref().map(|progress_bar| {
-                    let progress_bar = progress_bar.clone();
-                    let repo_name = repo_name.to_string();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(
-                            SLOW_REPO_THRESHOLD_SECS,
-                        ))
-                        .await;
-                        progress_bar.set_message(format!("{repo_name} · still running..."));
-                    })
-                })
-            };
+            let mut slow_repo_watchdog = spawn_slow_repo_watchdog(
+                single_pb_clone.as_ref(),
+                repo_name,
+                std::time::Duration::from_secs(SLOW_REPO_THRESHOLD_SECS),
+            );
 
             // PHASE 1: Fetch with high concurrency
             let _fetch_permit = match fetch_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    if let Some(watchdog) = &slow_repo_watchdog {
-                        watchdog.abort();
-                    }
+                    stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
                     record_semaphore_error(
                         "fetch",
                         repo_name,
@@ -316,9 +326,7 @@ async fn process_push_repositories(
             let _push_permit = match push_semaphore_clone.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
-                    if let Some(watchdog) = &slow_repo_watchdog {
-                        watchdog.abort();
-                    }
+                    stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
                     record_semaphore_error(
                         "push",
                         repo_name,
@@ -365,9 +373,7 @@ async fn process_push_repositories(
                 break result;
             };
 
-            if let Some(watchdog) = &slow_repo_watchdog {
-                watchdog.abort();
-            }
+            stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
 
             let status = result.status;
             let message = &result.message;
@@ -475,6 +481,47 @@ async fn process_push_repositories(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{spawn_slow_repo_watchdog, stop_slow_repo_watchdog};
+    use indicatif::ProgressBar;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn slow_repo_watchdog_names_the_active_repository() {
+        let progress_bar = ProgressBar::hidden();
+        let mut watchdog =
+            spawn_slow_repo_watchdog(Some(&progress_bar), "slow-repo", Duration::from_millis(1));
+
+        watchdog
+            .take()
+            .expect("watchdog should start")
+            .await
+            .expect("watchdog should complete");
+
+        assert_eq!(progress_bar.message(), "slow-repo · still running...");
+    }
+
+    #[tokio::test]
+    async fn stopped_watchdog_cannot_overwrite_the_final_status() {
+        let progress_bar = ProgressBar::hidden();
+        let mut watchdog =
+            spawn_slow_repo_watchdog(Some(&progress_bar), "slow-repo", Duration::from_secs(60));
+
+        stop_slow_repo_watchdog(&mut watchdog).await;
+        progress_bar.set_message("complete");
+        tokio::task::yield_now().await;
+
+        assert!(watchdog.is_none());
+        assert_eq!(progress_bar.message(), "complete");
+    }
+
+    #[test]
+    fn watchdog_is_disabled_without_a_progress_bar() {
+        assert!(spawn_slow_repo_watchdog(None, "repo", Duration::ZERO).is_none());
+    }
 }
 
 fn format_nested_drift_work_items() -> (usize, Vec<String>) {
