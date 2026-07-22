@@ -1,9 +1,48 @@
 //! Git testing utilities
 
 use anyhow::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
+
+pub struct IsolatedGitConfig {
+    _directory: TempDir,
+    path: PathBuf,
+}
+
+impl IsolatedGitConfig {
+    pub fn new(contents: &str) -> Result<Self> {
+        let directory = TempDir::new()?;
+        let path = directory.path().join("gitconfig");
+        std::fs::write(&path, contents)?;
+        Ok(Self {
+            _directory: directory,
+            path,
+        })
+    }
+
+    pub fn apply(&self, command: &mut Command) {
+        command
+            .env_remove("REPOS_TRANSPORT_POLICY")
+            .env("GIT_CONFIG_GLOBAL", &self.path)
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+    }
+}
+
+#[track_caller]
+pub fn run_git_ok(path: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .expect("Failed to run git");
+    assert!(
+        output.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 /// Sets up a git repository with user config
 /// Returns Ok(()) on success, or skips test if git is not available

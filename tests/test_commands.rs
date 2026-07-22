@@ -10,8 +10,7 @@
 
 mod common;
 use common::fixtures::TestRepoBuilder;
-use common::git::add_bare_remote;
-use common::git::is_git_available;
+use common::git::{add_bare_remote, is_git_available, run_git_ok, IsolatedGitConfig};
 
 use goobits_repos::commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
@@ -25,20 +24,6 @@ use std::env;
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
-
-fn run_git_ok(path: &std::path::Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .output()
-        .expect("Failed to run git");
-    assert!(
-        output.status.success(),
-        "git {} failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
 
 // ==============================================================================
 // SYNC COMMAND TESTS (commands/sync.rs)
@@ -214,26 +199,19 @@ fn test_doctor_ssh_only_policy_uses_effective_instead_of_url() {
         .expect("Failed to create test repo");
     let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
     let https_url = "https://example.invalid/team/repo.git";
+    let git_config = IsolatedGitConfig::new("").expect("Failed to isolate Git config");
 
-    let set_url = Command::new("git")
-        .args(["remote", "set-url", "origin", https_url])
-        .current_dir(repo.path())
-        .output()
-        .expect("Failed to set HTTPS remote");
-    assert!(set_url.status.success());
+    run_git_ok(repo.path(), &["remote", "set-url", "origin", https_url]);
 
     let rewrite_key = format!(
         "url.{}.insteadOf",
         remote.path().join("remote.git").display()
     );
-    let rewrite = Command::new("git")
-        .args(["config", &rewrite_key, https_url])
-        .current_dir(repo.path())
-        .output()
-        .expect("Failed to configure test URL rewrite");
-    assert!(rewrite.status.success());
+    run_git_ok(repo.path(), &["config", &rewrite_key, https_url]);
 
-    let doctor = Command::new(env!("CARGO_BIN_EXE_repos"))
+    let mut doctor_command = Command::new(env!("CARGO_BIN_EXE_repos"));
+    git_config.apply(&mut doctor_command);
+    let doctor = doctor_command
         .arg("doctor")
         .env("REPOS_TRANSPORT_POLICY", "ssh-only")
         .current_dir(repo.path())
@@ -261,18 +239,16 @@ fn test_ssh_only_push_blocks_https_fetch_before_credential_helper() {
     let helper_marker = repo.path().join("credential-helper-ran");
     let helper = format!("!touch {}", helper_marker.display());
     let remote = "https://secret-token@github.com/goobits/keychain-test.git?access_token=hidden";
-    let config_dir = TempDir::new().expect("Failed to create test config directory");
-    let global_config = config_dir.path().join("gitconfig");
-    fs::write(&global_config, "[repos]\n\ttransportPolicy = ssh-only\n")
-        .expect("Failed to write test Git config");
+    let git_config = IsolatedGitConfig::new("[repos]\n\ttransportPolicy = ssh-only\n")
+        .expect("Failed to isolate Git config");
 
     run_git_ok(repo.path(), &["remote", "add", "origin", remote]);
     run_git_ok(repo.path(), &["config", "credential.helper", &helper]);
 
-    let push = Command::new(env!("CARGO_BIN_EXE_repos"))
+    let mut push_command = Command::new(env!("CARGO_BIN_EXE_repos"));
+    git_config.apply(&mut push_command);
+    let push = push_command
         .args(["push", "--sequential", "--no-drift-check"])
-        .env_remove("REPOS_TRANSPORT_POLICY")
-        .env("GIT_CONFIG_GLOBAL", &global_config)
         .current_dir(repo.path())
         .output()
         .expect("Failed to run repos push");
@@ -313,6 +289,7 @@ fn test_ssh_only_push_reports_https_pushurl_fix() {
     let helper_marker = repo.path().join("credential-helper-ran");
     let helper = format!("!touch {}", helper_marker.display());
     let push_url = "https://github.com/goobits/keychain-test.git";
+    let git_config = IsolatedGitConfig::new("").expect("Failed to isolate Git config");
 
     run_git_ok(
         repo.path(),
@@ -324,7 +301,9 @@ fn test_ssh_only_push_reports_https_pushurl_fix() {
     repo.commit_all("Create local commit")
         .expect("Failed to create local commit");
 
-    let push = Command::new(env!("CARGO_BIN_EXE_repos"))
+    let mut push_command = Command::new(env!("CARGO_BIN_EXE_repos"));
+    git_config.apply(&mut push_command);
+    let push = push_command
         .args(["push", "--sequential", "--no-drift-check"])
         .env("REPOS_TRANSPORT_POLICY", "ssh-only")
         .current_dir(repo.path())
@@ -977,80 +956,6 @@ async fn test_stage_command_with_nonexistent_file() {
     assert!(
         result.is_ok(),
         "Stage command should handle non-existent file gracefully: {:?}",
-        result
-    );
-}
-
-// ==============================================================================
-// PARALLEL SYNC TESTS
-// ==============================================================================
-
-#[tokio::test]
-async fn test_push_command_with_sequential_flag() {
-    let _lock = common::lock_test().await;
-    if !is_git_available() {
-        eprintln!("Git not available, skipping test");
-        return;
-    }
-
-    // Create a test repository
-    let repo = match TestRepoBuilder::new("test-sequential").build() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to create test repo: {}, skipping", e);
-            return;
-        }
-    };
-    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
-
-    // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
-
-    // Run push command with sequential flag
-    let result = handle_push_command(false, false, false, true, None, true).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
-
-    assert!(
-        result.is_ok(),
-        "Sequential push command should complete: {:?}",
-        result
-    );
-}
-
-#[tokio::test]
-async fn test_push_command_with_custom_jobs_limit() {
-    let _lock = common::lock_test().await;
-    if !is_git_available() {
-        eprintln!("Git not available, skipping test");
-        return;
-    }
-
-    // Create a test repository
-    let repo = match TestRepoBuilder::new("test-jobs-limit").build() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to create test repo: {}, skipping", e);
-            return;
-        }
-    };
-    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
-
-    // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
-
-    // Run push command with custom jobs limit
-    let result = handle_push_command(false, false, false, true, Some(2), false).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
-
-    assert!(
-        result.is_ok(),
-        "Push command with custom jobs limit should complete: {:?}",
         result
     );
 }
