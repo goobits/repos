@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **SSH-only Git transport policy:** `git config --global repos.transportPolicy ssh-only` blocks effective HTTP(S) fetch and push URLs before credential helpers run, including macOS Keychain helpers. Push failures now name the repository and sanitized remote and provide an exact SSH conversion command for GitHub, GitLab, and Bitbucket.
+
 ### Changed
 - **Push report UX:** `repos push` now ends with a compact ANSI-colored report that names pushed repositories, deduplicates follow-up work, and keeps nested drift as a short action list.
+- **Push progress:** Concise mode names a repository when its operation is still running after 10 seconds instead of leaving only the last completed repository visible.
+
+### Security
+- HTTP credentials, URL user information, and query strings are redacted from Git failure reports.
 
 ## [4.0.0] - 2026-05-05
 

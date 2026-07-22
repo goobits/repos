@@ -310,10 +310,21 @@ Checks:
 - Nested repository drift.
 
 `doctor` is read-only and exits nonzero when it finds any blocker. Git
-credential prompts are disabled, so an inaccessible HTTPS credential or SSH key
-is reported instead of waiting for input. HTTP(S) remotes also produce a
-non-failing advisory for SSH-only setups; accessible HTTP(S) remotes are not
-treated as unhealthy.
+terminal prompts are disabled, and HTTP(S) remotes produce a non-failing
+advisory under the default transport policy.
+
+To guarantee that fleet commands do not consult HTTP credential helpers such as
+macOS Keychain, enable SSH-only policy once:
+
+```bash
+git config --global repos.transportPolicy ssh-only
+repos doctor
+```
+
+The policy checks effective fetch and push URLs, including a separate
+`pushurl`. It blocks HTTP(S) before access checks and reports the repository,
+sanitized remote identity, and an exact `git remote set-url` command for common
+Git hosts. Use `REPOS_TRANSPORT_POLICY=preserve` for a one-command exception.
 
 ## Advanced
 

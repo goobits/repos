@@ -59,13 +59,18 @@ targets stable across runs even though walking is concurrent.
 `git::operations::run_git` is the common async Git process boundary. It:
 
 - uses the repository as the process working directory;
-- disables interactive credential prompts;
+- disables terminal and Git Credential Manager prompts;
 - supplies batch-mode SSH only when the caller has not set
   `GIT_SSH_COMMAND`;
-- preserves each configured remote URL and transport;
+- preserves each configured remote URL and transport by default;
 - kills child processes when their future is dropped;
 - enforces a 180-second timeout; and
 - returns command success, stdout, and stderr separately.
+
+With `repos.transportPolicy=ssh-only`, fetch and push inspect Git's effective
+URL, including `pushurl` and `insteadOf` rewrites, before any network command.
+HTTP(S) is rejected with safe remote context, and network commands clear Git
+credential helpers so helpers such as macOS `osxkeychain` cannot open UI.
 
 Network commands retry transient failures with bounded backoff. Normal Git
 nonzero statuses are classified by callers and become repository failures when

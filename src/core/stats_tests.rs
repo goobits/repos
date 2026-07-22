@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::SyncStatistics;
+    use crate::core::{clean_error_message, SyncStatistics};
     use crate::git::Status;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
@@ -183,6 +183,17 @@ mod tests {
         assert_eq!(name, "repo1");
         assert_eq!(path, "/path/1");
         assert_eq!(msg, "push failed: permission denied");
+    }
+
+    #[test]
+    fn test_clean_error_message_redacts_http_credentials_and_query() {
+        let cleaned = clean_error_message("oops 'https://user:secret@example.com/r.git?t=hidden'");
+
+        assert!(cleaned.contains("https://example.com/r.git"), "{cleaned}");
+        assert!(!cleaned.contains("user"));
+        assert!(!cleaned.contains("secret"));
+        assert!(!cleaned.contains("hidden"));
+        assert!(!cleaned.contains('?'));
     }
 
     #[test]

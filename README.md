@@ -21,6 +21,9 @@ cargo install goobits-repos
 repos status                    # Understand fleet state
 repos save "Update docs"        # Stage tracked changes, commit, push
 repos sync                      # Pull safe changes, push commits, report drift
+
+# Optional: require SSH for every effective Git remote
+git config --global repos.transportPolicy ssh-only
 ```
 
 [Full installation guide →](docs/installation.md)
@@ -86,6 +89,7 @@ See [Commands Reference](docs/guides/commands.md) for complete flag documentatio
 - Use `repos save "message" --dry-run` to preview the save plan.
 - `repos sync` pulls safe remote changes, pushes local commits, and skips dirty repositories instead of stashing or overwriting local work.
 - `repos push --auto-upstream` replaces the old “force” wording for publishing new branches.
+- SSH-only policy blocks HTTP(S) before Git can consult a credential helper and reports the repository, effective remote, and exact SSH fix for common hosts.
 
 ## Documentation
 

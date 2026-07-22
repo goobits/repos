@@ -1038,6 +1038,7 @@ pub(crate) fn clean_error_message(error: &str) -> String {
         .replace('\r', "")
         .replace('\t', " ");
     let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cleaned = redact_http_url_secrets(&cleaned);
 
     // Extract key error patterns
     let message = if cleaned.contains("repository moved") {
@@ -1086,6 +1087,46 @@ pub(crate) fn clean_error_message(error: &str) -> String {
     };
 
     message
+}
+
+fn redact_http_url_secrets(value: &str) -> String {
+    let mut redacted = String::with_capacity(value.len());
+    let mut remaining = value;
+
+    while let Some(start) = [remaining.find("https://"), remaining.find("http://")]
+        .into_iter()
+        .flatten()
+        .min()
+    {
+        redacted.push_str(&remaining[..start]);
+        remaining = &remaining[start..];
+
+        let end = remaining
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, '\'' | '"' | ')' | ']' | '>' | ',')
+            })
+            .unwrap_or(remaining.len());
+        let url = &remaining[..end];
+        redacted.push_str(&redact_http_url(url));
+        remaining = &remaining[end..];
+    }
+
+    redacted.push_str(remaining);
+    redacted
+}
+
+fn redact_http_url(url: &str) -> String {
+    let Some(scheme_end) = url.find("://").map(|index| index + 3) else {
+        return url.to_string();
+    };
+    let remainder = &url[scheme_end..];
+    let authority_end = remainder.find(['/', '?', '#']).unwrap_or(remainder.len());
+    let authority = &remainder[..authority_end];
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let path = &remainder[authority_end..];
+    let safe_path_end = path.find(['?', '#']).unwrap_or(path.len());
+
+    format!("{}{}{}", &url[..scheme_end], host, &path[..safe_path_end])
 }
 
 fn lower_contains_any(value: &str, patterns: &[&str]) -> bool {

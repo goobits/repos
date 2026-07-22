@@ -26,6 +26,20 @@ use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
+fn run_git_ok(path: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .expect("Failed to run git");
+    assert!(
+        output.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 // ==============================================================================
 // SYNC COMMAND TESTS (commands/sync.rs)
 // ==============================================================================
@@ -190,7 +204,7 @@ fn test_cli_fails_when_remote_is_unreachable() {
 }
 
 #[test]
-fn test_doctor_warns_for_accessible_https_remote_without_failing() {
+fn test_doctor_ssh_only_policy_uses_effective_instead_of_url() {
     if !is_git_available() {
         return;
     }
@@ -221,6 +235,7 @@ fn test_doctor_warns_for_accessible_https_remote_without_failing() {
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_repos"))
         .arg("doctor")
+        .env("REPOS_TRANSPORT_POLICY", "ssh-only")
         .current_dir(repo.path())
         .output()
         .expect("Failed to run repos doctor");
@@ -231,6 +246,106 @@ fn test_doctor_warns_for_accessible_https_remote_without_failing() {
         "advisory must not fail doctor: {stdout}"
     );
     assert!(stdout.contains("warning: origin uses HTTP(S)"), "{stdout}");
+    assert!(!stdout.contains("ssh-only policy blocked"), "{stdout}");
+}
+
+#[test]
+fn test_ssh_only_push_blocks_https_fetch_before_credential_helper() {
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepoBuilder::new("test-ssh-only-fetch")
+        .build()
+        .expect("Failed to create test repo");
+    let helper_marker = repo.path().join("credential-helper-ran");
+    let helper = format!("!touch {}", helper_marker.display());
+    let remote = "https://secret-token@github.com/goobits/keychain-test.git?access_token=hidden";
+    let config_dir = TempDir::new().expect("Failed to create test config directory");
+    let global_config = config_dir.path().join("gitconfig");
+    fs::write(&global_config, "[repos]\n\ttransportPolicy = ssh-only\n")
+        .expect("Failed to write test Git config");
+
+    run_git_ok(repo.path(), &["remote", "add", "origin", remote]);
+    run_git_ok(repo.path(), &["config", "credential.helper", &helper]);
+
+    let push = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["push", "--sequential", "--no-drift-check"])
+        .env_remove("REPOS_TRANSPORT_POLICY")
+        .env("GIT_CONFIG_GLOBAL", &global_config)
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos push");
+    let stdout = String::from_utf8_lossy(&push.stdout);
+
+    assert!(!push.status.success(), "HTTPS fetch must be blocked");
+    assert!(
+        stdout.contains("SSH-only policy blocked fetch (HTTPS)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("remote: origin (HTTPS, github.com/goobits/keychain-test.git)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("remote set-url 'origin' 'git@github.com:goobits/keychain-test.git'"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("secret-token"), "{stdout}");
+    assert!(!stdout.contains("access_token"), "{stdout}");
+    assert!(!stdout.contains("hidden"), "{stdout}");
+    assert!(
+        !helper_marker.exists(),
+        "credential helper must not run for a blocked HTTPS remote"
+    );
+}
+
+#[test]
+fn test_ssh_only_push_reports_https_pushurl_fix() {
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepoBuilder::new("test-ssh-only-pushurl")
+        .build()
+        .expect("Failed to create test repo");
+    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    let helper_marker = repo.path().join("credential-helper-ran");
+    let helper = format!("!touch {}", helper_marker.display());
+    let push_url = "https://github.com/goobits/keychain-test.git";
+
+    run_git_ok(
+        repo.path(),
+        &["remote", "set-url", "--push", "origin", push_url],
+    );
+    run_git_ok(repo.path(), &["config", "credential.helper", &helper]);
+    repo.create_file("ahead.txt", "one local commit")
+        .expect("Failed to create test file");
+    repo.commit_all("Create local commit")
+        .expect("Failed to create local commit");
+
+    let push = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["push", "--sequential", "--no-drift-check"])
+        .env("REPOS_TRANSPORT_POLICY", "ssh-only")
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos push");
+    let stdout = String::from_utf8_lossy(&push.stdout);
+
+    assert!(!push.status.success(), "HTTPS push URL must be blocked");
+    assert!(
+        stdout.contains("SSH-only policy blocked push (HTTPS)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout
+            .contains("remote set-url --push 'origin' 'git@github.com:goobits/keychain-test.git'"),
+        "{stdout}"
+    );
+    assert!(
+        !helper_marker.exists(),
+        "credential helper must not run for a blocked HTTPS push URL"
+    );
 }
 
 #[tokio::test]

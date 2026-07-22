@@ -65,17 +65,38 @@ Common issues and solutions for the repos tool.
 | `push failed: no upstream branch` | Upstream branch not configured | Use `repos push --auto-upstream` |
 | `push rejected: non-fast-forward` | Remote has commits not in local | Use `repos sync` or resolve the branch manually |
 | `Could not read from remote repository` | The configured SSH key is missing or unauthorized | Test the configured URL with `git ls-remote <url>`, then install/authorize the correct key |
-| HTTPS authentication failure | The configured HTTPS credential is missing or expired | Refresh the credential-manager or host CLI login; `repos` does not rewrite HTTPS remotes to SSH |
+| HTTPS authentication failure | The configured HTTPS credential is missing, expired, or not wanted for this fleet | Run the SSH command printed for that repository, or enable the SSH-only policy below |
 | Submodule conflicts | Mixed submodules and nested repos | Use `git submodule` commands for submodules; repos handles nested repos |
 | Worktree detection issues | Git worktree not recognized | Ensure worktree is properly configured: `git worktree list` |
 | `not a git repository` | A discovered repository is damaged or a direct Git command used the wrong directory | Run `repos status --failed` to identify it and repair its `.git` metadata |
 
-Git credential prompts are disabled during fleet operations so one inaccessible
-repository cannot hang the whole run. The command records the repository as
-failed and exits nonzero. The remote URL and transport in `.git/config` are
-used as configured; custom `GIT_SSH_COMMAND` values are preserved. `repos
-doctor` warns when a remote uses HTTP(S), without failing solely because of that
-transport.
+Terminal credential prompts are disabled during fleet operations, but Git's
+configured HTTP credential helper can still display native UI. On macOS this is
+usually the `osxkeychain` helper. If all fleet repositories should use SSH,
+enable the persistent policy:
+
+```bash
+git config --global repos.transportPolicy ssh-only
+repos doctor
+repos push
+```
+
+In SSH-only mode, `repos` resolves each effective fetch URL and push URL before
+network access. HTTP(S) is blocked before credential helpers can run, and the
+failure names the repository and prints the exact conversion command for
+GitHub, GitLab, or Bitbucket. A separate HTTPS `pushurl` is reported with a
+`git remote set-url --push` fix. URL credentials and query strings are never
+included in the report.
+
+For a temporary exception that keeps a repository's configured transport:
+
+```bash
+REPOS_TRANSPORT_POLICY=preserve repos push
+```
+
+Under the default `preserve` policy, remote URLs remain unchanged and `repos
+doctor` only warns when a raw remote uses HTTP(S). Custom `GIT_SSH_COMMAND`
+values are preserved in both modes.
 
 For a GitHub repository in an SSH-only setup:
 
