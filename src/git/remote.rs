@@ -224,15 +224,22 @@ pub(crate) async fn inspect_remote(
 pub(crate) fn policy_violation(
     contexts: &[RemoteContext],
 ) -> Result<Option<RemotePolicyViolation>> {
-    if transport_policy()? == TransportPolicy::Preserve {
-        return Ok(None);
+    Ok(policy_violation_for(transport_policy()?, contexts))
+}
+
+fn policy_violation_for(
+    policy: TransportPolicy,
+    contexts: &[RemoteContext],
+) -> Option<RemotePolicyViolation> {
+    if policy == TransportPolicy::Preserve {
+        return None;
     }
 
-    Ok(contexts.iter().find_map(|context| {
+    contexts.iter().find_map(|context| {
         context.transport.is_http().then(|| RemotePolicyViolation {
             context: context.clone(),
         })
-    }))
+    })
 }
 
 fn safe_remote_details(url: &str, transport: RemoteTransport) -> (Option<String>, Option<String>) {
@@ -248,11 +255,8 @@ fn safe_http_details(url: &str) -> (Option<String>, Option<String>) {
         return (None, None);
     };
     let (authority, path) = remainder.split_once('/').unwrap_or((remainder, ""));
-    let host_with_port = authority.rsplit('@').next().unwrap_or(authority);
-    let host = host_with_port
-        .strip_prefix('[')
-        .and_then(|value| value.split_once(']').map(|(host, _)| host))
-        .unwrap_or_else(|| host_with_port.split(':').next().unwrap_or(host_with_port));
+    let safe_authority = authority.rsplit('@').next().unwrap_or(authority);
+    let (host, has_explicit_port) = host_and_port(safe_authority);
     let path = path
         .split(['?', '#'])
         .next()
@@ -263,14 +267,30 @@ fn safe_http_details(url: &str) -> (Option<String>, Option<String>) {
         return (None, None);
     }
 
-    let identity = format!("{host}/{path}");
-    let standard_ssh_host = matches!(
-        host.to_ascii_lowercase().as_str(),
-        "github.com" | "gitlab.com" | "bitbucket.org"
-    );
+    let identity = format!("{safe_authority}/{path}");
+    let standard_ssh_host = !has_explicit_port
+        && matches!(
+            host.to_ascii_lowercase().as_str(),
+            "github.com" | "gitlab.com" | "bitbucket.org"
+        );
     let ssh_url = standard_ssh_host.then(|| format!("git@{host}:{path}"));
 
     (Some(identity), ssh_url)
+}
+
+fn host_and_port(authority: &str) -> (&str, bool) {
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        if let Some(bracket_end) = bracketed.find(']') {
+            let host = &bracketed[..bracket_end];
+            let suffix = &bracketed[bracket_end + 1..];
+            return (host, suffix.starts_with(':'));
+        }
+        return (authority, false);
+    }
+
+    authority
+        .rsplit_once(':')
+        .map_or((authority, false), |(host, _)| (host, true))
 }
 
 fn safe_ssh_identity(url: &str) -> Option<String> {
@@ -289,7 +309,20 @@ fn safe_ssh_identity(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{safe_http_details, safe_ssh_identity, RemoteTransport, TransportPolicy};
+    use super::{
+        policy_violation_for, safe_http_details, safe_ssh_identity, RemoteContext, RemoteDirection,
+        RemoteTransport, TransportPolicy,
+    };
+
+    fn context(transport: RemoteTransport) -> RemoteContext {
+        RemoteContext {
+            remote: "origin".to_string(),
+            direction: RemoteDirection::Fetch,
+            transport,
+            identity: None,
+            ssh_url: None,
+        }
+    }
 
     #[test]
     fn parses_transport_policy_values() {
@@ -306,35 +339,94 @@ mod tests {
 
     #[test]
     fn classifies_remote_transports_without_exposing_urls() {
-        assert_eq!(
-            RemoteTransport::from_url("https://token@example.com/team/repo.git"),
-            RemoteTransport::Https
-        );
-        assert_eq!(
-            RemoteTransport::from_url("http://example.com/team/repo.git"),
-            RemoteTransport::Http
-        );
-        assert_eq!(
-            RemoteTransport::from_url("git@example.com:team/repo.git"),
-            RemoteTransport::Ssh
-        );
-        assert_eq!(
-            RemoteTransport::from_url("ssh://git@example.com/team/repo.git"),
-            RemoteTransport::Ssh
-        );
-        assert_eq!(
-            RemoteTransport::from_url("../remote.git"),
-            RemoteTransport::Local
-        );
+        let cases = [
+            (
+                "https://token@example.com/team/repo.git",
+                RemoteTransport::Https,
+            ),
+            ("http://example.com/team/repo.git", RemoteTransport::Http),
+            ("git@example.com:team/repo.git", RemoteTransport::Ssh),
+            ("ssh://git@example.com/team/repo.git", RemoteTransport::Ssh),
+            ("../remote.git", RemoteTransport::Local),
+            ("custom-transport", RemoteTransport::Other),
+        ];
+
+        for (url, expected) in cases {
+            assert_eq!(RemoteTransport::from_url(url), expected, "{url}");
+        }
+    }
+
+    #[test]
+    fn applies_transport_policy_to_every_transport() {
+        for transport in [
+            RemoteTransport::Http,
+            RemoteTransport::Https,
+            RemoteTransport::Ssh,
+            RemoteTransport::Local,
+            RemoteTransport::Other,
+        ] {
+            let contexts = [context(transport)];
+            assert!(
+                policy_violation_for(TransportPolicy::Preserve, &contexts).is_none(),
+                "preserve must allow {transport:?}"
+            );
+            assert_eq!(
+                policy_violation_for(TransportPolicy::SshOnly, &contexts).is_some(),
+                transport.is_http(),
+                "unexpected SSH-only decision for {transport:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn finds_http_transport_after_an_allowed_url() {
+        let contexts = [
+            context(RemoteTransport::Ssh),
+            context(RemoteTransport::Https),
+        ];
+
+        let violation = policy_violation_for(TransportPolicy::SshOnly, &contexts)
+            .expect("later HTTPS URL must still be blocked");
+
+        assert_eq!(violation.context.transport, RemoteTransport::Https);
     }
 
     #[test]
     fn sanitizes_remote_identity_and_builds_known_host_ssh_urls() {
-        let (identity, ssh_url) =
-            safe_http_details("https://secret@github.com/goobits/repos.git?token=hidden");
-        assert_eq!(identity.as_deref(), Some("github.com/goobits/repos.git"));
-        assert_eq!(ssh_url.as_deref(), Some("git@github.com:goobits/repos.git"));
-        assert!(!identity.unwrap().contains("secret"));
+        let cases = [
+            (
+                "https://secret@github.com/goobits/repos.git?token=hidden",
+                "github.com/goobits/repos.git",
+                Some("git@github.com:goobits/repos.git"),
+            ),
+            (
+                "https://gitlab.com/goobits/repos.git#fragment",
+                "gitlab.com/goobits/repos.git",
+                Some("git@gitlab.com:goobits/repos.git"),
+            ),
+            (
+                "http://bitbucket.org/goobits/repos.git",
+                "bitbucket.org/goobits/repos.git",
+                Some("git@bitbucket.org:goobits/repos.git"),
+            ),
+            (
+                "https://code.example.com/goobits/repos.git",
+                "code.example.com/goobits/repos.git",
+                None,
+            ),
+            (
+                "https://github.com:8443/goobits/repos.git",
+                "github.com:8443/goobits/repos.git",
+                None,
+            ),
+        ];
+
+        for (url, expected_identity, expected_ssh) in cases {
+            let (identity, ssh_url) = safe_http_details(url);
+            assert_eq!(identity.as_deref(), Some(expected_identity), "{url}");
+            assert_eq!(ssh_url.as_deref(), expected_ssh, "{url}");
+            assert!(!identity.unwrap().contains("secret"), "{url}");
+        }
 
         assert_eq!(
             safe_ssh_identity("git@github.com:goobits/repos.git").as_deref(),

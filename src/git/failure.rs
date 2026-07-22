@@ -197,28 +197,79 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{GitFailure, GitFailureKind, GitOperationPhase};
-    use crate::git::remote::{RemoteContext, RemoteDirection, RemoteTransport};
+    use crate::git::remote::{
+        RemoteContext, RemoteDirection, RemotePolicyViolation, RemoteTransport,
+    };
 
     #[test]
-    fn classifies_authentication_without_string_parsing_in_reports() {
-        let failure = GitFailure::from_message(
-            GitOperationPhase::Fetch,
-            "authentication failed".to_string(),
-            None,
-        );
+    fn classifies_failure_messages_and_formats_reasons() {
+        let cases = [
+            (
+                "authentication failed",
+                GitFailureKind::Authentication,
+                "authentication failed during fetch",
+            ),
+            (
+                "Permission denied (publickey)",
+                GitFailureKind::Authentication,
+                "authentication failed during fetch",
+            ),
+            (
+                "diverged: 2 ahead / 3 behind",
+                GitFailureKind::Diverged,
+                "diverged: 2 ahead / 3 behind",
+            ),
+            (
+                "Git operation timed out",
+                GitFailureKind::Timeout,
+                "timeout during fetch",
+            ),
+            (
+                "could not resolve host",
+                GitFailureKind::Network,
+                "network error during fetch",
+            ),
+            (
+                "unexpected failure",
+                GitFailureKind::Other,
+                "unexpected failure",
+            ),
+        ];
 
-        assert_eq!(failure.kind, GitFailureKind::Authentication);
-        assert_eq!(failure.reason(), "authentication failed during fetch");
+        for (message, expected_kind, expected_reason) in cases {
+            let failure =
+                GitFailure::from_message(GitOperationPhase::Fetch, message.to_string(), None);
+
+            assert_eq!(failure.kind, expected_kind, "{message}");
+            assert_eq!(failure.reason(), expected_reason, "{message}");
+        }
     }
 
     #[test]
-    fn builds_a_shell_safe_known_host_transport_fix() {
+    fn maps_policy_violation_to_push_failure() {
+        let failure = GitFailure::from_policy(RemotePolicyViolation {
+            context: RemoteContext {
+                remote: "origin".to_string(),
+                direction: RemoteDirection::Push,
+                transport: RemoteTransport::Https,
+                identity: Some("github.com/goobits/aw.git".to_string()),
+                ssh_url: Some("git@github.com:goobits/aw.git".to_string()),
+            },
+        });
+
+        assert_eq!(failure.kind, GitFailureKind::TransportPolicy);
+        assert_eq!(failure.phase, GitOperationPhase::Push);
+        assert_eq!(failure.reason(), "SSH-only policy blocked push (HTTPS)");
+    }
+
+    #[test]
+    fn builds_shell_safe_push_fix_for_known_host() {
         let failure = GitFailure {
             kind: GitFailureKind::TransportPolicy,
-            phase: GitOperationPhase::Fetch,
+            phase: GitOperationPhase::Push,
             remote: Some(RemoteContext {
                 remote: "origin".to_string(),
-                direction: RemoteDirection::Fetch,
+                direction: RemoteDirection::Push,
                 transport: RemoteTransport::Https,
                 identity: Some("github.com/goobits/aw.git".to_string()),
                 ssh_url: Some("git@github.com:goobits/aw.git".to_string()),
@@ -227,8 +278,29 @@ mod tests {
         };
 
         assert_eq!(
-            failure.next_action("./sketch-api/infra/aw"),
-            "git -C './sketch-api/infra/aw' remote set-url 'origin' 'git@github.com:goobits/aw.git'"
+            failure.next_action("./sketch-api/O'Brien/aw"),
+            "git -C './sketch-api/O'\\''Brien/aw' remote set-url --push 'origin' 'git@github.com:goobits/aw.git'"
+        );
+    }
+
+    #[test]
+    fn avoids_guessing_ssh_url_for_unknown_host() {
+        let failure = GitFailure {
+            kind: GitFailureKind::Authentication,
+            phase: GitOperationPhase::Fetch,
+            remote: Some(RemoteContext {
+                remote: "upstream".to_string(),
+                direction: RemoteDirection::Fetch,
+                transport: RemoteTransport::Https,
+                identity: Some("code.example.com/team/repo.git".to_string()),
+                ssh_url: None,
+            }),
+            message: "authentication failed".to_string(),
+        };
+
+        assert_eq!(
+            failure.next_action("./repo"),
+            "change remote upstream to an SSH clone URL"
         );
     }
 }
