@@ -483,47 +483,6 @@ async fn process_push_repositories(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{spawn_slow_repo_watchdog, stop_slow_repo_watchdog};
-    use indicatif::ProgressBar;
-    use std::time::Duration;
-
-    #[tokio::test]
-    async fn slow_repo_watchdog_names_the_active_repository() {
-        let progress_bar = ProgressBar::hidden();
-        let mut watchdog =
-            spawn_slow_repo_watchdog(Some(&progress_bar), "slow-repo", Duration::from_millis(1));
-
-        watchdog
-            .take()
-            .expect("watchdog should start")
-            .await
-            .expect("watchdog should complete");
-
-        assert_eq!(progress_bar.message(), "slow-repo · still running...");
-    }
-
-    #[tokio::test]
-    async fn stopped_watchdog_cannot_overwrite_the_final_status() {
-        let progress_bar = ProgressBar::hidden();
-        let mut watchdog =
-            spawn_slow_repo_watchdog(Some(&progress_bar), "slow-repo", Duration::from_secs(60));
-
-        stop_slow_repo_watchdog(&mut watchdog).await;
-        progress_bar.set_message("complete");
-        tokio::task::yield_now().await;
-
-        assert!(watchdog.is_none());
-        assert_eq!(progress_bar.message(), "complete");
-    }
-
-    #[test]
-    fn watchdog_is_disabled_without_a_progress_bar() {
-        assert!(spawn_slow_repo_watchdog(None, "repo", Duration::ZERO).is_none());
-    }
-}
-
 fn format_nested_drift_work_items() -> (usize, Vec<String>) {
     crate::subrepo::status::analyze_subrepos_quiet()
         .map(|statuses| crate::subrepo::status::format_drift_work_items(&statuses))
@@ -832,4 +791,45 @@ async fn process_pull_repositories(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{spawn_slow_repo_watchdog, stop_slow_repo_watchdog};
+    use indicatif::ProgressBar;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn slow_repo_watchdog_names_the_active_repository() {
+        let progress_bar = ProgressBar::hidden();
+        let mut watchdog =
+            spawn_slow_repo_watchdog(Some(&progress_bar), "slow-repo", Duration::from_millis(1));
+
+        watchdog
+            .take()
+            .expect("watchdog should start")
+            .await
+            .expect("watchdog should complete");
+
+        assert_eq!(progress_bar.message(), "slow-repo · still running...");
+    }
+
+    #[tokio::test]
+    async fn stopped_watchdog_cannot_overwrite_the_final_status() {
+        let progress_bar = ProgressBar::hidden();
+        let mut watchdog =
+            spawn_slow_repo_watchdog(Some(&progress_bar), "slow-repo", Duration::from_secs(60));
+
+        stop_slow_repo_watchdog(&mut watchdog).await;
+        progress_bar.set_message("complete");
+        tokio::task::yield_now().await;
+
+        assert!(watchdog.is_none());
+        assert_eq!(progress_bar.message(), "complete");
+    }
+
+    #[test]
+    fn watchdog_is_disabled_without_a_progress_bar() {
+        assert!(spawn_slow_repo_watchdog(None, "repo", Duration::ZERO).is_none());
+    }
 }
