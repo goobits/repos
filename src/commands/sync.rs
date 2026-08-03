@@ -6,8 +6,8 @@
 use anyhow::Result;
 
 use crate::core::{
-    create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    NO_REPOS_MESSAGE,
+    create_processing_context, generate_sync_report, init_command, set_terminal_title,
+    set_terminal_title_and_flush, NO_REPOS_MESSAGE,
 };
 use crate::git::Status;
 
@@ -39,6 +39,20 @@ type ProgressBars = (
     indicatif::ProgressBar,
     Option<indicatif::ProgressBar>,
 );
+
+struct TransferRun {
+    statistics: std::sync::Arc<std::sync::Mutex<crate::core::SyncStatistics>>,
+    error_count: u64,
+}
+
+impl TransferRun {
+    fn ensure_success(&self, operation: &str) -> Result<()> {
+        if self.error_count > 0 {
+            anyhow::bail!("{} repositories failed to {operation}", self.error_count);
+        }
+        Ok(())
+    }
+}
 
 fn create_sync_progress(
     context: &crate::core::ProcessingContext,
@@ -134,8 +148,8 @@ async fn stop_slow_repo_watchdog(watchdog: &mut Option<tokio::task::JoinHandle<(
 /// Handles the two-way repository sync command.
 ///
 /// Sync is the daily workflow: pull safe remote changes with rebase, then push
-/// local commits. The directional pull/push handlers remain the lower-level
-/// building blocks.
+/// local commits against one discovered repository set and report both phases
+/// together. The directional commands remain available for explicit control.
 pub async fn handle_sync_command(
     auto_upstream: bool,
     verbose: bool,
@@ -144,24 +158,89 @@ pub async fn handle_sync_command(
     jobs: Option<usize>,
     sequential: bool,
 ) -> Result<()> {
-    let pull_result =
-        handle_pull_command(true, verbose, show_changes, true, jobs, sequential).await;
-    let push_result = handle_push_command(
+    use crate::core::config::get_git_concurrency;
+
+    set_terminal_title("🔄 repos sync");
+    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    println!();
+
+    if repos.is_empty() {
+        println!("\r{NO_REPOS_MESSAGE}");
+        set_terminal_title_and_flush("✅ repos sync");
+        return Ok(());
+    }
+
+    let concurrent_limit = get_git_concurrency(jobs, sequential);
+    let repositories = std::sync::Arc::new(repos);
+    if verbose {
+        let repo_word = if repositories.len() == 1 {
+            "repository"
+        } else {
+            "repositories"
+        };
+        println!(
+            "🔄 Syncing {} {repo_word} ({concurrent_limit} concurrent)\n",
+            repositories.len()
+        );
+        println!("{DIM}Phase 1/2 · pull{RESET}");
+    }
+
+    let pull_context = create_processing_context(
+        std::sync::Arc::clone(&repositories),
+        start_time,
+        concurrent_limit,
+    )?;
+    let push_context = create_processing_context(
+        std::sync::Arc::clone(&repositories),
+        start_time,
+        concurrent_limit,
+    )?;
+    let pull_run =
+        process_pull_repositories(pull_context, true, verbose, show_changes, true, false).await;
+
+    if verbose {
+        println!("{DIM}Phase 2/2 · push{RESET}");
+    }
+    let push_run = process_push_repositories(
+        push_context,
         auto_upstream,
         verbose,
         show_changes,
         no_drift_check,
-        jobs,
-        sequential,
+        false,
     )
     .await;
 
-    match (pull_result, push_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(pull), Ok(())) => Err(pull),
-        (Ok(()), Err(push)) => Err(push),
-        (Err(pull), Err(push)) => Err(anyhow::anyhow!("pull failed: {pull}; push failed: {push}")),
+    let (drift_count, drift_lines) = if no_drift_check {
+        (0, Vec::new())
+    } else {
+        format_nested_drift_work_items()
+    };
+    let pull_stats = crate::core::acquire_stats_lock(&pull_run.statistics);
+    let push_stats = crate::core::acquire_stats_lock(&push_run.statistics);
+    let report = generate_sync_report(
+        &pull_stats,
+        &push_stats,
+        start_time.elapsed(),
+        repositories.len(),
+        show_changes,
+        drift_count,
+        &drift_lines,
+    );
+    drop(push_stats);
+    drop(pull_stats);
+    println!("\n{report}\n");
+    set_terminal_title_and_flush("✅ repos sync");
+
+    let total_errors = pull_run.error_count + push_run.error_count;
+    if total_errors > 0 {
+        anyhow::bail!(
+            "sync failed in {total_errors} operations ({} pull, {} push)",
+            pull_run.error_count,
+            push_run.error_count
+        );
     }
+    Ok(())
 }
 
 /// Handles the repository push command
@@ -219,19 +298,19 @@ pub async fn handle_push_command(
         };
 
     // Process all repositories concurrently
-    process_push_repositories(
+    let run = process_push_repositories(
         context,
         auto_upstream,
         verbose,
         show_changes,
         no_drift_check,
+        true,
     )
-    .await?;
+    .await;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos");
-
-    Ok(())
+    run.ensure_success("push")
 }
 
 /// Processes all repositories with pipelined fetch+push for optimal performance
@@ -244,7 +323,8 @@ async fn process_push_repositories(
     verbose: bool,
     show_changes: bool,
     no_drift_check: bool,
-) -> Result<()> {
+    render_report: bool,
+) -> TransferRun {
     use crate::core::acquire_stats_lock;
     use crate::git::fetch_and_analyze;
     use crate::git::operations::push_if_needed_with_context;
@@ -254,6 +334,7 @@ async fn process_push_repositories(
     use crate::core::config::FETCH_CONCURRENT_CAP;
     let fetch_concurrency = (context.max_concurrency * 2).min(FETCH_CONCURRENT_CAP);
     let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_concurrency));
+    let statistics = std::sync::Arc::clone(&context.statistics);
 
     let push_footer = context
         .statistics
@@ -452,35 +533,36 @@ async fn process_push_repositories(
 
     footer_pb.finish_and_clear();
 
-    let final_stats = acquire_stats_lock(&context.statistics);
-    let (drift_count, drift_lines) = if no_drift_check {
-        (0, Vec::new())
-    } else {
-        format_nested_drift_work_items()
-    };
-    println!();
-    let report = if drift_count == 0 && drift_lines.is_empty() {
-        final_stats.generate_push_report(context.start_time.elapsed(), show_changes)
-    } else {
-        final_stats.generate_push_report_with_needs_work(
-            context.start_time.elapsed(),
-            show_changes,
-            drift_count,
-            &drift_lines,
-        )
-    };
-    println!("{report}");
-    println!();
+    let final_stats = acquire_stats_lock(&statistics);
+    if render_report {
+        let (drift_count, drift_lines) = if no_drift_check {
+            (0, Vec::new())
+        } else {
+            format_nested_drift_work_items()
+        };
+        println!();
+        let report = if drift_count == 0 && drift_lines.is_empty() {
+            final_stats.generate_push_report(context.start_time.elapsed(), show_changes)
+        } else {
+            final_stats.generate_push_report_with_needs_work(
+                context.start_time.elapsed(),
+                show_changes,
+                drift_count,
+                &drift_lines,
+            )
+        };
+        println!("{report}");
+        println!();
+    }
 
     let error_count = final_stats
         .error_repos
         .load(std::sync::atomic::Ordering::Relaxed);
     drop(final_stats);
-    if error_count > 0 {
-        anyhow::bail!("{error_count} repositories failed to push");
+    TransferRun {
+        statistics,
+        error_count,
     }
-
-    Ok(())
 }
 
 fn format_nested_drift_work_items() -> (usize, Vec<String>) {
@@ -547,12 +629,20 @@ pub async fn handle_pull_command(
         };
 
     // Process all repositories concurrently
-    process_pull_repositories(context, use_rebase, verbose, show_changes, no_drift_check).await?;
+    let run = process_pull_repositories(
+        context,
+        use_rebase,
+        verbose,
+        show_changes,
+        no_drift_check,
+        true,
+    )
+    .await;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos");
 
-    Ok(())
+    run.ensure_success("pull")
 }
 
 /// Processes all repositories with pipelined fetch+pull for optimal performance
@@ -565,7 +655,8 @@ async fn process_pull_repositories(
     verbose: bool,
     show_changes: bool,
     no_drift_check: bool,
-) -> Result<()> {
+    render_report: bool,
+) -> TransferRun {
     use crate::core::acquire_stats_lock;
     use crate::git::{fetch_and_analyze_for_pull, pull_if_needed};
     use futures::stream::{FuturesUnordered, StreamExt};
@@ -574,6 +665,7 @@ async fn process_pull_repositories(
     use crate::core::config::FETCH_CONCURRENT_CAP;
     let fetch_concurrency = (context.max_concurrency * 2).min(FETCH_CONCURRENT_CAP);
     let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_concurrency));
+    let statistics = std::sync::Arc::clone(&context.statistics);
 
     let pull_footer = context
         .statistics
@@ -752,35 +844,36 @@ async fn process_pull_repositories(
 
     footer_pb.finish_and_clear();
 
-    let final_stats = acquire_stats_lock(&context.statistics);
-    let (drift_count, drift_lines) = if no_drift_check {
-        (0, Vec::new())
-    } else {
-        format_nested_drift_work_items()
-    };
-    println!();
-    let report = if drift_count == 0 && drift_lines.is_empty() {
-        final_stats.generate_pull_report(context.start_time.elapsed(), show_changes)
-    } else {
-        final_stats.generate_pull_report_with_needs_work(
-            context.start_time.elapsed(),
-            show_changes,
-            drift_count,
-            &drift_lines,
-        )
-    };
-    println!("{report}");
-    println!();
+    let final_stats = acquire_stats_lock(&statistics);
+    if render_report {
+        let (drift_count, drift_lines) = if no_drift_check {
+            (0, Vec::new())
+        } else {
+            format_nested_drift_work_items()
+        };
+        println!();
+        let report = if drift_count == 0 && drift_lines.is_empty() {
+            final_stats.generate_pull_report(context.start_time.elapsed(), show_changes)
+        } else {
+            final_stats.generate_pull_report_with_needs_work(
+                context.start_time.elapsed(),
+                show_changes,
+                drift_count,
+                &drift_lines,
+            )
+        };
+        println!("{report}");
+        println!();
+    }
 
     let error_count = final_stats
         .error_repos
         .load(std::sync::atomic::Ordering::Relaxed);
     drop(final_stats);
-    if error_count > 0 {
-        anyhow::bail!("{error_count} repositories failed to pull");
+    TransferRun {
+        statistics,
+        error_count,
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

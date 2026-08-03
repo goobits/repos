@@ -130,6 +130,7 @@ Default behavior:
 - Fetches remotes.
 - Pulls with rebase.
 - Pushes local commits after the pull phase.
+- Scans once and prints one final report with exclusive repo outcomes plus named pull/push transfers.
 - Skips dirty repositories instead of stashing implicitly.
 - Reports nested repository drift.
 - Leaves directional behavior available through `repos pull` and `repos push`.

@@ -1076,7 +1076,7 @@ fn paint(color: &str, value: &str) -> String {
     format!("{color}{value}{RESET}")
 }
 
-fn format_relative_repo_path(path: &str) -> String {
+pub(super) fn format_relative_repo_path(path: &str) -> String {
     let repo_path = Path::new(path);
     let display_path = if repo_path.is_absolute() {
         std::env::current_dir()
@@ -1271,7 +1271,7 @@ fn lower_contains_any(value: &str, patterns: &[&str]) -> bool {
 }
 
 /// Gets the list of changed files in a repository using git status --porcelain
-fn get_repo_changes(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
+pub(super) fn get_repo_changes(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
     use std::path::Path;
     use std::process::Command;
 

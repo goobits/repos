@@ -1,11 +1,15 @@
 //! Shared reporting for fleet-wide repository mutations.
 
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use crate::git::failure::GitFailure;
 use crate::git::Status;
 
 use super::stats::{
-    clean_error_message, SyncStatistics, BOLD_BLUE, BOLD_PURPLE, DIM, GREEN, RED, RESET, YELLOW,
+    clean_error_message, format_relative_repo_path, get_repo_changes, SyncStatistics, BOLD_BLUE,
+    BOLD_PURPLE, DIM, GREEN, RED, RESET, YELLOW,
 };
 
 #[derive(Clone, Debug)]
@@ -349,6 +353,440 @@ fn truncate(value: &str, max_chars: usize) -> String {
         + "…"
 }
 
+#[derive(Default)]
+struct SyncRepository {
+    path: String,
+    pull: Option<RepositoryOutcome>,
+    push: Option<RepositoryOutcome>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SyncOutcome {
+    Updated,
+    UpToDate,
+    Skipped,
+    Failed,
+}
+
+#[derive(Default)]
+struct SyncCounts {
+    updated: usize,
+    up_to_date: usize,
+    skipped: usize,
+    failed: usize,
+}
+
+impl SyncCounts {
+    fn add(&mut self, outcome: SyncOutcome) {
+        match outcome {
+            SyncOutcome::Updated => self.updated += 1,
+            SyncOutcome::UpToDate => self.up_to_date += 1,
+            SyncOutcome::Skipped => self.skipped += 1,
+            SyncOutcome::Failed => self.failed += 1,
+        }
+    }
+}
+
+/// Formats a single final report for the two directional phases of `repos sync`.
+pub(crate) fn generate_sync_report(
+    pull: &SyncStatistics,
+    push: &SyncStatistics,
+    duration: Duration,
+    total_repos: usize,
+    show_changes: bool,
+    drift_count: usize,
+    drift_lines: &[String],
+) -> String {
+    let repositories = combine_sync_outcomes(pull, push);
+    let mut counts = SyncCounts::default();
+    for repository in repositories.values() {
+        counts.add(sync_outcome(repository));
+    }
+
+    let pull_failures = clone_git_failures(pull);
+    let push_failures = clone_git_failures(push);
+    let local_changes = sync_local_changes(pull, push, &repositories);
+    let follow_up_count = local_changes.len() + drift_count;
+    let pulled_repos = pull.pulled_repos.load(Ordering::Relaxed);
+    let pulled_commits = pull.total_commits_pulled.load(Ordering::Relaxed);
+    let pushed_repos = push.pushed_repos.load(Ordering::Relaxed);
+    let pushed_commits = push.total_commits_pushed.load(Ordering::Relaxed);
+
+    let mut lines = vec![
+        format!("{BOLD_BLUE}repos sync{RESET}"),
+        format!(
+            "{GREEN}✓{RESET} Completed in {:.1}s",
+            duration.as_secs_f64()
+        ),
+        String::new(),
+        format!("{BOLD_PURPLE}▌ Summary{RESET}"),
+        format!("  {GREEN}✓{RESET} {:<16}{}", "Updated", counts.updated),
+        format!(
+            "  {GREEN}✓{RESET} {:<16}{}",
+            "Up to date", counts.up_to_date
+        ),
+    ];
+    if counts.failed > 0 {
+        lines.push(format!("  {RED}!{RESET} {:<16}{}", "Failed", counts.failed));
+    }
+    if counts.skipped > 0 {
+        lines.push(format!(
+            "  {DIM}·{RESET} {:<16}{}",
+            "Skipped", counts.skipped
+        ));
+    }
+    if follow_up_count > 0 {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} {:<16}{follow_up_count}",
+            "Follow-up"
+        ));
+    }
+    lines.push(format!("  {DIM}·{RESET} {:<16}{total_repos}", "Checked"));
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ Transfers{RESET}"));
+    lines.push(format!(
+        "  {GREEN}↓{RESET} {:<16}{pulled_repos} {} / {pulled_commits} {}",
+        "Pulled",
+        plural(pulled_repos, "repo", "repos"),
+        plural(pulled_commits, "commit", "commits")
+    ));
+    lines.push(format!(
+        "  {GREEN}↑{RESET} {:<16}{pushed_repos} {} / {pushed_commits} {}",
+        "Pushed",
+        plural(pushed_repos, "repo", "repos"),
+        plural(pushed_commits, "commit", "commits")
+    ));
+
+    append_transfer_repositories(
+        &mut lines,
+        "Pulled",
+        "↓",
+        &clone_transfer_details(&pull.pulled_repo_details),
+    );
+    append_transfer_repositories(
+        &mut lines,
+        "Pushed",
+        "↑",
+        &clone_transfer_details(&push.pushed_repo_details),
+    );
+    append_sync_failures(&mut lines, &repositories, &pull_failures, &push_failures);
+    append_sync_skips(&mut lines, &repositories);
+    append_sync_follow_up(&mut lines, &local_changes, show_changes, drift_lines);
+
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+fn combine_sync_outcomes(
+    pull: &SyncStatistics,
+    push: &SyncStatistics,
+) -> BTreeMap<String, SyncRepository> {
+    let mut repositories = BTreeMap::<String, SyncRepository>::new();
+    for outcome in pull.batch_outcomes() {
+        let repository = repositories.entry(outcome.repository.clone()).or_default();
+        repository.path.clone_from(&outcome.path);
+        repository.pull = Some(outcome);
+    }
+    for outcome in push.batch_outcomes() {
+        let repository = repositories.entry(outcome.repository.clone()).or_default();
+        repository.path.clone_from(&outcome.path);
+        repository.push = Some(outcome);
+    }
+    repositories
+}
+
+fn sync_outcome(repository: &SyncRepository) -> SyncOutcome {
+    let phases = [repository.pull.as_ref(), repository.push.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if phases.iter().any(|outcome| is_failure(outcome.status)) {
+        SyncOutcome::Failed
+    } else if phases.iter().any(|outcome| is_skip(outcome.status)) {
+        SyncOutcome::Skipped
+    } else if phases
+        .iter()
+        .any(|outcome| matches!(outcome.status, Status::Pulled | Status::Pushed))
+    {
+        SyncOutcome::Updated
+    } else {
+        SyncOutcome::UpToDate
+    }
+}
+
+fn is_failure(status: Status) -> bool {
+    matches!(
+        status,
+        Status::Error
+            | Status::ConfigError
+            | Status::StagingError
+            | Status::CommitError
+            | Status::PullError
+    )
+}
+
+fn is_skip(status: Status) -> bool {
+    matches!(
+        status,
+        Status::Skip
+            | Status::NoUpstream
+            | Status::NoRemote
+            | Status::ConfigSkipped
+            | Status::NoChanges
+            | Status::Dirty
+    )
+}
+
+fn clone_git_failures(statistics: &SyncStatistics) -> HashMap<(String, String), GitFailure> {
+    statistics
+        .git_failures
+        .lock()
+        .map(|failures| failures.clone())
+        .unwrap_or_default()
+}
+
+fn clone_transfer_details(
+    details: &std::sync::Mutex<Vec<(String, String, u64)>>,
+) -> Vec<(String, String, u64)> {
+    let mut details = details
+        .lock()
+        .map(|details| details.clone())
+        .unwrap_or_default();
+    details.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    details
+}
+
+fn append_transfer_repositories(
+    lines: &mut Vec<String>,
+    heading: &str,
+    marker: &str,
+    repositories: &[(String, String, u64)],
+) {
+    if repositories.is_empty() {
+        return;
+    }
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ {heading}{RESET}"));
+    for (repository, path, commits) in repositories {
+        lines.push(format!(
+            "  {GREEN}{marker}{RESET} {:24} {commits} {}",
+            truncate(repository, 24),
+            plural(*commits, "commit", "commits")
+        ));
+        lines.push(format!(
+            "    {DIM}↳ path: {}{RESET}",
+            format_relative_repo_path(path)
+        ));
+    }
+}
+
+fn append_sync_failures(
+    lines: &mut Vec<String>,
+    repositories: &BTreeMap<String, SyncRepository>,
+    pull_failures: &HashMap<(String, String), GitFailure>,
+    push_failures: &HashMap<(String, String), GitFailure>,
+) {
+    let failed = repositories
+        .iter()
+        .filter(|(_, repository)| sync_outcome(repository) == SyncOutcome::Failed)
+        .collect::<Vec<_>>();
+    if failed.is_empty() {
+        return;
+    }
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ Failed{RESET}"));
+    for (name, repository) in failed {
+        let path = format_relative_repo_path(&repository.path);
+        let pull_failure = repository
+            .pull
+            .as_ref()
+            .filter(|outcome| is_failure(outcome.status));
+        let push_failure = repository
+            .push
+            .as_ref()
+            .filter(|outcome| is_failure(outcome.status));
+        let mut reasons = Vec::new();
+        let mut structured_failure = None;
+        if let Some(outcome) = pull_failure {
+            let failure = pull_failures.get(&(name.clone(), outcome.path.clone()));
+            reasons.push(format!(
+                "pull: {}",
+                failure.map_or_else(|| clean_error_message(&outcome.message), GitFailure::reason)
+            ));
+            structured_failure = failure;
+        }
+        if let Some(outcome) = push_failure {
+            let failure = push_failures.get(&(name.clone(), outcome.path.clone()));
+            reasons.push(format!(
+                "push: {}",
+                failure.map_or_else(|| clean_error_message(&outcome.message), GitFailure::reason)
+            ));
+            structured_failure = failure.or(structured_failure);
+        }
+
+        lines.push(format!(
+            "  {RED}!{RESET} {:24} {}",
+            truncate(name, 24),
+            reasons.join("; ")
+        ));
+        lines.push(format!("    {DIM}↳ path: {path}{RESET}"));
+        if let Some(remote) = structured_failure.and_then(|failure| failure.remote.as_ref()) {
+            lines.push(format!("    {DIM}↳ remote: {}{RESET}", remote.display()));
+        }
+        let next = structured_failure.map_or_else(
+            || "run `repos doctor`, then inspect this repository".to_string(),
+            |failure| failure.next_action(&path),
+        );
+        lines.push(format!("    {DIM}↳ next: {next}{RESET}"));
+    }
+}
+
+fn append_sync_skips(lines: &mut Vec<String>, repositories: &BTreeMap<String, SyncRepository>) {
+    let skipped = repositories
+        .iter()
+        .filter(|(_, repository)| sync_outcome(repository) == SyncOutcome::Skipped)
+        .collect::<Vec<_>>();
+    if skipped.is_empty() {
+        return;
+    }
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ Skipped{RESET}"));
+    for (name, repository) in skipped {
+        let mut reasons = Vec::new();
+        let mut statuses = Vec::new();
+        if let Some(outcome) = repository
+            .pull
+            .as_ref()
+            .filter(|outcome| is_skip(outcome.status))
+        {
+            reasons.push(format!("pull: {}", clean_error_message(&outcome.message)));
+            statuses.push(("pull", outcome));
+        }
+        if let Some(outcome) = repository
+            .push
+            .as_ref()
+            .filter(|outcome| is_skip(outcome.status))
+        {
+            reasons.push(format!("push: {}", clean_error_message(&outcome.message)));
+            statuses.push(("push", outcome));
+        }
+        lines.push(format!(
+            "  {DIM}·{RESET} {:24} {}",
+            truncate(name, 24),
+            reasons.join("; ")
+        ));
+        lines.push(format!(
+            "    {DIM}↳ path: {}{RESET}",
+            format_relative_repo_path(&repository.path)
+        ));
+        lines.push(format!(
+            "    {DIM}↳ next: {}{RESET}",
+            sync_skip_next(&statuses)
+        ));
+    }
+}
+
+fn sync_skip_next(statuses: &[(&str, &RepositoryOutcome)]) -> &'static str {
+    if statuses
+        .iter()
+        .any(|(_, outcome)| matches!(outcome.status, Status::NoRemote))
+    {
+        "add a remote or exclude this repository"
+    } else if statuses
+        .iter()
+        .any(|(phase, outcome)| *phase == "push" && matches!(outcome.status, Status::NoUpstream))
+    {
+        "run `repos push --auto-upstream`"
+    } else if statuses
+        .iter()
+        .any(|(_, outcome)| matches!(outcome.status, Status::NoUpstream))
+    {
+        "set an upstream branch or exclude this repository"
+    } else if statuses
+        .iter()
+        .any(|(_, outcome)| matches!(outcome.status, Status::Dirty))
+    {
+        "commit or stash local changes, then rerun `repos sync`"
+    } else if statuses.iter().any(|(_, outcome)| {
+        matches!(outcome.status, Status::Skip) && outcome.message.contains("detached HEAD")
+    }) {
+        "checkout a branch"
+    } else {
+        "run `repos status --skipped`"
+    }
+}
+
+fn sync_local_changes(
+    pull: &SyncStatistics,
+    push: &SyncStatistics,
+    repositories: &BTreeMap<String, SyncRepository>,
+) -> BTreeMap<String, String> {
+    let mut local = BTreeMap::new();
+    for statistics in [pull, push] {
+        if let Ok(changes) = statistics.uncommitted_repos.lock() {
+            for (name, path) in changes.iter() {
+                let is_standalone_follow_up = repositories.get(name).is_some_and(|repository| {
+                    matches!(
+                        sync_outcome(repository),
+                        SyncOutcome::Updated | SyncOutcome::UpToDate
+                    )
+                });
+                if is_standalone_follow_up {
+                    local.entry(name.clone()).or_insert_with(|| path.clone());
+                }
+            }
+        }
+    }
+    local
+}
+
+fn append_sync_follow_up(
+    lines: &mut Vec<String>,
+    local_changes: &BTreeMap<String, String>,
+    show_changes: bool,
+    drift_lines: &[String],
+) {
+    if local_changes.is_empty() && drift_lines.is_empty() {
+        return;
+    }
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ Follow-up{RESET}"));
+    for (name, path) in local_changes {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} {:24} uncommitted changes",
+            truncate(name, 24)
+        ));
+        lines.push(format!(
+            "    {DIM}↳ path: {}{RESET}",
+            format_relative_repo_path(path)
+        ));
+        lines.push(format!(
+            "    {DIM}↳ next: commit or stash the local changes{RESET}"
+        ));
+        if show_changes {
+            if let Ok(changes) = get_repo_changes(path) {
+                for change in changes {
+                    lines.push(format!("      {DIM}· {change}{RESET}"));
+                }
+            }
+        }
+    }
+    if !local_changes.is_empty() && !drift_lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines.extend(drift_lines.iter().cloned());
+}
+
+fn plural(count: u64, singular: &'static str, plural: &'static str) -> &'static str {
+    if count == 1 {
+        singular
+    } else {
+        plural
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +899,83 @@ mod tests {
         assert!(report.contains("Planned         1"));
         assert!(report.contains("api"));
         assert!(!report.contains("Pushed"));
+    }
+
+    #[test]
+    fn sync_report_combines_both_phases_into_exclusive_repo_outcomes() {
+        let pull = SyncStatistics::new();
+        pull.update("current", "./current", &Status::Synced, "up to date", true);
+        pull.update(
+            "incoming",
+            "./incoming",
+            &Status::Pulled,
+            "2 commits pulled",
+            false,
+        );
+        pull.update(
+            "outgoing",
+            "./outgoing",
+            &Status::Synced,
+            "up to date",
+            false,
+        );
+        pull.update(
+            "missing",
+            "./missing",
+            &Status::NoRemote,
+            "no remote configured",
+            false,
+        );
+        pull.update(
+            "broken",
+            "./broken",
+            &Status::PullError,
+            "network unavailable",
+            false,
+        );
+
+        let push = SyncStatistics::new();
+        push.update("current", "./current", &Status::Synced, "up to date", true);
+        push.update(
+            "incoming",
+            "./incoming",
+            &Status::Synced,
+            "up to date",
+            false,
+        );
+        push.update(
+            "outgoing",
+            "./outgoing",
+            &Status::Pushed,
+            "1 commit pushed",
+            false,
+        );
+        push.update(
+            "missing",
+            "./missing",
+            &Status::NoRemote,
+            "no remote configured",
+            false,
+        );
+        push.update("broken", "./broken", &Status::Synced, "up to date", false);
+
+        let report = generate_sync_report(&pull, &push, Duration::from_secs(4), 5, false, 0, &[]);
+
+        assert_eq!(report.matches("repos sync").count(), 1);
+        assert!(!report.contains("repos pull"));
+        assert!(!report.contains("repos push\x1b"));
+        assert!(report.contains("Updated         2"));
+        assert!(report.contains("Up to date      1"));
+        assert!(report.contains("Failed          1"));
+        assert!(report.contains("Skipped         1"));
+        assert!(report.contains("Checked         5"));
+        assert!(report.contains("▌ Pulled"));
+        assert!(report.contains("incoming"));
+        assert!(report.contains("▌ Pushed"));
+        assert!(report.contains("outgoing"));
+        assert!(report.contains("path: ./broken"));
+        assert!(report.contains("path: ./missing"));
+        assert!(report.contains("Follow-up       1"));
+        assert!(report.contains("uncommitted changes"));
     }
 }
