@@ -18,16 +18,6 @@ mod tests {
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_commits_pulled.load(Ordering::Relaxed), 0);
         assert!(stats
-            .no_upstream_repos
-            .lock()
-            .expect("Failed to lock no_upstream_repos mutex in test")
-            .is_empty());
-        assert!(stats
-            .no_remote_repos
-            .lock()
-            .expect("Failed to lock no_remote_repos mutex in test")
-            .is_empty());
-        assert!(stats
             .failed_repos
             .lock()
             .expect("Failed to lock failed_repos mutex in test")
@@ -41,11 +31,6 @@ mod tests {
             .pulled_repo_details
             .lock()
             .expect("Failed to lock pulled_repo_details mutex in test")
-            .is_empty());
-        assert!(stats
-            .skipped_reasons
-            .lock()
-            .expect("Failed to lock skipped_reasons mutex in test")
             .is_empty());
         assert!(stats
             .operation_outcomes
@@ -126,26 +111,26 @@ mod tests {
             "no tracking",
             false,
         );
-        let no_upstream = stats
-            .no_upstream_repos
+        let outcomes = stats
+            .operation_outcomes
             .lock()
-            .expect("Failed to lock no_upstream_repos mutex in test");
-        assert_eq!(no_upstream.len(), 1);
-        assert_eq!(no_upstream[0].0, "repo1");
+            .expect("Failed to lock operation_outcomes mutex in test");
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].repository, "repo1");
+        assert_eq!(outcomes[0].status, Status::NoUpstream);
+        assert_eq!(stats.skipped_repos.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn test_update_with_no_remote() {
         let stats = SyncStatistics::new();
         stats.update("repo1", "/path/1", &Status::NoRemote, "no remote", false);
-        assert_eq!(
-            stats
-                .no_remote_repos
-                .lock()
-                .expect("Failed to lock no_remote_repos mutex in test")
-                .len(),
-            1
-        );
+        let outcomes = stats
+            .operation_outcomes
+            .lock()
+            .expect("Failed to lock operation_outcomes mutex in test");
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].status, Status::NoRemote);
         assert_eq!(stats.skipped_repos.load(Ordering::Relaxed), 1);
     }
 
@@ -215,18 +200,6 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_summary_not_empty() {
-        let stats = SyncStatistics::new();
-        stats.synced_repos.store(5, Ordering::Relaxed);
-        stats.total_commits_pushed.store(10, Ordering::Relaxed);
-
-        let duration = Duration::from_secs(30);
-        let summary = stats.generate_summary(10, duration);
-
-        assert!(!summary.is_empty(), "Summary should not be empty");
-    }
-
-    #[test]
     fn test_generate_push_live_summary_is_compact_and_colored() {
         let stats = SyncStatistics::new();
         stats.update(
@@ -241,7 +214,7 @@ mod tests {
         let summary = stats.generate_push_live_summary(5);
 
         assert!(summary.contains("\x1b["));
-        assert!(summary.contains("✓\x1b[0m 1 synced"));
+        assert!(summary.contains("✓\x1b[0m 1 up to date"));
         assert!(summary.contains("↑\x1b[0m 0 pushed / 0 commits"));
         assert!(summary.contains("·\x1b[0m 1 skipped"));
         assert!(summary.contains("↳ scanning 3 remaining"));
@@ -275,14 +248,14 @@ mod tests {
         let summary = stats.generate_pull_live_summary(4);
 
         assert!(summary.contains("\x1b["));
-        assert!(summary.contains("✓\x1b[0m 1 synced"));
+        assert!(summary.contains("✓\x1b[0m 0 up to date"));
         assert!(summary.contains("↓\x1b[0m 1 pulled / 4 commits"));
         assert!(summary.contains("·\x1b[0m 1 skipped"));
         assert!(summary.contains("↳ scanning 2 remaining"));
     }
 
     #[test]
-    fn test_live_summary_deduplicates_needs_work_repositories() {
+    fn test_live_summary_keeps_skipped_and_follow_up_counts_distinct() {
         let stats = SyncStatistics::new();
         stats.update(
             "blocked",
@@ -294,8 +267,8 @@ mod tests {
 
         let summary = stats.generate_push_live_summary(1);
 
-        assert!(summary.contains("1 needs work"));
-        assert!(!summary.contains("2 needs work"));
+        assert!(summary.contains("1 skipped"));
+        assert!(summary.contains("0 follow-up"));
     }
 
     #[test]
@@ -371,7 +344,7 @@ mod tests {
         assert!(report.contains("1 repo / 1 commit"));
         assert!(report.contains("1 commit"));
         assert!(!report.contains("Failed       0"));
-        assert!(!report.contains("Needs work   0"));
+        assert!(!report.contains("Follow-up    0"));
         assert!(!report.contains("Skipped      0"));
     }
 
@@ -382,8 +355,9 @@ mod tests {
 
         let report = stats.generate_push_report(Duration::from_secs(3), false);
 
-        assert!(report.contains("Needs work   1"));
-        assert!(report.contains("1 repo has uncommitted changes: repos"));
+        assert!(report.contains("Follow-up    1"));
+        assert!(report.contains("repos                    uncommitted changes"));
+        assert!(report.contains("does not change outcome counts"));
         assert!(report.contains("repos"));
     }
 
@@ -401,7 +375,8 @@ mod tests {
 
         let report = stats.generate_push_report(Duration::from_secs(3), false);
 
-        assert!(report.contains("2 repos have uncommitted changes:"));
+        assert!(report.contains("Follow-up    2"));
+        assert_eq!(report.matches("uncommitted changes").count(), 2);
         assert!(report.contains("repos"));
         assert!(report.contains("docs"));
     }
@@ -427,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_push_report_uses_light_issue_table() {
+    fn test_generate_push_report_lists_skipped_repository_with_next_step() {
         let stats = SyncStatistics::new();
         stats.update(
             "assets",
@@ -439,15 +414,15 @@ mod tests {
 
         let report = stats.generate_push_report(Duration::from_secs(3), false);
 
-        assert!(report.contains("Repo                        Reason"));
-        assert!(report.contains("──────────────────────────"));
-        assert!(report.contains("assets                      no upstream"));
-        assert!(report.contains("└─ ./assets"));
-        assert!(!report.contains("+--------------------------+"));
+        assert!(report.contains("▌ Skipped"));
+        assert!(report.contains("assets                   no upstream"));
+        assert!(report.contains("path: ./assets"));
+        assert!(report.contains("next: repos push --auto-upstream"));
+        assert!(!report.contains("▌ Needs Work"));
     }
 
     #[test]
-    fn test_generate_push_report_combines_extra_needs_work() {
+    fn test_generate_push_report_combines_extra_follow_up() {
         let stats = SyncStatistics::new();
         stats.update(
             "assets",
@@ -458,16 +433,61 @@ mod tests {
         );
         let extra_lines = vec!["  Nested Drift".to_string(), "  aw 3 copies".to_string()];
 
-        let report = stats.generate_push_report_with_needs_work(
+        let report = stats.generate_push_report_with_follow_up(
             Duration::from_secs(3),
             false,
             1,
             &extra_lines,
         );
 
-        assert!(report.contains("Needs work   2"));
+        assert!(report.contains("Skipped      1"));
+        assert!(report.contains("Follow-up    1"));
         assert!(report.contains("Nested Drift"));
         assert!(report.contains("aw 3 copies"));
+    }
+
+    #[test]
+    fn test_generate_push_report_outcomes_are_exclusive_and_failures_are_not_repeated() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "current",
+            "/repos/current",
+            &Status::Synced,
+            "up to date",
+            false,
+        );
+        stats.update(
+            "updated",
+            "/repos/updated",
+            &Status::Pushed,
+            "2 commits pushed",
+            false,
+        );
+        stats.update(
+            "blocked",
+            "/repos/blocked",
+            &Status::Error,
+            "authentication failed",
+            false,
+        );
+        stats.update(
+            "detached",
+            "/repos/detached",
+            &Status::Skip,
+            "detached HEAD",
+            false,
+        );
+
+        let report = stats.generate_push_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("Pushed       1 repo / 2 commits"));
+        assert!(report.contains("Up to date   1"));
+        assert!(report.contains("Failed       1"));
+        assert!(report.contains("Skipped      1"));
+        assert!(report.contains("Checked      4"));
+        assert!(!report.contains("Synced"));
+        assert_eq!(report.matches("blocked").count(), 2);
+        assert!(!report.contains("blocked                   uncommitted changes"));
     }
 
     #[test]
@@ -482,43 +502,5 @@ mod tests {
         assert_eq!(stats.pushed_repos.load(Ordering::Relaxed), 1);
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 3);
         assert_eq!(stats.error_repos.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn test_detailed_summary_keeps_full_actionable_paths() {
-        let stats = SyncStatistics::new();
-        let long_path = "./packages/deeply/nested/workspace/@goobits/auth";
-
-        stats.update(
-            "auth",
-            long_path,
-            &Status::Error,
-            "diverged: 1 ahead, 36 behind",
-            false,
-        );
-        stats.update(
-            "upstream",
-            "./vendor/resvg/upstream",
-            &Status::NoUpstream,
-            "no upstream",
-            false,
-        );
-        stats.update(
-            "missing",
-            "./services/missing-remote",
-            &Status::NoRemote,
-            "no remote",
-            false,
-        );
-
-        let detailed = stats.generate_detailed_summary(false);
-
-        assert!(detailed.contains(long_path));
-        assert!(detailed.contains("./vendor/resvg/upstream"));
-        assert!(detailed.contains("./services/missing-remote"));
-        assert!(
-            !detailed.contains("./..."),
-            "detailed summary paths should be directly usable"
-        );
     }
 }

@@ -544,7 +544,7 @@ async fn process_push_repositories(
         let report = if drift_count == 0 && drift_lines.is_empty() {
             final_stats.generate_push_report(context.start_time.elapsed(), show_changes)
         } else {
-            final_stats.generate_push_report_with_needs_work(
+            final_stats.generate_push_report_with_follow_up(
                 context.start_time.elapsed(),
                 show_changes,
                 drift_count,
@@ -855,7 +855,7 @@ async fn process_pull_repositories(
         let report = if drift_count == 0 && drift_lines.is_empty() {
             final_stats.generate_pull_report(context.start_time.elapsed(), show_changes)
         } else {
-            final_stats.generate_pull_report_with_needs_work(
+            final_stats.generate_pull_report_with_follow_up(
                 context.start_time.elapsed(),
                 show_changes,
                 drift_count,

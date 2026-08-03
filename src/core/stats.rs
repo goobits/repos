@@ -6,7 +6,7 @@ use crate::core::config::{
 };
 use crate::git::failure::GitFailure;
 use crate::git::Status;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -80,12 +80,9 @@ pub struct SyncStatistics {
     pub uncommitted_count: AtomicU64,
     // Complex data behind mutex
     pub failed_repos: Mutex<Vec<(String, String, String)>>, // (repo_name, repo_path, error_message)
-    pub no_upstream_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
-    pub no_remote_repos: Mutex<Vec<(String, String)>>,      // (repo_name, repo_path)
     pub uncommitted_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
     pub pushed_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
     pub pulled_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
-    pub skipped_reasons: Mutex<Vec<String>>,
     pub(crate) operation_outcomes: Mutex<Vec<RepositoryOutcome>>,
     pub(crate) git_failures: Mutex<HashMap<(String, String), GitFailure>>,
 }
@@ -110,12 +107,9 @@ impl SyncStatistics {
             error_repos: AtomicU64::new(0),
             uncommitted_count: AtomicU64::new(0),
             failed_repos: Mutex::new(Vec::new()),
-            no_upstream_repos: Mutex::new(Vec::new()),
-            no_remote_repos: Mutex::new(Vec::new()),
             uncommitted_repos: Mutex::new(Vec::new()),
             pushed_repo_details: Mutex::new(Vec::new()),
             pulled_repo_details: Mutex::new(Vec::new()),
-            skipped_reasons: Mutex::new(Vec::new()),
             operation_outcomes: Mutex::new(Vec::new()),
             git_failures: Mutex::new(HashMap::new()),
         }
@@ -136,6 +130,7 @@ impl SyncStatistics {
                 path: repo_path.to_string(),
                 status: *status,
                 message: message.to_string(),
+                has_uncommitted,
             });
         } else {
             eprintln!("Warning: Failed to record operation result for repo: {repo_name}");
@@ -178,27 +173,13 @@ impl SyncStatistics {
             | Status::Committed => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
             }
-            Status::Skip | Status::ConfigSkipped | Status::NoChanges | Status::Dirty => {
+            Status::Skip
+            | Status::ConfigSkipped
+            | Status::NoChanges
+            | Status::Dirty
+            | Status::NoUpstream
+            | Status::NoRemote => {
                 self.skipped_repos.fetch_add(1, Ordering::Relaxed);
-                self.record_skipped_reason(repo_name, skipped_reason(status, message));
-            }
-            Status::NoUpstream => {
-                self.skipped_repos.fetch_add(1, Ordering::Relaxed);
-                self.record_skipped_reason(repo_name, "no upstream");
-                if let Ok(mut guard) = self.no_upstream_repos.lock() {
-                    guard.push((repo_name.to_string(), repo_path.to_string()));
-                } else {
-                    eprintln!("Warning: Failed to record no-upstream repo: {repo_name}");
-                }
-            }
-            Status::NoRemote => {
-                self.skipped_repos.fetch_add(1, Ordering::Relaxed);
-                self.record_skipped_reason(repo_name, "missing remote");
-                if let Ok(mut guard) = self.no_remote_repos.lock() {
-                    guard.push((repo_name.to_string(), repo_path.to_string()));
-                } else {
-                    eprintln!("Warning: Failed to record no-remote repo: {repo_name}");
-                }
             }
             Status::Error
             | Status::ConfigError
@@ -264,19 +245,6 @@ impl SyncStatistics {
         }
     }
 
-    fn record_skipped_reason(&self, repo_name: &str, reason: &str) {
-        if let Ok(mut guard) = self.skipped_reasons.lock() {
-            guard.push(reason.to_string());
-        } else {
-            eprintln!("Warning: Failed to record skipped repo: {repo_name}");
-        }
-    }
-
-    /// Generates a summary string of the synchronization results with enhanced formatting
-    pub fn generate_summary(&self, _total_repos: usize, duration: Duration) -> String {
-        self.generate_push_summary(duration)
-    }
-
     /// Generates a push-specific completion summary.
     pub fn generate_push_summary(&self, duration: Duration) -> String {
         self.generate_transfer_summary(Transfer::Push, duration)
@@ -289,20 +257,15 @@ impl SyncStatistics {
 
     fn generate_transfer_summary(&self, transfer: Transfer, duration: Duration) -> String {
         let duration_secs = duration.as_secs_f64();
-        let synced = self.synced_repos.load(Ordering::Relaxed);
         let (transferred_repos, transferred_commits) = self.transfer_counts(transfer);
+        let up_to_date = self.up_to_date_count(transfer);
         let verb = transfer.verb();
         let errors = self.error_repos.load(Ordering::Relaxed);
+        let skipped = self.skipped_repos.load(Ordering::Relaxed);
 
-        if errors > 0 {
-            format!(
-                "✅ Completed in {duration_secs:.1}s • {synced} synced • {transferred_repos} {verb} ({transferred_commits} commits) • {errors} failed"
-            )
-        } else {
-            format!(
-                "✅ Completed in {duration_secs:.1}s • {synced} synced • {transferred_repos} {verb} ({transferred_commits} commits)"
-            )
-        }
+        format!(
+            "✅ Completed in {duration_secs:.1}s • {up_to_date} up to date • {transferred_repos} {verb} ({transferred_commits} commits) • {errors} failed • {skipped} skipped"
+        )
     }
 
     /// Generates a compact live push footer.
@@ -316,123 +279,112 @@ impl SyncStatistics {
     }
 
     fn generate_transfer_live_summary(&self, transfer: Transfer, total_repos: usize) -> String {
-        let synced = self.synced_repos.load(Ordering::Relaxed);
         let (transferred_repos, transferred_commits) = self.transfer_counts(transfer);
+        let up_to_date = self.up_to_date_count(transfer);
         let marker = transfer.marker();
         let verb = transfer.verb();
         let errors = self.error_repos.load(Ordering::Relaxed);
         let skipped = self.skipped_repos.load(Ordering::Relaxed);
-        let needs_work = self.needs_work_repo_count();
-        let processed = synced.saturating_add(errors).saturating_add(skipped);
+        let follow_up = self.transfer_follow_up_count();
+        let processed = up_to_date
+            .saturating_add(transferred_repos)
+            .saturating_add(errors)
+            .saturating_add(skipped);
         let remaining = (total_repos as u64).saturating_sub(processed);
 
         format!(
-            "  {GREEN}✓{RESET} {synced} synced   {GREEN}{marker}{RESET} {transferred_repos} {verb} / {transferred_commits} commits   {RED}!{RESET} {errors} failed   {YELLOW}!{RESET} {needs_work} needs work   {DIM}·{RESET} {skipped} skipped\n  {DIM}↳ scanning {remaining} remaining{RESET}",
+            "  {GREEN}✓{RESET} {up_to_date} up to date   {GREEN}{marker}{RESET} {transferred_repos} {verb} / {transferred_commits} commits   {RED}!{RESET} {errors} failed   {DIM}·{RESET} {skipped} skipped   {YELLOW}!{RESET} {follow_up} follow-up\n  {DIM}↳ scanning {remaining} remaining{RESET}",
         )
     }
 
     /// Generates the final push report without repeating the live footer details.
     pub fn generate_push_report(&self, duration: Duration, show_changes: bool) -> String {
-        self.generate_push_report_with_needs_work(duration, show_changes, 0, &[])
+        self.generate_push_report_with_follow_up(duration, show_changes, 0, &[])
     }
 
     /// Generates the final pull report without repeating the live footer details.
     pub fn generate_pull_report(&self, duration: Duration, show_changes: bool) -> String {
-        self.generate_pull_report_with_needs_work(duration, show_changes, 0, &[])
+        self.generate_pull_report_with_follow_up(duration, show_changes, 0, &[])
     }
 
     /// Generates the final push report with additional actionable work lines.
-    pub fn generate_push_report_with_needs_work(
+    pub fn generate_push_report_with_follow_up(
         &self,
         duration: Duration,
         show_changes: bool,
-        extra_needs_work_count: usize,
-        extra_needs_work_lines: &[String],
+        extra_follow_up_count: usize,
+        extra_follow_up_lines: &[String],
     ) -> String {
-        self.generate_transfer_report_with_needs_work(
+        self.generate_transfer_report_with_follow_up(
             Transfer::Push,
             duration,
             show_changes,
-            extra_needs_work_count,
-            extra_needs_work_lines,
+            extra_follow_up_count,
+            extra_follow_up_lines,
         )
     }
 
     /// Generates the final pull report with additional actionable work lines.
-    pub fn generate_pull_report_with_needs_work(
+    pub fn generate_pull_report_with_follow_up(
         &self,
         duration: Duration,
         show_changes: bool,
-        extra_needs_work_count: usize,
-        extra_needs_work_lines: &[String],
+        extra_follow_up_count: usize,
+        extra_follow_up_lines: &[String],
     ) -> String {
-        self.generate_transfer_report_with_needs_work(
+        self.generate_transfer_report_with_follow_up(
             Transfer::Pull,
             duration,
             show_changes,
-            extra_needs_work_count,
-            extra_needs_work_lines,
+            extra_follow_up_count,
+            extra_follow_up_lines,
         )
     }
 
-    fn generate_transfer_report_with_needs_work(
+    fn generate_transfer_report_with_follow_up(
         &self,
         transfer: Transfer,
         duration: Duration,
         show_changes: bool,
-        extra_needs_work_count: usize,
-        extra_needs_work_lines: &[String],
+        extra_follow_up_count: usize,
+        extra_follow_up_lines: &[String],
     ) -> String {
         let duration_secs = duration.as_secs_f64();
-        let synced = self.synced_repos.load(Ordering::Relaxed);
         let (transferred_repos, transferred_commits) = self.transfer_counts(transfer);
+        let up_to_date = self.up_to_date_count(transfer);
         let skipped = self.skipped_repos.load(Ordering::Relaxed);
         let errors = self.error_repos.load(Ordering::Relaxed);
+        let checked = up_to_date
+            .saturating_add(transferred_repos)
+            .saturating_add(skipped)
+            .saturating_add(errors);
 
         let mut transferred_details = match transfer {
             Transfer::Push => clone_vec(&self.pushed_repo_details, "pushed_repo_details"),
             Transfer::Pull => clone_vec(&self.pulled_repo_details, "pulled_repo_details"),
         };
         let mut failed_repos = clone_vec(&self.failed_repos, "failed_repos");
-        let mut no_upstream_repos = clone_vec(&self.no_upstream_repos, "no_upstream_repos");
-        let mut no_remote_repos = clone_vec(&self.no_remote_repos, "no_remote_repos");
-        let mut uncommitted_repos = clone_vec(&self.uncommitted_repos, "uncommitted_repos");
-        let skipped_reasons = clone_vec(&self.skipped_reasons, "skipped_reasons");
+        let mut outcomes = clone_vec(&self.operation_outcomes, "operation_outcomes");
         let git_failures = clone_failure_map(&self.git_failures);
 
         transferred_details
             .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
         failed_repos.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-        no_upstream_repos.sort();
-        no_remote_repos.sort();
-        uncommitted_repos.sort();
-
-        let mut issue_rows = build_issue_rows(
-            transfer,
-            &failed_repos,
-            &no_upstream_repos,
-            &no_remote_repos,
-            &git_failures,
-        );
-        let issue_index = issue_rows
+        outcomes.sort_by(|left, right| {
+            left.repository
+                .cmp(&right.repository)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        let skipped_outcomes = outcomes
             .iter()
-            .enumerate()
-            .map(|(index, row)| (row.repo.clone(), index))
-            .collect::<HashMap<_, _>>();
-
-        let mut local_only = Vec::new();
-        let mut local_seen = HashSet::new();
-        for (repo_name, repo_path) in &uncommitted_repos {
-            if let Some(index) = issue_index.get(repo_name).copied() {
-                issue_rows[index].add_reason("uncommitted changes");
-            } else if local_seen.insert(repo_name.clone()) {
-                local_only.push((repo_name.clone(), repo_path.clone()));
-            }
-        }
-        let local_issue_count = local_only.len();
-
-        let issue_count = issue_rows.len();
-        let needs_work = issue_count + local_issue_count + extra_needs_work_count;
+            .filter(|outcome| is_transfer_skip(outcome.status))
+            .collect::<Vec<_>>();
+        let local_follow_up = outcomes
+            .iter()
+            .filter(|outcome| outcome.has_uncommitted && is_transfer_success(outcome.status))
+            .map(|outcome| (outcome.repository.clone(), outcome.path.clone()))
+            .collect::<Vec<_>>();
+        let follow_up_count = local_follow_up.len() + extra_follow_up_count;
         let mut lines = Vec::new();
         let transfer_label = transfer.label();
         let transferred_repo_label = pluralize(transferred_repos, "repo", "repos");
@@ -442,22 +394,26 @@ impl SyncStatistics {
         lines.push(format!("{GREEN}✓{RESET} Completed in {duration_secs:.1}s"));
         lines.push(String::new());
         lines.push(format!("{BOLD_PURPLE}▌ Summary{RESET}"));
-        lines.push(format!("  {GREEN}✓{RESET} {:<13}{synced}", "Synced"));
         lines.push(format!(
             "  {GREEN}✓{RESET} {transfer_label:<13}{transferred_repos} {transferred_repo_label} / {transferred_commits} {transferred_commit_label}"
+        ));
+        lines.push(format!(
+            "  {GREEN}✓{RESET} {:<13}{up_to_date}",
+            "Up to date"
         ));
         if errors > 0 {
             lines.push(format!("  {RED}!{RESET} {:<13}{errors}", "Failed"));
         }
-        if needs_work > 0 {
-            lines.push(format!(
-                "  {YELLOW}!{RESET} {:<13}{needs_work}",
-                "Needs work"
-            ));
-        }
         if skipped > 0 {
             lines.push(format!("  {DIM}·{RESET} {:<13}{skipped}", "Skipped"));
         }
+        if follow_up_count > 0 {
+            lines.push(format!(
+                "  {YELLOW}!{RESET} {:<13}{follow_up_count}",
+                "Follow-up"
+            ));
+        }
+        lines.push(format!("  {DIM}·{RESET} {:<13}{checked}", "Checked"));
         lines.push(String::new());
 
         lines.push(format!("{BOLD_PURPLE}▌ {transfer_label}{RESET}"));
@@ -467,62 +423,29 @@ impl SyncStatistics {
                 transfer.verb()
             ));
         } else {
-            for (repo_name, _repo_path, commits) in transferred_details {
+            for (repo_name, repo_path, commits) in transferred_details {
                 let commit_label = if commits == 1 { "commit" } else { "commits" };
                 lines.push(format!(
                     "  {GREEN}✓{RESET} {:24} {:>3} {commit_label}",
                     truncate_text(&repo_name, 24),
                     commits
                 ));
+                lines.push(format!(
+                    "    {DIM}↳ path: {}{RESET}",
+                    format_relative_repo_path(&repo_path)
+                ));
             }
         }
         lines.push(String::new());
 
         append_failed_section(&mut lines, transfer, errors, &failed_repos, &git_failures);
-
-        if skipped > 0 {
-            append_skipped_section(&mut lines, skipped, &skipped_reasons);
-        }
-
-        if !issue_rows.is_empty() || !extra_needs_work_lines.is_empty() {
-            lines.push(format!(
-                "{BOLD_PURPLE}▌ Needs Work{RESET}{}",
-                format_needs_work_detail(
-                    needs_work,
-                    issue_count,
-                    extra_needs_work_count,
-                    local_issue_count
-                )
-            ));
-            if !issue_rows.is_empty() {
-                lines.extend(format_issue_table(&issue_rows));
-            }
-            if !extra_needs_work_lines.is_empty() {
-                if !issue_rows.is_empty() {
-                    lines.push(String::new());
-                }
-                lines.extend(extra_needs_work_lines.iter().cloned());
-            }
-            lines.push(String::new());
-        }
-
-        if local_issue_count > 0 {
-            append_local_changes_section(&mut lines, &local_only);
-            if show_changes {
-                lines.extend(format_local_changes(&local_only));
-            }
-            lines.push(String::new());
-        }
-
-        if needs_work > 0 || errors > 0 || skipped > 0 {
-            append_next_section(
-                &mut lines,
-                errors,
-                skipped,
-                extra_needs_work_count,
-                !issue_rows.is_empty() || local_issue_count > 0,
-            );
-        }
+        append_transfer_skips(&mut lines, transfer, &skipped_outcomes);
+        append_transfer_follow_up(
+            &mut lines,
+            &local_follow_up,
+            show_changes,
+            extra_follow_up_lines,
+        );
 
         while lines.last().is_some_and(String::is_empty) {
             lines.pop();
@@ -544,218 +467,17 @@ impl SyncStatistics {
         }
     }
 
-    fn needs_work_repo_count(&self) -> u64 {
-        let mut names = HashSet::new();
-        if let Ok(repos) = self.failed_repos.lock() {
-            names.extend(repos.iter().map(|(name, _, _)| name.clone()));
-        }
-        if let Ok(repos) = self.no_upstream_repos.lock() {
-            names.extend(repos.iter().map(|(name, _)| name.clone()));
-        }
-        if let Ok(repos) = self.no_remote_repos.lock() {
-            names.extend(repos.iter().map(|(name, _)| name.clone()));
-        }
-        if let Ok(repos) = self.uncommitted_repos.lock() {
-            names.extend(repos.iter().map(|(name, _)| name.clone()));
-        }
-        names.len() as u64
+    fn up_to_date_count(&self, transfer: Transfer) -> u64 {
+        let synced = self.synced_repos.load(Ordering::Relaxed);
+        let (transferred, _) = self.transfer_counts(transfer);
+        synced.saturating_sub(transferred)
     }
 
-    /// Generates detailed warning messages for repositories needing attention
-    pub fn generate_detailed_summary(&self, show_changes: bool) -> String {
-        let mut lines = Vec::new();
-
-        // Lock all vectors once at the beginning - handle lock failures gracefully
-        let failed_repos = if let Ok(guard) = self.failed_repos.lock() {
-            guard
-        } else {
-            eprintln!("Warning: Failed to acquire lock for failed_repos");
-            return String::new();
-        };
-        let no_upstream_repos = if let Ok(guard) = self.no_upstream_repos.lock() {
-            guard
-        } else {
-            eprintln!("Warning: Failed to acquire lock for no_upstream_repos");
-            return String::new();
-        };
-        let no_remote_repos = if let Ok(guard) = self.no_remote_repos.lock() {
-            guard
-        } else {
-            eprintln!("Warning: Failed to acquire lock for no_remote_repos");
-            return String::new();
-        };
-        let uncommitted_repos = if let Ok(guard) = self.uncommitted_repos.lock() {
-            guard
-        } else {
-            eprintln!("Warning: Failed to acquire lock for uncommitted_repos");
-            return String::new();
-        };
-
-        let mut diverged_repos = Vec::new();
-        let mut push_blocked_repos = Vec::new();
-        let mut other_failed_repos = Vec::new();
-
-        for repo in failed_repos.iter() {
-            let error = repo.2.to_lowercase();
-            if error.contains("diverged") {
-                diverged_repos.push(repo);
-            } else if error.contains("email privacy") {
-                push_blocked_repos.push(repo);
-            } else {
-                other_failed_repos.push(repo);
-            }
-        }
-
-        if !diverged_repos.is_empty() {
-            lines.push(format!("🔴 DIVERGED ({})", diverged_repos.len()));
-            for (i, (repo_name, repo_path, error)) in diverged_repos.iter().enumerate() {
-                let tree_char = if i == diverged_repos.len() - 1 {
-                    "└─"
-                } else {
-                    "├─"
-                };
-                lines.push(format!(
-                    "   {tree_char} {repo_name:20} {repo_path:30} # {error}"
-                ));
-            }
-            lines.push(String::new());
-        }
-
-        if !push_blocked_repos.is_empty() {
-            lines.push(format!("⛔ PUSH BLOCKED ({})", push_blocked_repos.len()));
-            for (i, (repo_name, repo_path, error)) in push_blocked_repos.iter().enumerate() {
-                let tree_char = if i == push_blocked_repos.len() - 1 {
-                    "└─"
-                } else {
-                    "├─"
-                };
-                lines.push(format!(
-                    "   {tree_char} {repo_name:20} {repo_path:30} # {error}"
-                ));
-            }
-            lines.push(String::new());
-        }
-
-        if !other_failed_repos.is_empty() {
-            lines.push(format!("🔴 FAILED REPOS ({})", other_failed_repos.len()));
-            for (i, (repo_name, repo_path, error)) in other_failed_repos.iter().enumerate() {
-                let tree_char = if i == other_failed_repos.len() - 1 {
-                    "└─"
-                } else {
-                    "├─"
-                };
-                lines.push(format!(
-                    "   {tree_char} {repo_name:20} {repo_path:30} # {error}"
-                ));
-            }
-            lines.push(String::new());
-        }
-
-        // No upstream repos
-        if !no_upstream_repos.is_empty() {
-            lines.push(format!("🟡 NEEDS UPSTREAM ({})", no_upstream_repos.len()));
-            for (i, (repo_name, repo_path)) in no_upstream_repos.iter().enumerate() {
-                let tree_char = if i == no_upstream_repos.len() - 1 {
-                    "└─"
-                } else {
-                    "├─"
-                };
-                lines.push(format!(
-                    "   {tree_char} {repo_name:20} {repo_path:30} # repos push --auto-upstream"
-                ));
-            }
-            lines.push(String::new()); // Add blank line
-        }
-
-        // Uncommitted changes
-        if !uncommitted_repos.is_empty() {
-            lines.push(format!(
-                "⚠️  UNCOMMITTED CHANGES ({})",
-                uncommitted_repos.len()
-            ));
-            for (i, (repo_name, repo_path)) in uncommitted_repos.iter().enumerate() {
-                let tree_char = if i == uncommitted_repos.len() - 1 {
-                    "└─"
-                } else {
-                    "├─"
-                };
-                if show_changes {
-                    // Show repo header with path
-                    lines.push(format!("   {tree_char} {repo_name:20} {repo_path}"));
-
-                    // Get and display file changes
-                    if let Ok(changes) = get_repo_changes(repo_path) {
-                        if !changes.is_empty() {
-                            let is_last_repo = i == uncommitted_repos.len() - 1;
-                            for (file_idx, change) in changes.iter().enumerate() {
-                                let is_last_file = file_idx == changes.len() - 1;
-                                let prefix = if is_last_repo {
-                                    if is_last_file {
-                                        "      └─"
-                                    } else {
-                                        "      ├─"
-                                    }
-                                } else if is_last_file {
-                                    "   │  └─"
-                                } else {
-                                    "   │  ├─"
-                                };
-                                lines.push(format!("{prefix}  {change}"));
-                            }
-                        }
-                    }
-                } else {
-                    lines.push(format!("   {tree_char} {repo_name:20} {repo_path}"));
-                }
-            }
-            lines.push(String::new()); // Add blank line
-        }
-
-        // No remote repos
-        if !no_remote_repos.is_empty() {
-            lines.push(format!("🔧 MISSING REMOTES ({})", no_remote_repos.len()));
-            for (i, (repo_name, repo_path)) in no_remote_repos.iter().enumerate() {
-                let tree_char = if i == no_remote_repos.len() - 1 {
-                    "└─"
-                } else {
-                    "├─"
-                };
-                lines.push(format!("   {tree_char} {repo_name:20} {repo_path}"));
-            }
-        }
-
-        // Remove trailing blank line if it exists
-        if lines.last() == Some(&String::new()) {
-            lines.pop();
-        }
-
-        lines.join("\n")
-    }
-}
-
-#[derive(Debug)]
-struct IssueRow {
-    repo: String,
-    path: String,
-    reason: String,
-    next: String,
-}
-
-impl IssueRow {
-    fn add_reason(&mut self, reason: &str) {
-        if self.reason.contains(reason) {
-            return;
-        }
-        if !self.reason.is_empty() {
-            self.reason.push_str(" + ");
-        }
-        self.reason.push_str(reason);
-
-        if self.next == "repos push --auto-upstream" {
-            self.next = "commit/clean, then auto-upstream".to_string();
-        } else if self.next == "set upstream or skip" {
-            self.next = "commit/clean, then set upstream".to_string();
-        }
+    fn transfer_follow_up_count(&self) -> u64 {
+        clone_vec(&self.operation_outcomes, "operation_outcomes")
+            .iter()
+            .filter(|outcome| outcome.has_uncommitted && is_transfer_success(outcome.status))
+            .count() as u64
     }
 }
 
@@ -822,172 +544,102 @@ fn append_failed_section(
     lines.push(String::new());
 }
 
-fn append_skipped_section(lines: &mut Vec<String>, skipped: u64, skipped_reasons: &[String]) {
-    lines.push(format!("{BOLD_PURPLE}▌ Skipped{RESET}"));
-    lines.push(format!("  {DIM}·{RESET} {skipped} repos skipped"));
-    for (reason, count) in summarize_skipped_reasons(skipped_reasons) {
-        lines.push(format!("    {DIM}· {count} {reason}{RESET}"));
+fn is_transfer_success(status: Status) -> bool {
+    matches!(status, Status::Synced | Status::Pushed | Status::Pulled)
+}
+
+fn is_transfer_skip(status: Status) -> bool {
+    matches!(
+        status,
+        Status::Skip
+            | Status::NoUpstream
+            | Status::NoRemote
+            | Status::ConfigSkipped
+            | Status::NoChanges
+            | Status::Dirty
+    )
+}
+
+fn append_transfer_skips(
+    lines: &mut Vec<String>,
+    transfer: Transfer,
+    outcomes: &[&RepositoryOutcome],
+) {
+    if outcomes.is_empty() {
+        return;
     }
-    lines.push(format!("    {DIM}↳ Run `repos status --skipped`{RESET}"));
+
+    lines.push(format!("{BOLD_PURPLE}▌ Skipped{RESET}"));
+    for outcome in outcomes {
+        let mut reason = clean_error_message(&outcome.message);
+        if outcome.has_uncommitted && !reason.contains("uncommitted") {
+            reason.push_str(" + uncommitted changes");
+        }
+        lines.push(format!(
+            "  {DIM}·{RESET} {:24} {reason}",
+            truncate_text(&outcome.repository, 24)
+        ));
+        lines.push(format!(
+            "    {DIM}↳ path: {}{RESET}",
+            format_relative_repo_path(&outcome.path)
+        ));
+        lines.push(format!(
+            "    {DIM}↳ next: {}{RESET}",
+            transfer_skip_next(transfer, outcome)
+        ));
+    }
     lines.push(String::new());
 }
 
-fn format_needs_work_detail(
-    needs_work: usize,
-    issue_count: usize,
-    extra_needs_work_count: usize,
-    local_issue_count: usize,
-) -> String {
-    let mut detail_parts = Vec::new();
-    if issue_count > 0 {
-        detail_parts.push(format!(
-            "{issue_count} {}",
-            pluralize(issue_count as u64, "repo", "repos")
-        ));
-    }
-    if extra_needs_work_count > 0 {
-        detail_parts.push(format!(
-            "{extra_needs_work_count} {}",
-            pluralize(
-                extra_needs_work_count as u64,
-                "nested package group",
-                "nested package groups"
-            )
-        ));
-    }
-    if local_issue_count > 0 {
-        detail_parts.push(format!(
-            "{local_issue_count} {}",
-            pluralize(local_issue_count as u64, "dirty repo", "dirty repos")
-        ));
-    }
-
-    if detail_parts.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " {}",
-            paint(
-                DIM,
-                &format!("{needs_work} total: {}", detail_parts.join(" + "))
-            )
-        )
+fn transfer_skip_next(transfer: Transfer, outcome: &RepositoryOutcome) -> &'static str {
+    match outcome.status {
+        Status::NoRemote => "add remote or skip",
+        Status::NoUpstream => transfer.no_upstream_action(),
+        Status::Dirty => "commit or stash local changes, then retry",
+        Status::Skip if outcome.message.contains("detached HEAD") => "checkout a branch",
+        Status::NoChanges => "no action",
+        _ => "run `repos status --skipped`",
     }
 }
 
-fn append_local_changes_section(lines: &mut Vec<String>, local_only: &[(String, String)]) {
-    let local_names = local_only
-        .iter()
-        .map(|(repo_name, _)| repo_name.as_str())
-        .collect::<Vec<_>>();
-    let local_issue_count = local_names.len();
-
-    lines.push(format!("{BOLD_PURPLE}▌ Local Changes{RESET}"));
-    if local_issue_count == 1 {
-        lines.push(format!(
-            "  {YELLOW}!{RESET} 1 repo has uncommitted changes: {}",
-            local_names[0]
-        ));
-    } else {
-        lines.push(format!(
-            "  {YELLOW}!{RESET} {} {} have uncommitted changes:",
-            local_issue_count,
-            pluralize(local_issue_count as u64, "repo", "repos")
-        ));
-        for repo_name in local_names {
-            lines.push(format!("    {DIM}·{RESET} {repo_name}"));
-        }
-    }
-}
-
-fn append_next_section(
+fn append_transfer_follow_up(
     lines: &mut Vec<String>,
-    errors: u64,
-    skipped: u64,
-    extra_needs_work_count: usize,
-    has_repo_work: bool,
+    local_changes: &[(String, String)],
+    show_changes: bool,
+    extra_lines: &[String],
 ) {
-    let mut next_index = 1;
-    lines.push(format!("{BOLD_PURPLE}▌ Next{RESET}"));
-    if errors > 0 {
-        push_next_step(lines, &mut next_index, "`repos doctor`");
+    if local_changes.is_empty() && extra_lines.is_empty() {
+        return;
     }
-    if skipped > 0 {
-        push_next_step(lines, &mut next_index, "`repos status --skipped`");
-    }
-    if extra_needs_work_count > 0 {
-        push_next_step(
-            lines,
-            &mut next_index,
-            "Clean dirty nested package copies, then run `repos nested status`",
-        );
-        push_next_step(
-            lines,
-            &mut next_index,
-            "Run the listed `repos nested sync ...` commands",
-        );
-    }
-    if has_repo_work {
-        push_next_step(lines, &mut next_index, "`repos status --needs-work`");
-    }
-}
 
-fn push_next_step(lines: &mut Vec<String>, next_index: &mut usize, step: &str) {
-    lines.push(format!("  {next_index}. {step}"));
-    *next_index += 1;
-}
-
-fn build_issue_rows(
-    transfer: Transfer,
-    failed_repos: &[(String, String, String)],
-    no_upstream_repos: &[(String, String)],
-    no_remote_repos: &[(String, String)],
-    git_failures: &HashMap<(String, String), GitFailure>,
-) -> Vec<IssueRow> {
-    let mut rows = Vec::new();
-    let mut seen = HashSet::new();
-
-    for (repo_name, repo_path, error) in failed_repos {
-        if seen.insert(repo_name.clone()) {
-            let failure = git_failures.get(&(repo_name.clone(), repo_path.clone()));
-            let display_path = format_relative_repo_path(repo_path);
-            rows.push(IssueRow {
-                repo: repo_name.clone(),
-                path: repo_path.clone(),
-                reason: failure
-                    .map(GitFailure::reason)
-                    .unwrap_or_else(|| compact_git_error(error)),
-                next: failure.map_or_else(
-                    || next_for_git_error(error, transfer),
-                    |failure| failure.next_action(&display_path),
-                ),
-            });
+    lines.push(format!(
+        "{BOLD_PURPLE}▌ Follow-up{RESET} {DIM}(does not change outcome counts){RESET}"
+    ));
+    for (repo_name, repo_path) in local_changes {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} {:24} uncommitted changes",
+            truncate_text(repo_name, 24)
+        ));
+        lines.push(format!(
+            "    {DIM}↳ path: {}{RESET}",
+            format_relative_repo_path(repo_path)
+        ));
+        lines.push(format!(
+            "    {DIM}↳ next: commit or stash the local changes{RESET}"
+        ));
+        if show_changes {
+            if let Ok(changes) = get_repo_changes(repo_path) {
+                for change in changes {
+                    lines.push(format!("      {DIM}· {change}{RESET}"));
+                }
+            }
         }
     }
-
-    for (repo_name, repo_path) in no_upstream_repos {
-        if seen.insert(repo_name.clone()) {
-            rows.push(IssueRow {
-                repo: repo_name.clone(),
-                path: repo_path.clone(),
-                reason: "no upstream".to_string(),
-                next: transfer.no_upstream_action().to_string(),
-            });
-        }
+    if !local_changes.is_empty() && !extra_lines.is_empty() {
+        lines.push(String::new());
     }
-
-    for (repo_name, repo_path) in no_remote_repos {
-        if seen.insert(repo_name.clone()) {
-            rows.push(IssueRow {
-                repo: repo_name.clone(),
-                path: repo_path.clone(),
-                reason: "missing remote".to_string(),
-                next: "add remote or skip".to_string(),
-            });
-        }
-    }
-
-    rows
+    lines.extend(extra_lines.iter().cloned());
+    lines.push(String::new());
 }
 
 fn compact_git_error(error: &str) -> String {
@@ -1019,61 +671,6 @@ fn next_for_git_error(error: &str, transfer: Transfer) -> String {
     } else {
         "inspect failure".to_string()
     }
-}
-
-fn format_issue_table(rows: &[IssueRow]) -> Vec<String> {
-    const REPO_WIDTH: usize = 26;
-    const REASON_WIDTH: usize = 36;
-    const NEXT_WIDTH: usize = 34;
-    const GAP: &str = "  ";
-
-    let rule = format!(
-        "  {}{GAP}{}{GAP}{}",
-        "─".repeat(REPO_WIDTH),
-        "─".repeat(REASON_WIDTH),
-        "─".repeat(NEXT_WIDTH)
-    );
-    let mut lines = vec![
-        paint(
-            DIM,
-            &format!(
-                "  {:REPO_WIDTH$}{GAP}{:REASON_WIDTH$}{GAP}{:NEXT_WIDTH$}",
-                "Repo", "Reason", "Next"
-            ),
-        ),
-        paint(DIM, &rule),
-    ];
-
-    for row in rows {
-        let line = format!(
-            "  {:REPO_WIDTH$}{GAP}{:REASON_WIDTH$}{GAP}{:NEXT_WIDTH$}",
-            truncate_text(&row.repo, REPO_WIDTH),
-            truncate_text(&row.reason, REASON_WIDTH),
-            truncate_text(&row.next, NEXT_WIDTH)
-        );
-        lines.push(paint(issue_row_color(row), &line));
-        lines.push(paint(
-            DIM,
-            &format!("    └─ {}", format_relative_repo_path(&row.path)),
-        ));
-    }
-
-    lines
-}
-
-fn issue_row_color(row: &IssueRow) -> &'static str {
-    if row.reason.contains("diverged")
-        || row.reason.contains("email privacy")
-        || row.reason.contains("network")
-    {
-        RED
-    } else {
-        YELLOW
-    }
-}
-
-fn paint(color: &str, value: &str) -> String {
-    format!("{color}{value}{RESET}")
 }
 
 pub(super) fn format_relative_repo_path(path: &str) -> String {
@@ -1110,56 +707,12 @@ fn truncate_text(value: &str, width: usize) -> String {
     truncated
 }
 
-fn format_local_changes(repos: &[(String, String)]) -> Vec<String> {
-    let mut lines = Vec::new();
-    for (repo_name, repo_path) in repos {
-        if let Ok(changes) = get_repo_changes(repo_path) {
-            if changes.is_empty() {
-                continue;
-            }
-            lines.push(format!("  {repo_name}:"));
-            for change in changes {
-                lines.push(format!("    {change}"));
-            }
-        }
-    }
-    lines
-}
-
 fn pluralize(count: u64, singular: &'static str, plural: &'static str) -> &'static str {
     if count == 1 {
         singular
     } else {
         plural
     }
-}
-
-fn skipped_reason(status: &Status, message: &str) -> &'static str {
-    match status {
-        Status::NoRemote => "missing remote",
-        Status::NoUpstream => "no upstream",
-        Status::Dirty => "uncommitted changes",
-        Status::NoChanges => "nothing to do",
-        Status::Skip if message.contains("detached HEAD") => "detached HEAD",
-        Status::Skip => "skipped",
-        Status::ConfigSkipped => "config skipped",
-        _ => "skipped",
-    }
-}
-
-fn summarize_skipped_reasons(skipped_reasons: &[String]) -> Vec<(String, usize)> {
-    let mut counts = HashMap::<String, usize>::new();
-    for reason in skipped_reasons {
-        *counts.entry(reason.clone()).or_default() += 1;
-    }
-
-    let mut summarized = counts.into_iter().collect::<Vec<_>>();
-    summarized.sort_by(|(left_reason, left_count), (right_reason, right_count)| {
-        right_count
-            .cmp(left_count)
-            .then_with(|| left_reason.cmp(right_reason))
-    });
-    summarized
 }
 
 fn parse_commit_count(message: &str) -> Option<u64> {

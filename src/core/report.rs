@@ -18,6 +18,7 @@ pub(crate) struct RepositoryOutcome {
     pub path: String,
     pub status: Status,
     pub message: String,
+    pub has_uncommitted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -292,7 +293,7 @@ impl SyncStatistics {
         lines.join("\n")
     }
 
-    fn batch_outcomes(&self) -> Vec<RepositoryOutcome> {
+    pub(super) fn batch_outcomes(&self) -> Vec<RepositoryOutcome> {
         match self.operation_outcomes.lock() {
             Ok(outcomes) => outcomes.clone(),
             Err(_) => {
