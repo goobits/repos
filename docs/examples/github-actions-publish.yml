@@ -48,8 +48,7 @@ jobs:
       run: |
         git clone https://github.com/goobits/repos.git
         cd repos
-        cargo build --release
-        sudo cp target/release/repos /usr/local/bin/
+        cargo install --path . --locked --force
         repos --version
 
     - name: Configure npm credentials

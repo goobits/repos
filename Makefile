@@ -10,7 +10,7 @@ build:
 	cargo build --release
 
 # Install the tool locally using the install script
-install: build
+install:
 	./install.sh
 
 # Remove all build artifacts and target directory
@@ -30,8 +30,7 @@ release-all:
 
 # Build and run development version (debug build with faster compilation)
 dev:
-	cargo build
-	./target/debug/repos
+	cargo run --
 
 # Run all unit and integration tests
 test:

@@ -34,9 +34,18 @@ After running the script, you'll have:
 - Installation directory added to your PATH
 - Rust toolchain installed if it was missing
 
+The build cache stays outside the checkout. Automation can override locations:
+
+```bash
+CARGO_TARGET_DIR=/path/to/cache \
+REPOS_INSTALL_DIR=/path/to/bin \
+REPOS_SKIP_PATH_SETUP=1 \
+./install.sh
+```
+
 ### Method 3: Make
 
-Familiar workflow for users who prefer make commands. Equivalent to Method 1 but uses make.
+Familiar workflow for users who prefer make commands. It delegates to the install script.
 
 ```bash
 git clone https://github.com/goobits/repos.git
@@ -51,12 +60,10 @@ For users who want full control over installation paths and prefer manual setup.
 ```bash
 git clone https://github.com/goobits/repos.git
 cd repos
-cargo build --release
-mkdir -p ~/.local/bin
-cp target/release/repos ~/.local/bin/
+cargo install --path . --locked --force
 ```
 
-Requires manual PATH configuration (see below).
+This installs to Cargo's binary directory, normally `~/.cargo/bin`.
 
 ### Method 5: From Source (Development)
 
@@ -65,15 +72,17 @@ For contributors working on the codebase. Creates unoptimized debug build for fa
 ```bash
 git clone https://github.com/goobits/repos.git
 cd repos
-cargo build
-./target/debug/repos --help
+cargo run -- --help
 ```
+
+Repository builds use an external Cargo target directory, so scripts and docs
+must not assume a checkout-local `target/` directory.
 
 ## Verify Installation
 
 ```bash
 repos --version      # Should show the installed repos version
-which repos          # Should show: /home/user/.local/bin/repos
+command -v repos     # Shows the active installed binary
 repos --help         # Display command help
 ```
 
@@ -113,17 +122,20 @@ The install script rebuilds and reinstalls automatically.
 
 ## Uninstalling
 
+For Cargo installations:
+
 ```bash
-rm ~/.local/bin/repos
+cargo uninstall goobits-repos
 ```
 
-Remove PATH configuration from shell RC files if desired.
+For install-script installations, remove the path reported by
+`command -v repos`. Remove the `repos-env` line from shell RC files if desired.
 
 ## Troubleshooting
 
 **"command not found"**
 - Check PATH: `echo $PATH | grep -o "$HOME/.local/bin"`
-- Verify binary exists: `ls -l ~/.local/bin/repos`
+- Locate the active binary: `command -v repos`
 - Reload shell: `source ~/.bashrc` or restart terminal
 
 **Build errors**
@@ -132,8 +144,7 @@ Remove PATH configuration from shell RC files if desired.
 - Clean rebuild: `cargo clean && cargo build --release`
 
 **Permission denied**
-- Make binary executable: `chmod +x ~/.local/bin/repos`
-- Check ownership: `ls -l ~/.local/bin/repos`
+- Inspect the active binary: `ls -l "$(command -v repos)"`
 - Use `sudo` only if installing to `/usr/local/bin`
 
 **Missing dependencies on Linux**

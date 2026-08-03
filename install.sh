@@ -1,10 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # repos installer script
 # Installs the repos tool for managing multiple git repositories
 #
 
-set -e  # Exit on any error
+set -euo pipefail
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -12,16 +12,14 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Change to script directory to ensure we're in the right place
 cd "$SCRIPT_DIR"
 
-echo "📦 Building repos..."
-
 # Function to add cargo to PATH in shell configuration files
 add_cargo_to_path() {
     local shell_config=""
 
     # Detect which shell configuration file to use
-    if [ -n "$ZSH_VERSION" ]; then
+    if [ -n "${ZSH_VERSION:-}" ]; then
         shell_config="$HOME/.zshrc"
-    elif [ -n "$BASH_VERSION" ]; then
+    elif [ -n "${BASH_VERSION:-}" ]; then
         if [ -f "$HOME/.bashrc" ]; then
             shell_config="$HOME/.bashrc"
         elif [ -f "$HOME/.bash_profile" ]; then
@@ -73,12 +71,47 @@ if ! command -v cargo &> /dev/null; then
     fi
 fi
 
-# Build the release binary
-cargo build --release
+# Keep build artifacts outside the source checkout. An explicit Cargo target
+# directory still wins, which makes the installer friendly to CI and wrappers.
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    BUILD_DIR="$CARGO_TARGET_DIR"
+else
+    TEMP_ROOT="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}"
+    if [ ! -d "$TEMP_ROOT" ] || [ ! -w "$TEMP_ROOT" ]; then
+        TEMP_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}"
+    fi
+    BUILD_DIR="${TEMP_ROOT%/}/goobits-repos-target"
+fi
+
+HOST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+if [ -z "$HOST_TARGET" ]; then
+    echo "❌ Could not determine the native Rust target." >&2
+    exit 1
+fi
+
+case "$HOST_TARGET" in
+    *-windows-*) BINARY_NAME="repos.exe" ;;
+    *) BINARY_NAME="repos" ;;
+esac
+
+mkdir -p "$BUILD_DIR"
+export CARGO_TARGET_DIR="$BUILD_DIR"
+
+echo "📦 Building repos in $CARGO_TARGET_DIR..."
+cargo build --locked --release --bin repos --target "$HOST_TARGET"
+
+SOURCE_BINARY="$CARGO_TARGET_DIR/$HOST_TARGET/release/$BINARY_NAME"
+if [ ! -f "$SOURCE_BINARY" ]; then
+    echo "❌ Build completed but the repos binary was not found: $SOURCE_BINARY" >&2
+    exit 1
+fi
 
 # Determine the best installation directory
 # Priority: /usr/local/bin (system-wide), ~/.local/bin, ~/bin (user-specific)
-if [ -w "/usr/local/bin" ]; then
+if [ -n "${REPOS_INSTALL_DIR:-}" ]; then
+    INSTALL_DIR="$REPOS_INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
+elif [ -w "/usr/local/bin" ]; then
     INSTALL_DIR="/usr/local/bin"
 elif [ -d "$HOME/.local/bin" ]; then
     INSTALL_DIR="$HOME/.local/bin"
@@ -92,8 +125,13 @@ fi
 
 # Install the binary
 echo "📁 Installing to $INSTALL_DIR..."
-cp "$SCRIPT_DIR/target/release/repos" "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/repos"
+cp "$SOURCE_BINARY" "$INSTALL_DIR/$BINARY_NAME"
+chmod +x "$INSTALL_DIR/$BINARY_NAME"
+
+if ! "$INSTALL_DIR/$BINARY_NAME" --version >/dev/null; then
+    echo "❌ Installed binary could not be executed: $INSTALL_DIR/$BINARY_NAME" >&2
+    exit 1
+fi
 
 # Function to create environment file for PATH management
 create_repos_env() {
@@ -136,7 +174,9 @@ add_to_shell_config() {
 }
 
 # Check if installation directory is in PATH and set up environment if not
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+if [ "${REPOS_SKIP_PATH_SETUP:-0}" = "1" ]; then
+    echo "ℹ️  Skipped PATH configuration (REPOS_SKIP_PATH_SETUP=1)"
+elif [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo ""
     echo "🔧 Setting up PATH configuration..."
 
@@ -154,4 +194,5 @@ else
 fi
 
 echo "✅ Installation complete!"
+echo "   Installed: $INSTALL_DIR/$BINARY_NAME"
 echo "   Run 'repos' in any directory to manage your git repositories"
