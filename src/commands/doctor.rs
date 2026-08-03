@@ -7,10 +7,199 @@ use crate::core::{
     acquire_semaphore_permit, clean_error_message, create_processing_context, init_command,
     set_terminal_title, set_terminal_title_and_flush, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
+use crate::git::failure::GitFailure;
 use crate::git::operations::run_git;
-use crate::git::remote::{remote_policy_violation, RemoteDirection};
+use crate::git::remote::{
+    context_from_url, inspect_remote, policy_violation, RemoteContext, RemoteDirection,
+    RemotePolicyViolation, RemoteTransport,
+};
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
+const RESET: &str = "\x1b[0m";
+const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
+const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+const GREEN: &str = "\x1b[1;38;5;114m";
+const YELLOW: &str = "\x1b[1;38;5;221m";
+const RED: &str = "\x1b[1;38;5;203m";
+const DIM: &str = "\x1b[2m";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DoctorFinding {
+    message: String,
+    next: String,
+}
+
+impl DoctorFinding {
+    fn new(message: impl Into<String>, next: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            next: next.into(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RepositoryDiagnosis {
+    repository: String,
+    path: String,
+    blockers: Vec<DoctorFinding>,
+    advisories: Vec<DoctorFinding>,
+}
+
+impl RepositoryDiagnosis {
+    fn new(repository: &str, path: &std::path::Path) -> Self {
+        Self {
+            repository: repository.to_string(),
+            path: path.to_string_lossy().into_owned(),
+            blockers: Vec::new(),
+            advisories: Vec::new(),
+        }
+    }
+
+    fn finish(mut self) -> Self {
+        self.blockers.sort_by(|left, right| {
+            left.message
+                .cmp(&right.message)
+                .then_with(|| left.next.cmp(&right.next))
+        });
+        self.advisories.sort_by(|left, right| {
+            left.message
+                .cmp(&right.message)
+                .then_with(|| left.next.cmp(&right.next))
+        });
+        self
+    }
+
+    fn progress_label(&self) -> &'static str {
+        if !self.blockers.is_empty() {
+            "blocked"
+        } else if !self.advisories.is_empty() {
+            "warning"
+        } else {
+            "healthy"
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct DoctorReport {
+    repositories: Vec<RepositoryDiagnosis>,
+    nested_drift_count: usize,
+    nested_drift_lines: Vec<String>,
+    global_advisories: Vec<DoctorFinding>,
+}
+
+impl DoctorReport {
+    fn blocker_repos(&self) -> usize {
+        self.repositories
+            .iter()
+            .filter(|diagnosis| !diagnosis.blockers.is_empty())
+            .count()
+    }
+
+    fn warning_repos(&self) -> usize {
+        self.repositories
+            .iter()
+            .filter(|diagnosis| diagnosis.blockers.is_empty() && !diagnosis.advisories.is_empty())
+            .count()
+    }
+
+    fn healthy_repos(&self) -> usize {
+        self.repositories
+            .iter()
+            .filter(|diagnosis| diagnosis.blockers.is_empty() && diagnosis.advisories.is_empty())
+            .count()
+    }
+
+    fn warning_count(&self) -> usize {
+        self.warning_repos() + self.global_advisories.len()
+    }
+
+    fn render(&self, duration: std::time::Duration) -> String {
+        let mut lines = vec![
+            format!("{BOLD_BLUE}repos doctor{RESET}"),
+            format!(
+                "{GREEN}✓{RESET} Completed in {:.1}s",
+                duration.as_secs_f64()
+            ),
+            String::new(),
+            format!("{BOLD_PURPLE}▌ Summary{RESET}"),
+            format!(
+                "  {GREEN}✓{RESET} {:<16}{}",
+                "Healthy",
+                self.healthy_repos()
+            ),
+        ];
+        if self.warning_count() > 0 {
+            lines.push(format!(
+                "  {YELLOW}!{RESET} {:<16}{}",
+                "Warnings",
+                self.warning_count()
+            ));
+        }
+        if self.blocker_repos() > 0 {
+            lines.push(format!(
+                "  {RED}!{RESET} {:<16}{}",
+                "Blockers",
+                self.blocker_repos()
+            ));
+        }
+        if self.nested_drift_count > 0 {
+            lines.push(format!(
+                "  {RED}!{RESET} {:<16}{}",
+                "Nested drift", self.nested_drift_count
+            ));
+        }
+        lines.push(format!(
+            "  {DIM}·{RESET} {:<16}{}",
+            "Checked",
+            self.repositories.len()
+        ));
+
+        append_diagnosis_section(
+            &mut lines,
+            "Blockers",
+            RED,
+            &self.repositories,
+            |diagnosis| &diagnosis.blockers,
+        );
+        if !self.nested_drift_lines.is_empty() {
+            lines.push(String::new());
+            lines.extend(self.nested_drift_lines.iter().cloned());
+        }
+        append_diagnosis_section(
+            &mut lines,
+            "Advisories",
+            YELLOW,
+            &self.repositories,
+            |diagnosis| &diagnosis.advisories,
+        );
+        if !self.global_advisories.is_empty() {
+            lines.push(String::new());
+            if !self
+                .repositories
+                .iter()
+                .any(|diagnosis| !diagnosis.advisories.is_empty())
+            {
+                lines.push(format!("{BOLD_PURPLE}▌ Advisories{RESET}"));
+            }
+            for advisory in &self.global_advisories {
+                lines.push(format!("  {YELLOW}!{RESET} {}", advisory.message));
+                lines.push(format!("    {DIM}↳ next: {}{RESET}", advisory.next));
+            }
+        }
+
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+        lines.join("\n")
+    }
+}
+
+struct DirectionInspection {
+    contexts: Vec<RemoteContext>,
+    blocked: bool,
+}
 
 /// Diagnose common blockers without mutating repositories.
 pub async fn handle_doctor_command() -> Result<()> {
@@ -35,136 +224,147 @@ pub async fn handle_doctor_command() -> Result<()> {
         match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
         {
             Ok(context) => context,
-            Err(e) => {
+            Err(error) => {
                 set_terminal_title_and_flush("✅ repos doctor");
-                return Err(e);
+                return Err(error);
             }
         };
 
-    let unhealthy_repos = run_diagnostics(context).await;
+    let report = run_diagnostics(context).await;
+    println!("\n{}\n", report.render(start_time.elapsed()));
     set_terminal_title_and_flush("✅ repos doctor");
-    if unhealthy_repos > 0 {
-        anyhow::bail!("{unhealthy_repos} repositories need attention");
+
+    let blocker_repos = report.blocker_repos();
+    if blocker_repos > 0 || report.nested_drift_count > 0 {
+        anyhow::bail!(
+            "doctor found {blocker_repos} blocker repositories and {} drifted nested package groups",
+            report.nested_drift_count
+        );
     }
     Ok(())
 }
 
-async fn run_diagnostics(context: crate::core::ProcessingContext) -> usize {
+async fn run_diagnostics(context: crate::core::ProcessingContext) -> DoctorReport {
+    use indicatif::{ProgressBar, ProgressStyle};
+
+    let progress = context
+        .multi_progress
+        .add(ProgressBar::new(context.total_repos as u64));
+    if let Ok(style) = ProgressStyle::default_bar().template("[{pos}/{len}] {msg}") {
+        progress.set_style(style);
+    }
+    progress.set_message("diagnosing...");
+
     let mut futures = FuturesUnordered::new();
-    let max_name_length = context.max_name_length;
-
-    for (repo_name, repo_path) in context.repositories.iter() {
+    for (repository, path) in context.repositories.iter() {
         let semaphore = std::sync::Arc::clone(&context.semaphore);
-
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore).await;
-            let (findings, advisories) = diagnose_repo(repo_path).await;
-            let symbol = if !findings.is_empty() || !advisories.is_empty() {
-                "🟡"
-            } else {
-                "🟢"
-            };
-            let message = if findings.is_empty() && advisories.is_empty() {
-                "healthy".to_string()
-            } else {
-                findings
-                    .iter()
-                    .chain(&advisories)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            };
-            println!(
-                "{symbol} {repo_name:width$}  {message}",
-                width = max_name_length
-            );
-            !findings.is_empty()
+            diagnose_repo(repository, path).await
         };
-
         futures.push(future);
     }
 
-    let mut unhealthy_repos = 0;
-    while let Some(unhealthy) = futures.next().await {
-        unhealthy_repos += usize::from(unhealthy);
+    let mut report = DoctorReport::default();
+    while let Some(diagnosis) = futures.next().await {
+        progress.set_message(format!(
+            "{} · {}",
+            diagnosis.repository,
+            diagnosis.progress_label()
+        ));
+        progress.inc(1);
+        report.repositories.push(diagnosis);
     }
+    progress.finish_and_clear();
+    report.repositories.sort_by(|left, right| {
+        left.repository
+            .cmp(&right.repository)
+            .then_with(|| left.path.cmp(&right.path))
+    });
 
-    let mut nested_drift = false;
-    if let Ok(statuses) = crate::subrepo::status::analyze_subrepos() {
-        if statuses.iter().any(|status| status.has_drift) {
-            nested_drift = true;
-            crate::subrepo::status::display_drift_summary(&statuses);
+    match crate::subrepo::status::analyze_subrepos_quiet() {
+        Ok(statuses) => {
+            report.nested_drift_count = statuses.iter().filter(|status| status.has_drift).count();
+            report.nested_drift_lines = crate::subrepo::status::format_drift_section(&statuses);
         }
+        Err(error) => report.global_advisories.push(DoctorFinding::new(
+            format!("nested package inspection failed: {error}"),
+            "run repos nested validate",
+        )),
     }
 
-    println!();
-    unhealthy_repos + usize::from(nested_drift)
+    report
 }
 
-async fn diagnose_repo(path: &std::path::Path) -> (Vec<String>, Vec<String>) {
-    let mut findings = Vec::new();
-    let mut advisories = Vec::new();
+async fn diagnose_repo(repository: &str, path: &std::path::Path) -> RepositoryDiagnosis {
+    let mut diagnosis = RepositoryDiagnosis::new(repository, path);
+    let display_path = diagnosis.path.clone();
 
     match run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
-        Ok((true, branch, _)) if branch == "HEAD" => findings.push("detached HEAD".to_string()),
+        Ok((true, branch, _)) if branch == "HEAD" => diagnosis.blockers.push(DoctorFinding::new(
+            "detached HEAD",
+            format!("git -C {} switch <branch>", shell_quote(&display_path)),
+        )),
         Ok((true, _, _)) => {}
-        Ok((false, _, stderr)) => findings.push(format!("branch check failed: {stderr}")),
-        Err(e) => findings.push(format!("branch check failed: {e}")),
+        Ok((false, _, stderr)) => diagnosis.blockers.push(DoctorFinding::new(
+            format!("branch check failed: {}", clean_error_message(&stderr)),
+            format!(
+                "git -C {} rev-parse --abbrev-ref HEAD",
+                shell_quote(&display_path)
+            ),
+        )),
+        Err(error) => diagnosis.blockers.push(DoctorFinding::new(
+            format!(
+                "branch check failed: {}",
+                clean_error_message(&error.to_string())
+            ),
+            "verify Git is installed and the repository is readable",
+        )),
     }
 
     let remotes = match run_git(path, &["remote"]).await {
         Ok((true, remotes, _)) if remotes.trim().is_empty() => {
-            findings.push("no remote".to_string());
+            diagnosis.blockers.push(DoctorFinding::new(
+                "no remote",
+                format!(
+                    "git -C {} remote add origin '<SSH clone URL>'",
+                    shell_quote(&display_path)
+                ),
+            ));
             Vec::new()
         }
-        Ok((true, remotes, _)) => remotes.lines().map(str::to_string).collect(),
+        Ok((true, remotes, _)) => remotes.lines().map(str::to_string).collect::<Vec<_>>(),
         Ok((false, _, stderr)) => {
-            findings.push(format!("remote check failed: {stderr}"));
+            diagnosis.blockers.push(DoctorFinding::new(
+                format!("remote check failed: {}", clean_error_message(&stderr)),
+                format!("git -C {} remote -v", shell_quote(&display_path)),
+            ));
             Vec::new()
         }
-        Err(e) => {
-            findings.push(format!("remote check failed: {e}"));
+        Err(error) => {
+            diagnosis.blockers.push(DoctorFinding::new(
+                format!(
+                    "remote check failed: {}",
+                    clean_error_message(&error.to_string())
+                ),
+                "verify Git is installed and the repository is readable",
+            ));
             Vec::new()
         }
     };
 
-    for remote in remotes {
-        let url_key = format!("remote.{remote}.url");
-        if let Ok((true, url, _)) = run_git(path, &["config", "--get", &url_key]).await {
-            if let Some(advisory) = transport_advisory(&remote, &url) {
-                advisories.push(advisory);
-            }
-        }
-
-        match remote_policy_violation(path, &remote, RemoteDirection::Fetch).await {
-            Ok(Some(violation)) => {
-                findings.push(violation.message());
-                continue;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                findings.push(format!("{remote} URL inspection failed: {error}"));
-                continue;
-            }
-        }
-
-        match run_git(path, &["ls-remote", "--heads", &remote]).await {
-            Ok((true, _, _)) => {}
-            Ok((false, _, stderr)) => findings.push(format!(
-                "{remote} access failed: {}",
-                clean_error_message(&stderr)
-            )),
-            Err(e) => findings.push(format!(
-                "{remote} access failed: {}",
-                clean_error_message(&e.to_string())
-            )),
-        }
+    for remote in &remotes {
+        diagnose_remote(path, &display_path, remote, &mut diagnosis).await;
     }
 
-    match run_git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await {
-        Ok((true, _, _)) => {}
-        Ok((false, _, _)) => findings.push("no upstream".to_string()),
-        Err(_) => findings.push("no upstream".to_string()),
+    if !remotes.is_empty() {
+        match run_git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await {
+            Ok((true, _, _)) => {}
+            Ok((false, _, _)) | Err(_) => diagnosis.blockers.push(DoctorFinding::new(
+                "no upstream",
+                "run repos push --auto-upstream",
+            )),
+        }
     }
 
     match run_git(path, &["status", "--porcelain"]).await {
@@ -173,40 +373,393 @@ async fn diagnose_repo(path: &std::path::Path) -> (Vec<String>, Vec<String>) {
                 .lines()
                 .any(|line| line.starts_with("UU") || line.starts_with("AA"))
             {
-                findings.push("conflicts".to_string());
+                diagnosis.blockers.push(DoctorFinding::new(
+                    "conflicts",
+                    format!("git -C {} status", shell_quote(&display_path)),
+                ));
             } else if !status.trim().is_empty() {
-                findings.push("dirty worktree".to_string());
+                diagnosis.blockers.push(DoctorFinding::new(
+                    "dirty worktree",
+                    format!("git -C {} status --short", shell_quote(&display_path)),
+                ));
             }
         }
-        Ok((false, _, stderr)) => findings.push(format!("status failed: {stderr}")),
-        Err(e) => findings.push(format!("status failed: {e}")),
+        Ok((false, _, stderr)) => diagnosis.blockers.push(DoctorFinding::new(
+            format!("status failed: {}", clean_error_message(&stderr)),
+            format!("git -C {} status", shell_quote(&display_path)),
+        )),
+        Err(error) => diagnosis.blockers.push(DoctorFinding::new(
+            format!("status failed: {}", clean_error_message(&error.to_string())),
+            format!("git -C {} status", shell_quote(&display_path)),
+        )),
     }
 
-    (findings, advisories)
+    diagnosis.finish()
 }
 
-fn transport_advisory(remote: &str, url: &str) -> Option<String> {
-    let url = url.trim().to_ascii_lowercase();
-    (url.starts_with("https://") || url.starts_with("http://")).then(|| {
+async fn diagnose_remote(
+    path: &std::path::Path,
+    display_path: &str,
+    remote: &str,
+    diagnosis: &mut RepositoryDiagnosis,
+) {
+    let fetch_urls = configured_urls(path, remote, RemoteDirection::Fetch).await;
+    let push_urls = configured_urls(path, remote, RemoteDirection::Push).await;
+    let explicit_push = push_urls.as_ref().is_ok_and(|urls| !urls.is_empty());
+
+    let fetch = inspect_direction(
+        path,
+        display_path,
+        remote,
+        RemoteDirection::Fetch,
+        diagnosis,
+    )
+    .await;
+    let push =
+        inspect_direction(path, display_path, remote, RemoteDirection::Push, diagnosis).await;
+
+    let mut fetch_advisory = false;
+    if let Ok(urls) = fetch_urls {
+        if !fetch.blocked {
+            if let Some(url) = urls
+                .iter()
+                .find(|url| RemoteTransport::from_url(url).is_http())
+            {
+                let context = context_from_url(remote, RemoteDirection::Fetch, url);
+                let scope = if explicit_push {
+                    "fetch"
+                } else {
+                    "fetch and inherited push"
+                };
+                diagnosis.advisories.push(http_advisory(
+                    display_path,
+                    context,
+                    scope,
+                    fetch
+                        .contexts
+                        .iter()
+                        .any(|context| context.transport.is_http()),
+                ));
+                fetch_advisory = true;
+            }
+        }
+    } else {
+        diagnosis.blockers.push(config_inspection_failure(
+            display_path,
+            remote,
+            RemoteDirection::Fetch,
+        ));
+    }
+
+    let mut push_advisory = fetch_advisory && !explicit_push;
+    if let Ok(urls) = push_urls {
+        if !push.blocked {
+            if let Some(url) = urls
+                .iter()
+                .find(|url| RemoteTransport::from_url(url).is_http())
+            {
+                diagnosis.advisories.push(http_advisory(
+                    display_path,
+                    context_from_url(remote, RemoteDirection::Push, url),
+                    "push",
+                    false,
+                ));
+                push_advisory = true;
+            }
+        }
+    } else {
+        diagnosis.blockers.push(config_inspection_failure(
+            display_path,
+            remote,
+            RemoteDirection::Push,
+        ));
+    }
+
+    let effective_fetch_http = fetch
+        .contexts
+        .iter()
+        .find(|context| context.transport.is_http());
+    if !fetch.blocked && !fetch_advisory {
+        if let Some(context) = effective_fetch_http {
+            diagnosis.advisories.push(http_advisory(
+                display_path,
+                context.clone(),
+                "effective fetch",
+                true,
+            ));
+        }
+    }
+    if !push.blocked && !push_advisory {
+        if let Some(context) = push
+            .contexts
+            .iter()
+            .find(|context| context.transport.is_http())
+        {
+            diagnosis.advisories.push(http_advisory(
+                display_path,
+                context.clone(),
+                "effective push",
+                false,
+            ));
+        }
+    }
+
+    if fetch.blocked || effective_fetch_http.is_some() || fetch.contexts.is_empty() {
+        return;
+    }
+
+    match run_git(path, &["ls-remote", "--heads", remote]).await {
+        Ok((true, _, _)) => {}
+        Ok((false, _, stderr)) => diagnosis.blockers.push(DoctorFinding::new(
+            format!("{remote} access failed: {}", clean_error_message(&stderr)),
+            format!(
+                "git -C {} ls-remote --heads {}",
+                shell_quote(display_path),
+                shell_quote(remote)
+            ),
+        )),
+        Err(error) => diagnosis.blockers.push(DoctorFinding::new(
+            format!(
+                "{remote} access failed: {}",
+                clean_error_message(&error.to_string())
+            ),
+            format!(
+                "git -C {} ls-remote --heads {}",
+                shell_quote(display_path),
+                shell_quote(remote)
+            ),
+        )),
+    }
+}
+
+async fn inspect_direction(
+    path: &std::path::Path,
+    display_path: &str,
+    remote: &str,
+    direction: RemoteDirection,
+    diagnosis: &mut RepositoryDiagnosis,
+) -> DirectionInspection {
+    let contexts = match inspect_remote(path, remote, direction).await {
+        Ok(contexts) => contexts,
+        Err(error) => {
+            diagnosis.blockers.push(DoctorFinding::new(
+                format!(
+                    "{remote} {} URL inspection failed: {}",
+                    direction.label(),
+                    clean_error_message(&error.to_string())
+                ),
+                remote_get_url_action(display_path, remote, direction),
+            ));
+            return DirectionInspection {
+                contexts: Vec::new(),
+                blocked: true,
+            };
+        }
+    };
+
+    match policy_violation(&contexts) {
+        Ok(Some(violation)) => {
+            let message = violation.message();
+            let next = GitFailure::from_policy(violation).next_action(display_path);
+            diagnosis.blockers.push(DoctorFinding::new(message, next));
+            DirectionInspection {
+                contexts,
+                blocked: true,
+            }
+        }
+        Ok(None) => DirectionInspection {
+            contexts,
+            blocked: false,
+        },
+        Err(error) => {
+            diagnosis.blockers.push(DoctorFinding::new(
+                format!("transport policy inspection failed: {error}"),
+                "git config --global repos.transportPolicy ssh-only",
+            ));
+            DirectionInspection {
+                contexts,
+                blocked: true,
+            }
+        }
+    }
+}
+
+async fn configured_urls(
+    path: &std::path::Path,
+    remote: &str,
+    direction: RemoteDirection,
+) -> std::result::Result<Vec<String>, ()> {
+    let suffix = if direction == RemoteDirection::Push {
+        "pushurl"
+    } else {
+        "url"
+    };
+    let key = format!("remote.{remote}.{suffix}");
+    match run_git(path, &["config", "--get-all", &key]).await {
+        Ok((true, urls, _)) => Ok(urls.lines().map(str::to_string).collect()),
+        Ok((false, _, stderr)) if stderr.trim().is_empty() => Ok(Vec::new()),
+        Ok((false, _, _)) | Err(_) => Err(()),
+    }
+}
+
+fn config_inspection_failure(
+    display_path: &str,
+    remote: &str,
+    direction: RemoteDirection,
+) -> DoctorFinding {
+    DoctorFinding::new(
         format!(
-            "warning: {remote} uses HTTP(S); SSH-only setup: git remote set-url {remote} <SSH clone URL>"
-        )
-    })
+            "{remote} configured {} URL inspection failed",
+            direction.label()
+        ),
+        remote_get_url_action(display_path, remote, direction),
+    )
+}
+
+fn remote_get_url_action(display_path: &str, remote: &str, direction: RemoteDirection) -> String {
+    let push_flag = if direction == RemoteDirection::Push {
+        " --push"
+    } else {
+        ""
+    };
+    format!(
+        "git -C {} remote get-url{push_flag} --all {}",
+        shell_quote(display_path),
+        shell_quote(remote)
+    )
+}
+
+fn http_advisory(
+    display_path: &str,
+    context: RemoteContext,
+    scope: &str,
+    access_probe_skipped: bool,
+) -> DoctorFinding {
+    let skipped = if access_probe_skipped {
+        "; access probe skipped"
+    } else {
+        ""
+    };
+    let message = format!(
+        "{} uses HTTP(S) for {scope}; convert to SSH to avoid credential prompts{skipped}",
+        context.remote
+    );
+    let next = GitFailure::from_policy(RemotePolicyViolation { context }).next_action(display_path);
+    DoctorFinding::new(message, next)
+}
+
+fn append_diagnosis_section<F>(
+    lines: &mut Vec<String>,
+    heading: &str,
+    color: &str,
+    diagnoses: &[RepositoryDiagnosis],
+    select: F,
+) where
+    F: Fn(&RepositoryDiagnosis) -> &[DoctorFinding],
+{
+    let mut matching = diagnoses
+        .iter()
+        .filter(|diagnosis| !select(diagnosis).is_empty())
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return;
+    }
+    matching.sort_by(|left, right| {
+        left.repository
+            .cmp(&right.repository)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ {heading}{RESET}"));
+    for diagnosis in matching {
+        lines.push(format!("  {color}!{RESET} {}", diagnosis.repository));
+        lines.push(format!("    {DIM}↳ path: {}{RESET}", diagnosis.path));
+        for finding in select(diagnosis) {
+            lines.push(format!("    {color}·{RESET} {}", finding.message));
+            lines.push(format!("      {DIM}↳ next: {}{RESET}", finding.next));
+        }
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::transport_advisory;
+    use super::*;
 
     #[test]
-    fn warns_for_http_remotes_without_echoing_the_url() {
-        let url = "https://token@example.com/team/repo.git";
-        let advisory = transport_advisory("origin", url).expect("HTTPS should produce a warning");
+    fn http_advisories_are_sanitized_and_actionable_for_both_directions() {
+        let fetch = http_advisory(
+            "./repo",
+            context_from_url(
+                "origin",
+                RemoteDirection::Fetch,
+                "https://token@github.com/team/repo.git?secret=hidden",
+            ),
+            "fetch and inherited push",
+            false,
+        );
+        let push = http_advisory(
+            "./repo",
+            context_from_url(
+                "origin",
+                RemoteDirection::Push,
+                "https://token@github.com/team/repo.git?secret=hidden",
+            ),
+            "push",
+            false,
+        );
 
-        assert!(advisory.contains("origin uses HTTP(S)"));
-        assert!(!advisory.contains("token"));
-        assert!(transport_advisory("origin", "git@example.com:team/repo.git").is_none());
-        assert!(transport_advisory("origin", "ssh://git@example.com/team/repo.git").is_none());
-        assert!(transport_advisory("origin", "/tmp/repo.git").is_none());
+        assert!(fetch.message.contains("origin uses HTTP(S)"));
+        assert!(fetch.next.contains("remote set-url 'origin'"));
+        assert!(!fetch.next.contains("--push"));
+        assert!(push.next.contains("remote set-url --push 'origin'"));
+        for output in [&fetch.message, &fetch.next, &push.message, &push.next] {
+            assert!(!output.contains("token"));
+            assert!(!output.contains("hidden"));
+        }
+    }
+
+    #[test]
+    fn doctor_report_separates_blockers_from_advisories() {
+        let report = DoctorReport {
+            repositories: vec![
+                RepositoryDiagnosis {
+                    repository: "zeta".to_string(),
+                    path: "./zeta".to_string(),
+                    blockers: vec![DoctorFinding::new("no upstream", "fix upstream")],
+                    advisories: Vec::new(),
+                },
+                RepositoryDiagnosis {
+                    repository: "alpha".to_string(),
+                    path: "./alpha".to_string(),
+                    blockers: Vec::new(),
+                    advisories: vec![DoctorFinding::new("uses HTTP(S)", "use SSH")],
+                },
+                RepositoryDiagnosis {
+                    repository: "healthy".to_string(),
+                    path: "./healthy".to_string(),
+                    blockers: Vec::new(),
+                    advisories: Vec::new(),
+                },
+            ],
+            ..DoctorReport::default()
+        };
+
+        let output = report.render(std::time::Duration::from_secs(2));
+
+        assert!(output.contains("Healthy         1"));
+        assert!(output.contains("Warnings        1"));
+        assert!(output.contains("Blockers        1"));
+        assert!(output.contains("Checked         3"));
+        assert!(output.contains("▌ Blockers"));
+        assert!(output.contains("path: ./zeta"));
+        assert!(output.contains("next: fix upstream"));
+        assert!(output.contains("▌ Advisories"));
+        assert!(output.contains("path: ./alpha"));
+        assert!(!output.contains("path: ./healthy"));
     }
 }

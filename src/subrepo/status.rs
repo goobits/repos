@@ -108,9 +108,15 @@ fn analyze_subrepos_from_report(report: super::ValidationReport) -> Vec<SubrepoS
 
 /// Display concise drift summary for use in repos push
 pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
-    for line in format_drift_summary_lines(statuses, true) {
+    for line in format_drift_section(statuses) {
         println!("{line}");
     }
+}
+
+/// Format nested drift with its own report section header.
+#[must_use]
+pub fn format_drift_section(statuses: &[SubrepoStatus]) -> Vec<String> {
+    format_drift_summary_lines(statuses, true)
 }
 
 /// Format nested drift as actionable work items for another report section.

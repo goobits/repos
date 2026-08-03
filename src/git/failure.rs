@@ -141,7 +141,16 @@ impl GitFailure {
                         );
                     }
 
-                    return format!("change remote {} to an SSH clone URL", remote.remote);
+                    let push_flag = if remote.direction == RemoteDirection::Push {
+                        " --push"
+                    } else {
+                        ""
+                    };
+                    return format!(
+                        "git -C {} remote set-url{push_flag} {} '<SSH clone URL>'",
+                        shell_quote(repo_path),
+                        shell_quote(&remote.remote)
+                    );
                 }
 
                 "inspect authentication and remote transport".to_string()
@@ -300,7 +309,7 @@ mod tests {
 
         assert_eq!(
             failure.next_action("./repo"),
-            "change remote upstream to an SSH clone URL"
+            "git -C './repo' remote set-url 'upstream' '<SSH clone URL>'"
         );
     }
 }

@@ -309,15 +309,18 @@ Checks:
 
 - Detached HEADs.
 - Missing remotes.
-- Access to every configured remote (`git ls-remote --heads`).
+- Effective fetch and push transport for every configured remote, including a separate `pushurl`.
+- Access to non-HTTP fetch remotes (`git ls-remote --heads`).
 - Missing upstream tracking.
 - Dirty worktrees.
 - Conflicts.
 - Nested repository drift.
 
-`doctor` is read-only and exits nonzero when it finds any blocker. Git
-terminal prompts are disabled, and HTTP(S) remotes produce a non-failing
-advisory under the default transport policy.
+`doctor` is read-only and exits nonzero when it finds a blocker. Its sorted
+final report separates healthy repositories, warnings, blockers, and nested
+drift; every warning/blocker includes a path and next action. HTTP(S) access
+checks are skipped under the default policy so credential helpers such as
+macOS Keychain are not invoked merely to diagnose the repository.
 
 To guarantee that fleet commands do not consult HTTP credential helpers such as
 macOS Keychain, enable SSH-only policy once:
@@ -327,10 +330,10 @@ git config --global repos.transportPolicy ssh-only
 repos doctor
 ```
 
-The policy checks effective fetch and push URLs, including a separate
-`pushurl`. It blocks HTTP(S) before access checks and reports the repository,
-sanitized remote identity, and an exact `git remote set-url` command for common
-Git hosts. Use `REPOS_TRANSPORT_POLICY=preserve` for a one-command exception.
+The policy blocks effective HTTP(S) fetch and push URLs before access checks
+and reports the repository, sanitized remote identity, and exact
+`git remote set-url` command. Use `REPOS_TRANSPORT_POLICY=preserve` for a
+one-command exception.
 
 ## Advanced
 

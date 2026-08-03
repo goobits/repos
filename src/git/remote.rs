@@ -158,19 +158,6 @@ fn resolve_transport_policy() -> std::result::Result<TransportPolicy, String> {
         .map_err(|error| error.to_string())
 }
 
-pub(crate) async fn remote_policy_violation(
-    path: &Path,
-    remote: &str,
-    direction: RemoteDirection,
-) -> Result<Option<RemotePolicyViolation>> {
-    if remote == "." {
-        return Ok(None);
-    }
-
-    let contexts = inspect_remote(path, remote, direction).await?;
-    policy_violation(&contexts)
-}
-
 pub(crate) async fn inspect_remote(
     path: &Path,
     remote: &str,
@@ -207,18 +194,25 @@ pub(crate) async fn inspect_remote(
 
     Ok(urls
         .lines()
-        .map(|url| {
-            let transport = RemoteTransport::from_url(url);
-            let (identity, ssh_url) = safe_remote_details(url, transport);
-            RemoteContext {
-                remote: remote.to_string(),
-                direction,
-                transport,
-                identity,
-                ssh_url,
-            }
-        })
+        .map(|url| context_from_url(remote, direction, url))
         .collect())
+}
+
+/// Builds a sanitized remote context without retaining credentials or query data.
+pub(crate) fn context_from_url(
+    remote: &str,
+    direction: RemoteDirection,
+    url: &str,
+) -> RemoteContext {
+    let transport = RemoteTransport::from_url(url);
+    let (identity, ssh_url) = safe_remote_details(url, transport);
+    RemoteContext {
+        remote: remote.to_string(),
+        direction,
+        transport,
+        identity,
+        ssh_url,
+    }
 }
 
 pub(crate) fn policy_violation(

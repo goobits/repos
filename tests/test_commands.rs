@@ -220,8 +220,103 @@ fn test_doctor_ssh_only_policy_uses_effective_instead_of_url() {
         doctor.status.success(),
         "advisory must not fail doctor: {stdout}"
     );
-    assert!(stdout.contains("warning: origin uses HTTP(S)"), "{stdout}");
+    assert!(stdout.contains("origin uses HTTP(S)"), "{stdout}");
     assert!(!stdout.contains("ssh-only policy blocked"), "{stdout}");
+}
+
+#[test]
+fn test_doctor_reports_http_pushurl_without_invoking_credentials() {
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    let helper_marker = repo.path().join("credential-helper-ran");
+    let git_config = IsolatedGitConfig::new(&format!(
+        "[credential]\n\thelper = !touch {}\n",
+        helper_marker.display()
+    ))
+    .expect("Failed to isolate Git config");
+    run_git_ok(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            "https://secret@github.com/goobits/keychain-test.git?token=hidden",
+        ],
+    );
+
+    let mut doctor_command = Command::new(env!("CARGO_BIN_EXE_repos"));
+    git_config.apply(&mut doctor_command);
+    let doctor = doctor_command
+        .arg("doctor")
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos doctor");
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+
+    assert!(
+        doctor.status.success(),
+        "HTTP push URL is advisory under preserve policy: {stdout}"
+    );
+    assert!(stdout.contains("origin uses HTTP(S) for push"), "{stdout}");
+    assert!(
+        stdout
+            .contains("remote set-url --push 'origin' 'git@github.com:goobits/keychain-test.git'"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("secret"), "{stdout}");
+    assert!(!stdout.contains("hidden"), "{stdout}");
+    assert!(
+        !helper_marker.exists(),
+        "doctor must not invoke a credential helper while inspecting a push URL"
+    );
+}
+
+#[test]
+fn test_doctor_ssh_only_policy_blocks_http_pushurl_with_exact_fix() {
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    let git_config = IsolatedGitConfig::new("").expect("Failed to isolate Git config");
+    run_git_ok(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            "https://github.com/goobits/keychain-test.git",
+        ],
+    );
+
+    let mut doctor_command = Command::new(env!("CARGO_BIN_EXE_repos"));
+    git_config.apply(&mut doctor_command);
+    let doctor = doctor_command
+        .arg("doctor")
+        .env("REPOS_TRANSPORT_POLICY", "ssh-only")
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos doctor");
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+
+    assert!(
+        !doctor.status.success(),
+        "SSH-only violation must fail doctor"
+    );
+    assert!(stdout.contains("ssh-only policy blocked push"), "{stdout}");
+    assert!(
+        stdout
+            .contains("remote set-url --push 'origin' 'git@github.com:goobits/keychain-test.git'"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("path:"), "{stdout}");
 }
 
 #[test]

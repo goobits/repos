@@ -121,9 +121,10 @@ to configure npm, Cargo, or PyPI credentials.
 repos doctor
 ```
 
-`doctor` checks detached HEADs, remote access, missing remotes/upstreams, dirty
-worktrees, conflicts, and nested drift. It exits nonzero when it finds a
-blocker.
+`doctor` checks detached HEADs, fetch and push URLs, remote access, missing
+remotes/upstreams, dirty worktrees, conflicts, and nested drift. Its final
+report separates warnings from blockers and gives an exact next action; HTTP
+access checks are skipped to avoid credential-helper prompts.
 
 ## FAQ
 
