@@ -41,6 +41,9 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 
     // Build parallel walker with optimizations
     let walker = WalkBuilder::new(search_path)
+        // Discovery is rooted at the requested directory. Ignore files above
+        // that boundary must not hide repositories below it.
+        .parents(false)
         .follow_links(true) // Follow symlinks to find symlinked repos
         .max_depth(Some(MAX_SCAN_DEPTH)) // Limit depth to avoid deep recursion
         .threads(

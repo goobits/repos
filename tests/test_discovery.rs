@@ -58,6 +58,40 @@ fn test_find_multiple_repos() {
 }
 
 #[test]
+fn test_ancestor_gitignore_does_not_hide_repositories_below_scan_root() {
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let ancestor = temp_dir.path().join("workspace");
+    let scan_root = ancestor.join("tools");
+    fs::create_dir_all(&scan_root).expect("Failed to create scan root");
+    setup_git_repo(&ancestor).expect("Failed to initialize ancestor repository");
+    fs::write(ancestor.join(".gitignore"), "/tools/*\n")
+        .expect("Failed to create ancestor .gitignore");
+
+    for name in ["codeatlas", "hif", "typemill.org"] {
+        let repo = scan_root.join(name);
+        fs::create_dir(&repo).expect("Failed to create child repository");
+        setup_git_repo(&repo).expect("Failed to initialize child repository");
+    }
+
+    let found = find_repos_from_path(&scan_root);
+    let names = found
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["codeatlas", "hif", "typemill.org"]);
+    assert!(
+        found.iter().all(|(_, path)| path.starts_with(&scan_root)),
+        "discovery must remain rooted below the requested directory"
+    );
+}
+
+#[test]
 fn test_find_repos_with_duplicate_names() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
