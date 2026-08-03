@@ -13,6 +13,7 @@ use crate::git::remote::{
     context_from_url, inspect_remote, policy_violation, RemoteContext, RemoteDirection,
     RemotePolicyViolation, RemoteTransport,
 };
+use crate::utils::compare_repository_locations;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 const RESET: &str = "\x1b[0m";
@@ -277,9 +278,7 @@ async fn run_diagnostics(context: crate::core::ProcessingContext) -> DoctorRepor
     }
     progress.finish_and_clear();
     report.repositories.sort_by(|left, right| {
-        left.repository
-            .cmp(&right.repository)
-            .then_with(|| left.path.cmp(&right.path))
+        compare_repository_locations(&left.path, &left.repository, &right.path, &right.repository)
     });
 
     match crate::subrepo::status::analyze_subrepos_quiet() {
@@ -665,9 +664,7 @@ fn append_diagnosis_section<F>(
         return;
     }
     matching.sort_by(|left, right| {
-        left.repository
-            .cmp(&right.repository)
-            .then_with(|| left.path.cmp(&right.path))
+        compare_repository_locations(&left.path, &left.repository, &right.path, &right.repository)
     });
 
     lines.push(String::new());

@@ -5,6 +5,7 @@ use crate::core::{
 };
 use crate::git::create_and_push_tag;
 use crate::package::PublishStatus;
+use crate::utils::compare_repository_locations;
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -90,9 +91,7 @@ impl PublishStatistics {
     fn generate_report(&self, duration: Duration) -> String {
         let mut outcomes = self.outcomes.iter().collect::<Vec<_>>();
         outcomes.sort_by(|left, right| {
-            left.package
-                .cmp(&right.package)
-                .then_with(|| left.path.cmp(&right.path))
+            compare_repository_locations(&left.path, &left.package, &right.path, &right.package)
         });
 
         let published = self.count(PublishOutcomeKind::Published);

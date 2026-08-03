@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crate::git::failure::GitFailure;
 use crate::git::Status;
+use crate::utils::compare_repository_locations;
 
 use super::stats::{
     clean_error_message, format_relative_repo_path, get_repo_changes, truncate_text,
@@ -195,9 +196,12 @@ impl SyncStatistics {
     ) -> String {
         let mut outcomes = self.batch_outcomes();
         outcomes.sort_by(|left, right| {
-            left.repository
-                .cmp(&right.repository)
-                .then_with(|| left.path.cmp(&right.path))
+            compare_repository_locations(
+                &left.path,
+                &left.repository,
+                &right.path,
+                &right.repository,
+            )
         });
         let counts = summarize(operation, &outcomes);
         let mut lines = vec![
@@ -547,7 +551,8 @@ fn clone_transfer_details(
         .lock()
         .map(|details| details.clone())
         .unwrap_or_default();
-    details.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    details
+        .sort_by(|left, right| compare_repository_locations(&left.1, &left.0, &right.1, &right.0));
     details
 }
 
@@ -581,10 +586,13 @@ fn append_sync_failures(
     pull_failures: &HashMap<(String, String), GitFailure>,
     push_failures: &HashMap<(String, String), GitFailure>,
 ) {
-    let failed = repositories
+    let mut failed = repositories
         .iter()
         .filter(|(_, repository)| sync_outcome(repository) == SyncOutcome::Failed)
         .collect::<Vec<_>>();
+    failed.sort_by(|left, right| {
+        compare_repository_locations(&left.1.path, left.0, &right.1.path, right.0)
+    });
     if failed.is_empty() {
         return;
     }
@@ -637,10 +645,13 @@ fn append_sync_failures(
 }
 
 fn append_sync_skips(lines: &mut Vec<String>, repositories: &BTreeMap<String, SyncRepository>) {
-    let skipped = repositories
+    let mut skipped = repositories
         .iter()
         .filter(|(_, repository)| sync_outcome(repository) == SyncOutcome::Skipped)
         .collect::<Vec<_>>();
+    skipped.sort_by(|left, right| {
+        compare_repository_locations(&left.1.path, left.0, &right.1.path, right.0)
+    });
     if skipped.is_empty() {
         return;
     }
@@ -715,7 +726,7 @@ fn sync_local_changes(
     pull: &SyncStatistics,
     push: &SyncStatistics,
     repositories: &BTreeMap<String, SyncRepository>,
-) -> BTreeMap<String, String> {
+) -> Vec<(String, String)> {
     let mut local = BTreeMap::new();
     for statistics in [pull, push] {
         if let Ok(changes) = statistics.uncommitted_repos.lock() {
@@ -732,12 +743,14 @@ fn sync_local_changes(
             }
         }
     }
+    let mut local = local.into_iter().collect::<Vec<_>>();
+    local.sort_by(|left, right| compare_repository_locations(&left.1, &left.0, &right.1, &right.0));
     local
 }
 
 fn append_sync_follow_up(
     lines: &mut Vec<String>,
-    local_changes: &BTreeMap<String, String>,
+    local_changes: &[(String, String)],
     show_changes: bool,
     drift_lines: &[String],
 ) {
@@ -895,6 +908,35 @@ mod tests {
     }
 
     #[test]
+    fn batch_report_groups_results_by_project_path() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "a-package",
+            "./zeta/packages/a",
+            &Status::StagingError,
+            "failed",
+            false,
+        );
+        stats.update(
+            "z-package",
+            "./alpha/packages/z",
+            &Status::StagingError,
+            "failed",
+            false,
+        );
+
+        let report = stats.generate_batch_report(BatchOperation::Stage, Duration::ZERO);
+
+        let alpha = report
+            .find("path: ./alpha/packages/z")
+            .expect("alpha project should be reported");
+        let zeta = report
+            .find("path: ./zeta/packages/a")
+            .expect("zeta project should be reported");
+        assert!(alpha < zeta, "{report}");
+    }
+
+    #[test]
     fn sync_report_combines_both_phases_into_exclusive_repo_outcomes() {
         let pull = SyncStatistics::new();
         pull.update("current", "./current", &Status::Synced, "up to date", true);
@@ -970,5 +1012,93 @@ mod tests {
         assert!(report.contains("path: ./missing"));
         assert!(report.contains("Follow-up       1"));
         assert!(report.contains("uncommitted changes"));
+    }
+
+    #[test]
+    fn sync_report_groups_each_repository_section_by_project_path() {
+        let pull = SyncStatistics::new();
+        for (name, path, status, message, has_uncommitted) in [
+            (
+                "a-pulled",
+                "./zeta/apps/pulled",
+                Status::Pulled,
+                "1 commit pulled",
+                false,
+            ),
+            (
+                "z-pulled",
+                "./alpha/apps/pulled",
+                Status::Pulled,
+                "1 commit pulled",
+                false,
+            ),
+            (
+                "a-failed",
+                "./zeta/packages/failed",
+                Status::PullError,
+                "network unavailable",
+                false,
+            ),
+            (
+                "z-failed",
+                "./alpha/packages/failed",
+                Status::PullError,
+                "network unavailable",
+                false,
+            ),
+            (
+                "a-skipped",
+                "./zeta/packages/skipped",
+                Status::NoRemote,
+                "no remote",
+                false,
+            ),
+            (
+                "z-skipped",
+                "./alpha/packages/skipped",
+                Status::NoRemote,
+                "no remote",
+                false,
+            ),
+            (
+                "a-follow-up",
+                "./zeta/packages/follow-up",
+                Status::Synced,
+                "up to date",
+                true,
+            ),
+            (
+                "z-follow-up",
+                "./alpha/packages/follow-up",
+                Status::Synced,
+                "up to date",
+                true,
+            ),
+        ] {
+            pull.update(name, path, &status, message, has_uncommitted);
+        }
+        let push = SyncStatistics::new();
+
+        let report = generate_sync_report(&pull, &push, Duration::ZERO, 8, false, 0, &[]);
+
+        for suffix in [
+            "apps/pulled",
+            "packages/failed",
+            "packages/skipped",
+            "packages/follow-up",
+        ] {
+            let alpha = format!("path: ./alpha/{suffix}");
+            let zeta = format!("path: ./zeta/{suffix}");
+            let alpha_index = report
+                .find(&alpha)
+                .unwrap_or_else(|| panic!("missing {alpha} in report"));
+            let zeta_index = report
+                .find(&zeta)
+                .unwrap_or_else(|| panic!("missing {zeta} in report"));
+            assert!(
+                alpha_index < zeta_index,
+                "expected {alpha} before {zeta}\n{report}"
+            );
+        }
     }
 }

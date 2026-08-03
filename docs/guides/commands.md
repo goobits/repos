@@ -20,6 +20,10 @@ Safety model:
 - branch publishing uses `--auto-upstream`, not overloaded force wording.
 - mutating daily workflows expose `--dry-run` where practical.
 
+Repository-oriented report sections are sorted by path, keeping a top-level
+project and its nested packages together. Nested package drift stays
+package-first so copies of the same package remain easy to compare.
+
 ## Overview
 
 ```text

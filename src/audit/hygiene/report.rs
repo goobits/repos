@@ -1,7 +1,7 @@
 //! Hygiene reporting and statistics
 
 use crate::core::config::PATH_DISPLAY_WIDTH;
-use crate::utils::shorten_path;
+use crate::utils::{compare_repository_locations, shorten_path};
 use std::time::Duration;
 
 /// Status for hygiene check results
@@ -81,11 +81,14 @@ impl HygieneStatistics {
     #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
         let mut failed_repos = self.failed_repos.clone();
-        failed_repos.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        failed_repos.sort_by(|left, right| {
+            compare_repository_locations(&left.1, &left.0, &right.1, &right.0)
+        });
 
         let mut violation_repos = self.violation_repos.clone();
-        violation_repos
-            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        violation_repos.sort_by(|left, right| {
+            compare_repository_locations(&left.1, &left.0, &right.1, &right.0)
+        });
 
         serde_json::json!({
             "clean_repos": self.clean_repos,
@@ -173,15 +176,20 @@ impl HygieneStatistics {
     #[must_use]
     pub fn generate_detailed_summary(&self) -> String {
         let mut lines = Vec::new();
+        let mut violation_repos = self.violation_repos.iter().collect::<Vec<_>>();
+        violation_repos.sort_by(|left, right| {
+            compare_repository_locations(&left.1, &left.0, &right.1, &right.0)
+        });
+        let mut failed_repos = self.failed_repos.iter().collect::<Vec<_>>();
+        failed_repos.sort_by(|left, right| {
+            compare_repository_locations(&left.1, &left.0, &right.1, &right.0)
+        });
 
         // Repos with violations get priority
-        if !self.violation_repos.is_empty() {
-            lines.push(format!(
-                "🟡 HYGIENE VIOLATIONS ({})",
-                self.violation_repos.len()
-            ));
-            for (i, (repo_name, repo_path, violations)) in self.violation_repos.iter().enumerate() {
-                let tree_char = if i == self.violation_repos.len() - 1 {
+        if !violation_repos.is_empty() {
+            lines.push(format!("🟡 HYGIENE VIOLATIONS ({})", violation_repos.len()));
+            for (i, (repo_name, repo_path, violations)) in violation_repos.iter().enumerate() {
+                let tree_char = if i == violation_repos.len() - 1 {
                     "└─"
                 } else {
                     "├─"
@@ -211,13 +219,10 @@ impl HygieneStatistics {
         }
 
         // Failed repos
-        if !self.failed_repos.is_empty() {
-            lines.push(format!(
-                "🟠 FAILED HYGIENE SCANS ({})",
-                self.failed_repos.len()
-            ));
-            for (i, (repo_name, repo_path, error)) in self.failed_repos.iter().enumerate() {
-                let tree_char = if i == self.failed_repos.len() - 1 {
+        if !failed_repos.is_empty() {
+            lines.push(format!("🟠 FAILED HYGIENE SCANS ({})", failed_repos.len()));
+            for (i, (repo_name, repo_path, error)) in failed_repos.iter().enumerate() {
+                let tree_char = if i == failed_repos.len() - 1 {
                     "└─"
                 } else {
                     "├─"

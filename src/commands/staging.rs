@@ -18,6 +18,7 @@ use crate::git::{
     commit_changes, get_staging_status, has_staged_changes, is_detached_head, stage_files,
     unstage_files, Status,
 };
+use crate::utils::compare_repository_locations;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 const STAGING_MESSAGE: &str = "staging...";
@@ -517,9 +518,7 @@ fn generate_status_report(
 ) -> String {
     let mut entries = entries.iter().collect::<Vec<_>>();
     entries.sort_by(|left, right| {
-        left.repository
-            .cmp(&right.repository)
-            .then_with(|| left.path.cmp(&right.path))
+        compare_repository_locations(&left.path, &left.repository, &right.path, &right.repository)
     });
 
     let healthy = entries

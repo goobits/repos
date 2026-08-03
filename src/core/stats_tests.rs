@@ -8,6 +8,42 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
+    fn record_reversed_project_pair(
+        stats: &SyncStatistics,
+        label: &str,
+        suffix: &str,
+        status: Status,
+        message: &str,
+        has_uncommitted: bool,
+    ) {
+        for (name_prefix, project) in [("a", "zeta"), ("z", "alpha")] {
+            stats.update(
+                &format!("{name_prefix}-{label}"),
+                &format!("./{project}/{suffix}"),
+                &status,
+                message,
+                has_uncommitted,
+            );
+        }
+    }
+
+    fn assert_projects_are_grouped(report: &str, suffixes: &[&str]) {
+        for suffix in suffixes {
+            let alpha = format!("path: ./alpha/{suffix}");
+            let zeta = format!("path: ./zeta/{suffix}");
+            let alpha_index = report
+                .find(&alpha)
+                .unwrap_or_else(|| panic!("missing {alpha} in report"));
+            let zeta_index = report
+                .find(&zeta)
+                .unwrap_or_else(|| panic!("missing {zeta} in report"));
+            assert!(
+                alpha_index < zeta_index,
+                "expected {alpha} before {zeta}\n{report}"
+            );
+        }
+    }
+
     #[test]
     fn test_sync_statistics_initialization() {
         let stats = SyncStatistics::new();
@@ -409,6 +445,54 @@ mod tests {
         assert_eq!(report.matches("uncommitted changes").count(), 2);
         assert!(report.contains("repos"));
         assert!(report.contains("docs"));
+    }
+
+    #[test]
+    fn test_transfer_report_groups_each_section_by_project_path() {
+        let stats = SyncStatistics::new();
+        record_reversed_project_pair(
+            &stats,
+            "pushed",
+            "apps/pushed",
+            Status::Pushed,
+            "1 commit pushed",
+            false,
+        );
+        record_reversed_project_pair(
+            &stats,
+            "failed",
+            "packages/failed",
+            Status::Error,
+            "authentication failed",
+            false,
+        );
+        record_reversed_project_pair(
+            &stats,
+            "skipped",
+            "packages/skipped",
+            Status::NoRemote,
+            "no remote",
+            false,
+        );
+        record_reversed_project_pair(
+            &stats,
+            "follow-up",
+            "packages/follow-up",
+            Status::Synced,
+            "up to date",
+            true,
+        );
+
+        let report = stats.generate_push_report(Duration::ZERO, false);
+        assert_projects_are_grouped(
+            &report,
+            &[
+                "apps/pushed",
+                "packages/failed",
+                "packages/skipped",
+                "packages/follow-up",
+            ],
+        );
     }
 
     #[test]

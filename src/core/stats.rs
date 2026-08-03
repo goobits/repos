@@ -6,6 +6,7 @@ use crate::core::config::{
 };
 use crate::git::failure::GitFailure;
 use crate::git::Status;
+use crate::utils::compare_repository_locations;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -417,13 +418,19 @@ impl SyncStatistics {
         let mut outcomes = clone_vec(&self.operation_outcomes, "operation_outcomes");
         let git_failures = clone_failure_map(&self.git_failures);
 
-        transferred_details
-            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-        failed_repos.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        transferred_details.sort_by(|left, right| {
+            compare_repository_locations(&left.1, &left.0, &right.1, &right.0)
+        });
+        failed_repos.sort_by(|left, right| {
+            compare_repository_locations(&left.1, &left.0, &right.1, &right.0)
+        });
         outcomes.sort_by(|left, right| {
-            left.repository
-                .cmp(&right.repository)
-                .then_with(|| left.path.cmp(&right.path))
+            compare_repository_locations(
+                &left.path,
+                &left.repository,
+                &right.path,
+                &right.repository,
+            )
         });
         let skipped_outcomes = outcomes
             .iter()

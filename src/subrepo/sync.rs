@@ -2,6 +2,7 @@
 
 use super::{SubrepoInstance, ValidationReport};
 use crate::core::{clean_error_message, format_relative_repo_path, truncate_text};
+use crate::utils::compare_repository_locations;
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
@@ -72,9 +73,7 @@ impl NestedOutcome {
 fn generate_operation_report(operation: NestedOperation, outcomes: &[NestedOutcome]) -> String {
     let mut outcomes = outcomes.iter().collect::<Vec<_>>();
     outcomes.sort_by(|left, right| {
-        left.repository
-            .cmp(&right.repository)
-            .then_with(|| left.path.cmp(&right.path))
+        compare_repository_locations(&left.path, &left.repository, &right.path, &right.repository)
     });
     let count = |kind| {
         outcomes

@@ -1,5 +1,22 @@
 //! File system utilities
 
+use std::cmp::Ordering;
+use std::path::Path;
+
+/// Orders repository results by their location, using the display name only as
+/// a deterministic tie-breaker.
+pub(crate) fn compare_repository_locations(
+    left_path: impl AsRef<Path>,
+    left_repository: &str,
+    right_path: impl AsRef<Path>,
+    right_repository: &str,
+) -> Ordering {
+    left_path
+        .as_ref()
+        .cmp(right_path.as_ref())
+        .then_with(|| left_repository.cmp(right_repository))
+}
+
 /// Shortens long paths for display
 #[must_use]
 pub fn shorten_path(path: &str, max_length: usize) -> String {
