@@ -47,6 +47,11 @@ mod tests {
             .lock()
             .expect("Failed to lock skipped_reasons mutex in test")
             .is_empty());
+        assert!(stats
+            .operation_outcomes
+            .lock()
+            .expect("Failed to lock operation_outcomes mutex in test")
+            .is_empty());
     }
 
     #[test]

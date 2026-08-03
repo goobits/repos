@@ -9,7 +9,8 @@ use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::core::{
     acquire_semaphore_permit, clean_error_message, create_processing_context, init_command,
-    set_terminal_title, set_terminal_title_and_flush, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
+    set_terminal_title, set_terminal_title_and_flush, BatchOperation, GIT_CONCURRENT_CAP,
+    NO_REPOS_MESSAGE,
 };
 use crate::git::{
     commit_changes, fetch_and_analyze, get_staging_status, has_staged_changes, is_detached_head,
@@ -77,6 +78,8 @@ async fn process_save_repositories(
 ) -> Result<()> {
     use crate::core::{acquire_stats_lock, create_progress_bar};
 
+    let operation = BatchOperation::Save { dry_run };
+
     let mut progress_bars = Vec::new();
     for (repo_name, _) in context.repositories.iter() {
         let progress_bar =
@@ -87,7 +90,9 @@ async fn process_save_repositories(
 
     let _separator_pb = crate::core::create_separator_progress_bar(&context.multi_progress);
     let footer_pb = crate::core::create_footer_progress_bar(&context.multi_progress);
-    footer_pb.set_message("💾 0 Saved  🟢 0 Synced  🔴 0 Failed  🟠 0 Skipped".to_string());
+    let initial_stats = crate::core::SyncStatistics::new();
+    footer_pb
+        .set_message(initial_stats.generate_batch_live_summary(operation, context.total_repos));
     let _separator_pb2 = crate::core::create_separator_progress_bar(&context.multi_progress);
 
     let max_name_length = context.max_name_length;
@@ -130,7 +135,7 @@ async fn process_save_repositories(
                 &message,
                 has_uncommitted,
             );
-            footer.set_message(stats_guard.generate_summary(total_repos, start_time.elapsed()));
+            footer.set_message(stats_guard.generate_batch_live_summary(operation, total_repos));
         };
 
         futures.push(future);
@@ -141,13 +146,10 @@ async fn process_save_repositories(
     footer_pb.finish();
 
     let final_stats = acquire_stats_lock(&context.statistics);
-    let detailed_summary = final_stats.generate_detailed_summary(false);
-    if !detailed_summary.is_empty() {
-        println!("\n{}", "━".repeat(70));
-        println!("{detailed_summary}");
-        println!("{}", "━".repeat(70));
-    }
-    println!();
+    println!(
+        "\n{}\n",
+        final_stats.generate_batch_report(operation, start_time.elapsed())
+    );
 
     let error_count = final_stats
         .error_repos

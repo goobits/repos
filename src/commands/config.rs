@@ -9,7 +9,8 @@ use std::path::PathBuf;
 
 use crate::core::{
     create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    ProcessingContext, CONFIG_SYNCING_MESSAGE, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
+    BatchOperation, ProcessingContext, CONFIG_SYNCING_MESSAGE, GIT_CONCURRENT_CAP,
+    NO_REPOS_MESSAGE,
 };
 use crate::git::{
     check_repo_config, get_current_user_config, get_global_user_config, validate_user_config,
@@ -302,6 +303,9 @@ async fn process_config_repositories(
     use futures::stream::{FuturesUnordered, StreamExt};
 
     let mut futures = FuturesUnordered::new();
+    let operation = BatchOperation::Config {
+        dry_run: matches!(command, ConfigCommand::DryRun(_)),
+    };
 
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
@@ -320,8 +324,7 @@ async fn process_config_repositories(
 
     // Initial footer display
     let initial_stats = crate::core::SyncStatistics::new();
-    let initial_summary =
-        initial_stats.generate_summary(context.total_repos, context.start_time.elapsed());
+    let initial_summary = initial_stats.generate_batch_live_summary(operation, context.total_repos);
     footer_pb.set_message(initial_summary);
 
     // Add another blank line after the footer
@@ -379,8 +382,7 @@ async fn process_config_repositories(
             stats_guard.update(repo_name, &repo_path_str, &status, &message, false);
 
             // Update the footer summary after each repository completes
-            let duration = start_time.elapsed();
-            let summary = stats_guard.generate_summary(total_repos, duration);
+            let summary = stats_guard.generate_batch_live_summary(operation, total_repos);
             footer_clone.set_message(summary);
         };
 
@@ -393,17 +395,11 @@ async fn process_config_repositories(
     // Finish the footer progress bar
     footer_pb.finish();
 
-    // Print the final detailed summary if there are any issues to report
     let final_stats = acquire_stats_lock(&context.statistics);
-    let detailed_summary = final_stats.generate_detailed_summary(false);
-    if !detailed_summary.is_empty() {
-        println!("\n{}", "━".repeat(70));
-        println!("{detailed_summary}");
-        println!("{}", "━".repeat(70));
-    }
-
-    // Add final spacing
-    println!();
+    println!(
+        "\n{}\n",
+        final_stats.generate_batch_report(operation, start_time.elapsed())
+    );
 
     let error_count = final_stats
         .error_repos

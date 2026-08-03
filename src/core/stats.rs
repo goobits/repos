@@ -1,5 +1,6 @@
 //! Statistics tracking for repository operations
 
+use super::report::RepositoryOutcome;
 use crate::core::config::{
     ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, TIMEOUT_SECONDS_DISPLAY,
 };
@@ -11,13 +12,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-const RESET: &str = "\x1b[0m";
-const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
-const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
-const GREEN: &str = "\x1b[1;38;5;114m";
-const YELLOW: &str = "\x1b[1;38;5;221m";
-const RED: &str = "\x1b[1;38;5;203m";
-const DIM: &str = "\x1b[2m";
+pub(super) const RESET: &str = "\x1b[0m";
+pub(super) const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
+pub(super) const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+pub(super) const GREEN: &str = "\x1b[1;38;5;114m";
+pub(super) const YELLOW: &str = "\x1b[1;38;5;221m";
+pub(super) const RED: &str = "\x1b[1;38;5;203m";
+pub(super) const DIM: &str = "\x1b[2m";
 
 #[derive(Clone, Copy)]
 enum Transfer {
@@ -85,6 +86,7 @@ pub struct SyncStatistics {
     pub pushed_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
     pub pulled_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
     pub skipped_reasons: Mutex<Vec<String>>,
+    pub(crate) operation_outcomes: Mutex<Vec<RepositoryOutcome>>,
     pub(crate) git_failures: Mutex<HashMap<(String, String), GitFailure>>,
 }
 
@@ -114,6 +116,7 @@ impl SyncStatistics {
             pushed_repo_details: Mutex::new(Vec::new()),
             pulled_repo_details: Mutex::new(Vec::new()),
             skipped_reasons: Mutex::new(Vec::new()),
+            operation_outcomes: Mutex::new(Vec::new()),
             git_failures: Mutex::new(HashMap::new()),
         }
     }
@@ -127,6 +130,17 @@ impl SyncStatistics {
         message: &str,
         has_uncommitted: bool,
     ) {
+        if let Ok(mut outcomes) = self.operation_outcomes.lock() {
+            outcomes.push(RepositoryOutcome {
+                repository: repo_name.to_string(),
+                path: repo_path.to_string(),
+                status: *status,
+                message: message.to_string(),
+            });
+        } else {
+            eprintln!("Warning: Failed to record operation result for repo: {repo_name}");
+        }
+
         match status {
             Status::Pushed => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);

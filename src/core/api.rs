@@ -20,6 +20,7 @@ pub use super::progress::{
     create_generic_processing_context, create_processing_context, GenericProcessingContext,
     ProcessingContext,
 };
+pub(crate) use super::report::BatchOperation;
 pub use super::stats::SyncStatistics;
 
 /// Searches for Git repositories from a specific path.
