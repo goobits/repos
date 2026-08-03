@@ -70,6 +70,7 @@ Example drift summary:
 ```bash
 repos stage "*.md"
 repos commit "Update docs"
+repos fetch
 repos push
 repos pull --rebase
 ```

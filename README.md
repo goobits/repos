@@ -32,7 +32,7 @@ git config --global repos.transportPolicy ssh-only
 
 - **Humane Daily Workflow** - `status`, `save`, and `sync` map to developer intent
 - **Safe Defaults** - `save` stages tracked changes only; untracked files require opt-in
-- **Batch Operations** - Push, pull, commit, stage across all repositories concurrently
+- **Batch Operations** - Fetch, push, pull, commit, and stage across repositories concurrently
 - **Git LFS Support** - Automatic detection and handling of Large File Storage in push/pull operations
 - **Nested Drift Detection** - Track and sync nested repos at different commits
 - **Package Publishing** - Publish to npm/Cargo/PyPI with visibility filtering
@@ -48,6 +48,7 @@ repos save "Update docs"        # Stage tracked changes, commit, push
 repos sync                      # Pull safe changes, push commits, report drift
 
 # Git Control
+repos fetch                     # Refresh remote refs; do not change branches
 repos push                      # Push only + drift check
 repos push --auto-upstream      # Set upstream for new branches
 repos pull --rebase             # Pull only with rebase
@@ -76,7 +77,7 @@ repos config --from-global      # Copy from global config
 
 ## Commands
 
-`repos status` • `repos save` • `repos sync` • `repos push` • `repos pull` • `repos stage` • `repos unstage` • `repos commit` • `repos publish` • `repos audit` • `repos doctor` • `repos nested` • `repos config`
+`repos status` • `repos save` • `repos sync` • `repos fetch` • `repos push` • `repos pull` • `repos stage` • `repos unstage` • `repos commit` • `repos publish` • `repos audit` • `repos doctor` • `repos nested` • `repos config`
 
 See [Commands Reference](docs/guides/commands.md) for complete flag documentation.
 
@@ -88,6 +89,7 @@ See [Commands Reference](docs/guides/commands.md) for complete flag documentatio
 - Use `repos save "message" --include-untracked` when you intentionally want new files.
 - Use `repos save "message" --dry-run` to preview the save plan.
 - `repos sync` pulls safe remote changes, pushes local commits, and skips dirty repositories instead of stashing or overwriting local work.
+- `repos fetch` updates remote-tracking refs from every configured remote without changing local branches or worktrees.
 - `repos push --auto-upstream` replaces the old “force” wording for publishing new branches.
 - SSH-only policy blocks HTTP(S) before Git can consult a credential helper and reports the repository, effective remote, and exact SSH fix for common hosts.
 

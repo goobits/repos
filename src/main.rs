@@ -18,7 +18,7 @@ use goobits_repos::commands::staging::{
     handle_unstage_command, StatusFilters,
 };
 use goobits_repos::commands::sync::{
-    handle_pull_command, handle_push_command, handle_sync_command,
+    handle_fetch_command, handle_pull_command, handle_push_command, handle_sync_command,
 };
 use goobits_repos::git::ConfigArgs;
 use goobits_repos::subrepo;
@@ -56,6 +56,18 @@ enum Commands {
         /// Skip nested repository drift check
         #[arg(long)]
         no_drift_check: bool,
+        /// Number of concurrent operations (advanced)
+        #[arg(long, short = 'j', conflicts_with = "sequential", hide = true)]
+        jobs: Option<usize>,
+        /// Run one operation at a time (advanced)
+        #[arg(long, hide = true)]
+        sequential: bool,
+    },
+    /// Fetch remote references without changing local branches or worktrees
+    Fetch {
+        /// Show detailed progress for all repositories
+        #[arg(long, short)]
+        verbose: bool,
         /// Number of concurrent operations (advanced)
         #[arg(long, short = 'j', conflicts_with = "sequential", hide = true)]
         jobs: Option<usize>,
@@ -332,6 +344,11 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Some(Commands::Fetch {
+            verbose,
+            jobs,
+            sequential,
+        }) => handle_fetch_command(*verbose, *jobs, *sequential).await,
         Some(Commands::Push {
             auto_upstream,
             verbose,

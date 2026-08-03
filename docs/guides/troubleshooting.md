@@ -62,6 +62,7 @@ Common issues and solutions for the repos tool.
 
 | Error | Cause | Solution |
 |-------|-------|----------|
+| `No git repositories found` even though child folders are repos | An older `repos` release inherited a `.gitignore` from above the scan directory | Update `repos`; discovery is rooted at the current directory and ignores ancestor ignore files |
 | `push failed: no upstream branch` | Upstream branch not configured | Use `repos push --auto-upstream` |
 | `push rejected: non-fast-forward` | Remote has commits not in local | Use `repos sync` or resolve the branch manually |
 | `Could not read from remote repository` | The configured SSH key is missing or unauthorized | Test the configured URL with `git ls-remote <url>`, then install/authorize the correct key |
@@ -124,6 +125,7 @@ git tag                    # List all tags
 ### Common Diagnostic Commands
 ```bash
 repos status               # Check status of all repos
+repos fetch                # Refresh remote refs without changing local branches
 repos status --failed      # Show repositories whose status inspection failed
 repos doctor               # Probe remotes, upstreams, worktrees, and nested drift
 git config --list          # View git configuration

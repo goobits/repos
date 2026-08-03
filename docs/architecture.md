@@ -11,7 +11,7 @@ src/
 ├── main.rs                 CLI arguments and command dispatch
 ├── lib.rs                  Library boundary
 ├── commands/               User-facing workflows
-│   ├── sync.rs             Push, pull, and two-way sync orchestration
+│   ├── sync.rs             Fetch, push, pull, and two-way sync orchestration
 │   ├── save.rs             Stage, commit, and push workflow
 │   ├── staging.rs          Stage, unstage, commit, and status commands
 │   ├── config.rs           Git identity synchronization
@@ -47,7 +47,9 @@ versa.
 
 `core::discovery` uses `ignore::WalkBuilder` with a parallel walker. It follows
 directory symlinks, skips dependency/build directories and `.git` internals,
-and limits traversal depth.
+and limits traversal depth. Ignore files above the requested scan root are not
+consulted, so an ancestor repository cannot hide repositories below the current
+directory.
 
 Discovered paths are deduplicated and sorted before names are assigned. When
 multiple paths have the same directory name, the lexically first path owns the
@@ -89,6 +91,8 @@ write permit -> push or pull -> record result -> release write permit
 ```
 
 Fetches may use up to twice the configured Git concurrency, capped at 24.
+The standalone `repos fetch` command uses the common Git concurrency limit,
+updates every configured remote, and never changes a local branch or worktree.
 Secret scanning is limited to one repository and hygiene scanning to three.
 
 ## Safety Boundaries

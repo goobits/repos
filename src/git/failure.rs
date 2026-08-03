@@ -1,6 +1,6 @@
 //! Structured Git operation failures and actionable remediation.
 
-use super::remote::{RemoteContext, RemoteDirection, RemotePolicyViolation};
+use super::remote::{RemoteContext, RemoteDirection, RemotePolicyViolation, RemoteTransport};
 use super::status::Status;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +17,7 @@ pub(crate) enum GitFailureKind {
 pub(crate) enum GitOperationPhase {
     Fetch,
     LfsPush,
+    Pull,
     Push,
     RemoteInspection,
 }
@@ -26,6 +27,7 @@ impl GitOperationPhase {
         match self {
             Self::Fetch => "fetch",
             Self::LfsPush => "LFS push",
+            Self::Pull => "pull",
             Self::Push => "push",
             Self::RemoteInspection => "remote inspection",
         }
@@ -125,42 +127,49 @@ impl GitFailure {
 
     pub(crate) fn next_action(&self, repo_path: &str) -> String {
         match self.kind {
-            GitFailureKind::Authentication | GitFailureKind::TransportPolicy => {
-                if let Some(remote) = &self.remote {
-                    if let Some(ssh_url) = &remote.ssh_url {
-                        let push_flag = if remote.direction == RemoteDirection::Push {
-                            " --push"
-                        } else {
-                            ""
-                        };
-                        return format!(
-                            "git -C {} remote set-url{push_flag} {} {}",
-                            shell_quote(repo_path),
-                            shell_quote(&remote.remote),
-                            shell_quote(ssh_url)
-                        );
-                    }
-
-                    let push_flag = if remote.direction == RemoteDirection::Push {
-                        " --push"
+            GitFailureKind::TransportPolicy => self.remote.as_ref().map_or_else(
+                || "inspect the remote transport".to_string(),
+                |remote| ssh_remote_fix(repo_path, remote),
+            ),
+            GitFailureKind::Authentication => self.remote.as_ref().map_or_else(
+                || "inspect authentication and remote access".to_string(),
+                |remote| {
+                    if remote.transport.is_http() {
+                        ssh_remote_fix(repo_path, remote)
+                    } else if remote.transport == RemoteTransport::Ssh {
+                        format!(
+                            "verify SSH key access for {}, then retry",
+                            shell_quote(&remote.remote)
+                        )
                     } else {
-                        ""
-                    };
-                    return format!(
-                        "git -C {} remote set-url{push_flag} {} '<SSH clone URL>'",
-                        shell_quote(repo_path),
-                        shell_quote(&remote.remote)
-                    );
-                }
-
-                "inspect authentication and remote transport".to_string()
-            }
+                        format!(
+                            "verify access for remote {}, then retry",
+                            shell_quote(&remote.remote)
+                        )
+                    }
+                },
+            ),
             GitFailureKind::Diverged => "repos sync or resolve manually".to_string(),
             GitFailureKind::Network => "retry or inspect remote connectivity".to_string(),
             GitFailureKind::Timeout => "retry with --sequential".to_string(),
             GitFailureKind::Other => "inspect failure".to_string(),
         }
     }
+}
+
+fn ssh_remote_fix(repo_path: &str, remote: &RemoteContext) -> String {
+    let push_flag = if remote.direction == RemoteDirection::Push {
+        " --push"
+    } else {
+        ""
+    };
+    let ssh_url = remote.ssh_url.as_deref().unwrap_or("<SSH clone URL>");
+    format!(
+        "git -C {} remote set-url{push_flag} {} {}",
+        shell_quote(repo_path),
+        shell_quote(&remote.remote),
+        shell_quote(ssh_url)
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -310,6 +319,27 @@ mod tests {
         assert_eq!(
             failure.next_action("./repo"),
             "git -C './repo' remote set-url 'upstream' '<SSH clone URL>'"
+        );
+    }
+
+    #[test]
+    fn keeps_ssh_authentication_failures_on_ssh() {
+        let failure = GitFailure {
+            kind: GitFailureKind::Authentication,
+            phase: GitOperationPhase::Fetch,
+            remote: Some(RemoteContext {
+                remote: "origin".to_string(),
+                direction: RemoteDirection::Fetch,
+                transport: RemoteTransport::Ssh,
+                identity: Some("github.com/goobits/repos.git".to_string()),
+                ssh_url: None,
+            }),
+            message: "authentication failed".to_string(),
+        };
+
+        assert_eq!(
+            failure.next_action("./repo"),
+            "verify SSH key access for 'origin', then retry"
         );
     }
 }

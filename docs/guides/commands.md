@@ -34,6 +34,7 @@ EVERYDAY:
   sync        Pull safe remote changes, push local commits, and report nested drift
 
 CONTROL:
+  fetch       Refresh remote refs without changing local branches
   stage       Stage matching files
   unstage     Unstage matching files
   commit      Commit currently staged changes
@@ -152,6 +153,29 @@ Advanced options are hidden from main help but still available:
 | `--sequential` | Run one repository at a time |
 
 ## Control
+
+### `repos fetch`
+
+Fetch every configured remote in every discovered repository without merging,
+rebasing, checking out, or changing a worktree.
+
+```bash
+repos fetch
+repos fetch --verbose
+```
+
+The final report shares the push/pull contract: exclusive `Fetched`, `Up to
+date`, `Failed`, and `Skipped` outcomes add up to `Checked`; updated and skipped
+repositories are named, and failures include path, remote context, and a next
+action. The fetched count is the number of remote-tracking refs or tags changed
+during this run.
+
+Advanced options are hidden from main help but still available:
+
+| Option | Description |
+|---|---|
+| `-j`, `--jobs <N>` | Limit concurrency |
+| `--sequential` | Run one repository at a time |
 
 ### `repos stage`
 

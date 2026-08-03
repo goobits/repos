@@ -8,9 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **SSH-only Git transport policy:** `git config --global repos.transportPolicy ssh-only` blocks effective HTTP(S) fetch and push URLs before credential helpers run, including macOS Keychain helpers. Push failures now name the repository and sanitized remote and provide an exact SSH conversion command for GitHub, GitLab, and Bitbucket.
+- **SSH-only Git transport policy:** `git config --global repos.transportPolicy ssh-only` blocks effective HTTP(S) fetch and push URLs before credential helpers run, including macOS Keychain helpers. Transfer failures now name the repository and sanitized remote, provide an exact SSH conversion command for common hosts, and distinguish SSH key failures from transport fixes.
+- **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
+- Repository discovery no longer inherits ignore files above the requested scan root, so a parent repository cannot hide child repositories from commands run inside that child directory tree.
+- Status, publish, and nested mutation reports now name their outcomes, include checked totals, and provide paths and next steps where action is required.
 - `repos doctor` now emits a sorted summary with separate warnings/blockers, inspects both fetch and push URLs, skips HTTP access probes that could trigger credential helpers, and provides sanitized per-repo fixes.
 - Push and pull summaries now use exclusive outcome counts that add up to `Checked`; skipped repositories are named with path/reason/next-step details, while local and nested work is explicitly non-exclusive follow-up.
 - `repos sync` now discovers repositories once and emits one combined pull/push report with exclusive per-repository outcomes.

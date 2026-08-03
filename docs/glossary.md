@@ -10,6 +10,8 @@ Quick reference for `repos` commands, flags, and concepts.
 
 **`repos sync`** - Pull safe remote changes, push local commits, and report nested drift.
 
+**`repos fetch`** - Refresh remote-tracking refs without changing local branches or worktrees.
+
 **`repos stage`** - Stage files matching a pattern.
 
 **`repos unstage`** - Unstage files matching a pattern.

@@ -11,7 +11,7 @@
 mod common;
 use common::fixtures::TestRepo;
 use common::git::{
-    add_bare_remote, clone_repo, create_test_commit, is_git_available, run_git_ok,
+    add_bare_remote, clone_repo, create_test_commit, get_head_commit, is_git_available, run_git_ok,
     IsolatedGitConfig,
 };
 
@@ -19,8 +19,10 @@ use goobits_repos::commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
     handle_unstage_command, StatusFilters,
 };
-use goobits_repos::commands::sync::{handle_push_command, handle_sync_command};
-use goobits_repos::git::{fetch_and_analyze, push_if_needed, Status};
+use goobits_repos::commands::sync::{
+    handle_fetch_command, handle_push_command, handle_sync_command,
+};
+use goobits_repos::git::{fetch_and_analyze, get_staging_status, push_if_needed, Status};
 use std::env;
 use std::fs;
 use std::process::Command;
@@ -51,6 +53,43 @@ async fn test_sync_command_with_no_repos() {
         "Sync command should handle an empty directory: {:?}",
         result
     );
+}
+
+#[tokio::test]
+async fn test_fetch_command_with_no_repos() {
+    let _lock = common::lock_test().await;
+    if !is_git_available() {
+        return;
+    }
+
+    let original_dir = env::current_dir().expect("Failed to get current dir");
+    let empty_dir = TempDir::new().expect("Failed to create temp directory");
+    env::set_current_dir(empty_dir.path()).expect("Failed to change dir");
+
+    let result = handle_fetch_command(false, None, false).await;
+
+    let _ = env::set_current_dir(&original_dir);
+    assert!(
+        result.is_ok(),
+        "Fetch should accept an empty directory: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_staging_status_preserves_the_first_porcelain_status_column() {
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    repo.create_file("README.md", "unstaged change")
+        .expect("Failed to modify tracked file");
+
+    let (status, _) = get_staging_status(repo.path())
+        .await
+        .expect("Failed to inspect staging status");
+
+    assert_eq!(status, " M README.md");
 }
 
 #[tokio::test]
@@ -319,12 +358,7 @@ fn test_doctor_ssh_only_policy_blocks_http_pushurl_with_exact_fix() {
     assert!(stdout.contains("path:"), "{stdout}");
 }
 
-#[test]
-fn test_ssh_only_push_blocks_https_fetch_before_credential_helper() {
-    if !is_git_available() {
-        return;
-    }
-
+fn assert_ssh_only_command_blocks_https_fetch(args: &[&str]) {
     let repo = TestRepo::new().expect("Failed to create test repo");
     let helper_marker = repo.path().join("credential-helper-ran");
     let helper = format!("!touch {}", helper_marker.display());
@@ -335,16 +369,16 @@ fn test_ssh_only_push_blocks_https_fetch_before_credential_helper() {
     run_git_ok(repo.path(), &["remote", "add", "origin", remote]);
     run_git_ok(repo.path(), &["config", "credential.helper", &helper]);
 
-    let mut push_command = Command::new(env!("CARGO_BIN_EXE_repos"));
-    git_config.apply(&mut push_command);
-    let push = push_command
-        .args(["push", "--sequential", "--no-drift-check"])
+    let mut command = Command::new(env!("CARGO_BIN_EXE_repos"));
+    git_config.apply(&mut command);
+    let output = command
+        .args(args)
         .current_dir(repo.path())
         .output()
-        .expect("Failed to run repos push");
-    let stdout = String::from_utf8_lossy(&push.stdout);
+        .expect("Failed to run repos command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(!push.status.success(), "HTTPS fetch must be blocked");
+    assert!(!output.status.success(), "HTTPS fetch must be blocked");
     assert!(
         stdout.contains("SSH-only policy blocked fetch (HTTPS)"),
         "{stdout}"
@@ -364,6 +398,33 @@ fn test_ssh_only_push_blocks_https_fetch_before_credential_helper() {
         !helper_marker.exists(),
         "credential helper must not run for a blocked HTTPS remote"
     );
+}
+
+#[test]
+fn test_ssh_only_push_blocks_https_fetch_before_credential_helper() {
+    if !is_git_available() {
+        return;
+    }
+
+    assert_ssh_only_command_blocks_https_fetch(&["push", "--sequential", "--no-drift-check"]);
+}
+
+#[test]
+fn test_ssh_only_fetch_blocks_https_before_credential_helper() {
+    if !is_git_available() {
+        return;
+    }
+
+    assert_ssh_only_command_blocks_https_fetch(&["fetch", "--sequential"]);
+}
+
+#[test]
+fn test_ssh_only_pull_blocks_https_before_credential_helper() {
+    if !is_git_available() {
+        return;
+    }
+
+    assert_ssh_only_command_blocks_https_fetch(&["pull", "--sequential", "--no-drift-check"]);
 }
 
 #[test]
@@ -455,8 +516,49 @@ async fn test_push_command_with_uncommitted_changes() {
     );
 }
 
-#[test]
-fn test_pull_command_reports_pulled_repository() {
+#[tokio::test]
+async fn test_fetch_command_reports_updated_repository_without_moving_head() {
+    let _lock = common::lock_test().await;
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    let original_head = get_head_commit(repo.path()).expect("Failed to resolve original HEAD");
+    let updater_root = TempDir::new().expect("Failed to create updater directory");
+    let updater = updater_root.path().join("updater");
+    clone_repo(&remote.path().join("remote.git"), &updater).expect("Failed to clone test remote");
+    create_test_commit(&updater, "remote.txt", "remote change", "Remote update")
+        .expect("Failed to create remote commit");
+    run_git_ok(&updater, &["push"]);
+
+    let fetch = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["fetch", "--sequential"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos fetch");
+    let stdout = String::from_utf8_lossy(&fetch.stdout);
+
+    assert!(
+        fetch.status.success(),
+        "Fetch command failed:\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&fetch.stderr)
+    );
+    assert!(stdout.contains("repos fetch"), "{stdout}");
+    assert!(stdout.contains("▌ Fetched"), "{stdout}");
+    assert!(stdout.contains("current"), "{stdout}");
+    assert!(stdout.contains("1 ref"), "{stdout}");
+    assert_eq!(
+        get_head_commit(repo.path()).expect("Failed to resolve HEAD after fetch"),
+        original_head,
+        "fetch must not move the local branch"
+    );
+}
+
+#[tokio::test]
+async fn test_pull_command_reports_pulled_repository() {
+    let _lock = common::lock_test().await;
     if !is_git_available() {
         return;
     }
