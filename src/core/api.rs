@@ -48,4 +48,4 @@ pub(crate) use super::progress::{
     acquire_semaphore_permit, acquire_stats_lock, create_footer_progress_bar, create_progress_bar,
     create_separator_progress_bar,
 };
-pub(crate) use super::stats::clean_error_message;
+pub(crate) use super::stats::{clean_error_message, format_relative_repo_path, truncate_text};

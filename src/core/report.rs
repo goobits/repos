@@ -8,8 +8,8 @@ use crate::git::failure::GitFailure;
 use crate::git::Status;
 
 use super::stats::{
-    clean_error_message, format_relative_repo_path, get_repo_changes, SyncStatistics, BOLD_BLUE,
-    BOLD_PURPLE, DIM, GREEN, RED, RESET, YELLOW,
+    clean_error_message, format_relative_repo_path, get_repo_changes, truncate_text,
+    SyncStatistics, BOLD_BLUE, BOLD_PURPLE, DIM, GREEN, RED, RESET, YELLOW,
 };
 
 #[derive(Clone, Debug)]
@@ -132,6 +132,7 @@ impl BatchOperation {
             Status::Synced | Status::ConfigSynced => OutcomeKind::Unchanged,
             Status::Pushed
             | Status::Pulled
+            | Status::Fetched
             | Status::ConfigUpdated
             | Status::Staged
             | Status::Unstaged
@@ -334,24 +335,13 @@ fn append_section(
             "  {}{}{RESET} {:24} {message}",
             section.color,
             section.marker,
-            truncate(&outcome.repository, 24)
+            truncate_text(&outcome.repository, 24)
         ));
         lines.push(format!("    ↳ path: {}", outcome.path));
         if section.actionable {
             lines.push(format!("    ↳ next: {}", operation.next_action(outcome)));
         }
     }
-}
-
-fn truncate(value: &str, max_chars: usize) -> String {
-    let chars = value.chars().collect::<Vec<_>>();
-    if chars.len() <= max_chars {
-        return value.to_string();
-    }
-    chars[..max_chars.saturating_sub(1)]
-        .iter()
-        .collect::<String>()
-        + "…"
 }
 
 #[derive(Default)]
@@ -507,10 +497,12 @@ fn sync_outcome(repository: &SyncRepository) -> SyncOutcome {
         SyncOutcome::Failed
     } else if phases.iter().any(|outcome| is_skip(outcome.status)) {
         SyncOutcome::Skipped
-    } else if phases
-        .iter()
-        .any(|outcome| matches!(outcome.status, Status::Pulled | Status::Pushed))
-    {
+    } else if phases.iter().any(|outcome| {
+        matches!(
+            outcome.status,
+            Status::Pulled | Status::Pushed | Status::Fetched
+        )
+    }) {
         SyncOutcome::Updated
     } else {
         SyncOutcome::UpToDate
@@ -573,7 +565,7 @@ fn append_transfer_repositories(
     for (repository, path, commits) in repositories {
         lines.push(format!(
             "  {GREEN}{marker}{RESET} {:24} {commits} {}",
-            truncate(repository, 24),
+            truncate_text(repository, 24),
             plural(*commits, "commit", "commits")
         ));
         lines.push(format!(
@@ -629,7 +621,7 @@ fn append_sync_failures(
 
         lines.push(format!(
             "  {RED}!{RESET} {:24} {}",
-            truncate(name, 24),
+            truncate_text(name, 24),
             reasons.join("; ")
         ));
         lines.push(format!("    {DIM}↳ path: {path}{RESET}"));
@@ -675,7 +667,7 @@ fn append_sync_skips(lines: &mut Vec<String>, repositories: &BTreeMap<String, Sy
         }
         lines.push(format!(
             "  {DIM}·{RESET} {:24} {}",
-            truncate(name, 24),
+            truncate_text(name, 24),
             reasons.join("; ")
         ));
         lines.push(format!(
@@ -757,7 +749,7 @@ fn append_sync_follow_up(
     for (name, path) in local_changes {
         lines.push(format!(
             "  {YELLOW}!{RESET} {:24} uncommitted changes",
-            truncate(name, 24)
+            truncate_text(name, 24)
         ));
         lines.push(format!(
             "    {DIM}↳ path: {}{RESET}",

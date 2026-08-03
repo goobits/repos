@@ -37,6 +37,8 @@ pub enum Status {
     CommitError,
     /// Successfully pulled commits from remote
     Pulled,
+    /// Successfully updated one or more remote-tracking references
+    Fetched,
     /// Pull failed due to conflicts or other errors
     PullError,
     /// Repository has local worktree changes
@@ -55,7 +57,8 @@ impl Status {
             | Status::Staged
             | Status::Unstaged
             | Status::Committed
-            | Status::Pulled => "🟢",
+            | Status::Pulled
+            | Status::Fetched => "🟢",
             Status::Skip | Status::NoRemote | Status::ConfigSkipped | Status::NoChanges => "🟠",
             Status::NoUpstream | Status::Dirty => "🟡",
             Status::Error
@@ -87,6 +90,7 @@ impl Status {
             Status::Committed => "committed",
             Status::CommitError => "failed",
             Status::Pulled => "pulled",
+            Status::Fetched => "fetched",
             Status::PullError => "pull-failed",
             Status::Dirty => "dirty",
         }
@@ -107,6 +111,7 @@ mod tests {
         assert_eq!(Status::Staged.symbol(), "🟢");
         assert_eq!(Status::Unstaged.symbol(), "🟢");
         assert_eq!(Status::Committed.symbol(), "🟢");
+        assert_eq!(Status::Fetched.symbol(), "🟢");
     }
 
     #[test]
@@ -142,6 +147,7 @@ mod tests {
         assert_eq!(Status::NoUpstream.text(), "no-upstream");
         assert_eq!(Status::NoRemote.text(), "skip");
         assert_eq!(Status::Error.text(), "failed");
+        assert_eq!(Status::Fetched.text(), "fetched");
     }
 
     #[test]

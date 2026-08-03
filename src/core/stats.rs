@@ -22,6 +22,7 @@ pub(super) const DIM: &str = "\x1b[2m";
 
 #[derive(Clone, Copy)]
 enum Transfer {
+    Fetch,
     Push,
     Pull,
 }
@@ -29,6 +30,7 @@ enum Transfer {
 impl Transfer {
     fn command(self) -> &'static str {
         match self {
+            Self::Fetch => "fetch",
             Self::Push => "push",
             Self::Pull => "pull",
         }
@@ -36,6 +38,7 @@ impl Transfer {
 
     fn label(self) -> &'static str {
         match self {
+            Self::Fetch => "Fetched",
             Self::Push => "Pushed",
             Self::Pull => "Pulled",
         }
@@ -43,6 +46,7 @@ impl Transfer {
 
     fn verb(self) -> &'static str {
         match self {
+            Self::Fetch => "fetched",
             Self::Push => "pushed",
             Self::Pull => "pulled",
         }
@@ -50,13 +54,22 @@ impl Transfer {
 
     fn marker(self) -> &'static str {
         match self {
+            Self::Fetch => "↻",
             Self::Push => "↑",
             Self::Pull => "↓",
         }
     }
 
+    fn unit(self, count: u64) -> &'static str {
+        match self {
+            Self::Fetch => pluralize(count, "ref", "refs"),
+            Self::Push | Self::Pull => pluralize(count, "commit", "commits"),
+        }
+    }
+
     fn no_upstream_action(self) -> &'static str {
         match self {
+            Self::Fetch => "configure a fetch remote or skip",
             Self::Push => "repos push --auto-upstream",
             Self::Pull => "set upstream or skip",
         }
@@ -75,6 +88,8 @@ pub struct SyncStatistics {
     pub total_commits_pushed: AtomicU64,
     pub pulled_repos: AtomicU64,
     pub total_commits_pulled: AtomicU64,
+    pub fetched_repos: AtomicU64,
+    pub total_refs_fetched: AtomicU64,
     pub skipped_repos: AtomicU64,
     pub error_repos: AtomicU64,
     pub uncommitted_count: AtomicU64,
@@ -83,6 +98,7 @@ pub struct SyncStatistics {
     pub uncommitted_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
     pub pushed_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
     pub pulled_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
+    pub fetched_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, refs)
     pub(crate) operation_outcomes: Mutex<Vec<RepositoryOutcome>>,
     pub(crate) git_failures: Mutex<HashMap<(String, String), GitFailure>>,
 }
@@ -103,6 +119,8 @@ impl SyncStatistics {
             total_commits_pushed: AtomicU64::new(0),
             pulled_repos: AtomicU64::new(0),
             total_commits_pulled: AtomicU64::new(0),
+            fetched_repos: AtomicU64::new(0),
+            total_refs_fetched: AtomicU64::new(0),
             skipped_repos: AtomicU64::new(0),
             error_repos: AtomicU64::new(0),
             uncommitted_count: AtomicU64::new(0),
@@ -110,6 +128,7 @@ impl SyncStatistics {
             uncommitted_repos: Mutex::new(Vec::new()),
             pushed_repo_details: Mutex::new(Vec::new()),
             pulled_repo_details: Mutex::new(Vec::new()),
+            fetched_repo_details: Mutex::new(Vec::new()),
             operation_outcomes: Mutex::new(Vec::new()),
             git_failures: Mutex::new(HashMap::new()),
         }
@@ -163,6 +182,19 @@ impl SyncStatistics {
                     guard.push((repo_name.to_string(), repo_path.to_string(), commits));
                 } else {
                     eprintln!("Warning: Failed to record pulled repo: {repo_name}");
+                }
+            }
+            Status::Fetched => {
+                self.synced_repos.fetch_add(1, Ordering::Relaxed);
+                self.fetched_repos.fetch_add(1, Ordering::Relaxed);
+                let refs = parse_commit_count(message).unwrap_or(0);
+                if refs > 0 {
+                    self.total_refs_fetched.fetch_add(refs, Ordering::Relaxed);
+                }
+                if let Ok(mut guard) = self.fetched_repo_details.lock() {
+                    guard.push((repo_name.to_string(), repo_path.to_string(), refs));
+                } else {
+                    eprintln!("Warning: Failed to record fetched repo: {repo_name}");
                 }
             }
             Status::Synced
@@ -250,6 +282,11 @@ impl SyncStatistics {
         self.generate_transfer_summary(Transfer::Push, duration)
     }
 
+    /// Generates a fetch-specific completion summary.
+    pub fn generate_fetch_summary(&self, duration: Duration) -> String {
+        self.generate_transfer_summary(Transfer::Fetch, duration)
+    }
+
     /// Generates a pull/sync-specific completion summary.
     pub fn generate_pull_summary(&self, duration: Duration) -> String {
         self.generate_transfer_summary(Transfer::Pull, duration)
@@ -263,14 +300,20 @@ impl SyncStatistics {
         let errors = self.error_repos.load(Ordering::Relaxed);
         let skipped = self.skipped_repos.load(Ordering::Relaxed);
 
+        let unit = transfer.unit(transferred_commits);
         format!(
-            "✅ Completed in {duration_secs:.1}s • {up_to_date} up to date • {transferred_repos} {verb} ({transferred_commits} commits) • {errors} failed • {skipped} skipped"
+            "✅ Completed in {duration_secs:.1}s • {up_to_date} up to date • {transferred_repos} {verb} ({transferred_commits} {unit}) • {errors} failed • {skipped} skipped"
         )
     }
 
     /// Generates a compact live push footer.
     pub fn generate_push_live_summary(&self, total_repos: usize) -> String {
         self.generate_transfer_live_summary(Transfer::Push, total_repos)
+    }
+
+    /// Generates a compact live fetch footer.
+    pub fn generate_fetch_live_summary(&self, total_repos: usize) -> String {
+        self.generate_transfer_live_summary(Transfer::Fetch, total_repos)
     }
 
     /// Generates a compact live pull footer.
@@ -286,6 +329,7 @@ impl SyncStatistics {
         let errors = self.error_repos.load(Ordering::Relaxed);
         let skipped = self.skipped_repos.load(Ordering::Relaxed);
         let follow_up = self.transfer_follow_up_count();
+        let unit = transfer.unit(transferred_commits);
         let processed = up_to_date
             .saturating_add(transferred_repos)
             .saturating_add(errors)
@@ -293,13 +337,18 @@ impl SyncStatistics {
         let remaining = (total_repos as u64).saturating_sub(processed);
 
         format!(
-            "  {GREEN}✓{RESET} {up_to_date} up to date   {GREEN}{marker}{RESET} {transferred_repos} {verb} / {transferred_commits} commits   {RED}!{RESET} {errors} failed   {DIM}·{RESET} {skipped} skipped   {YELLOW}!{RESET} {follow_up} follow-up\n  {DIM}↳ scanning {remaining} remaining{RESET}",
+            "  {GREEN}✓{RESET} {up_to_date} up to date   {GREEN}{marker}{RESET} {transferred_repos} {verb} / {transferred_commits} {unit}   {RED}!{RESET} {errors} failed   {DIM}·{RESET} {skipped} skipped   {YELLOW}!{RESET} {follow_up} follow-up\n  {DIM}↳ scanning {remaining} remaining{RESET}",
         )
     }
 
     /// Generates the final push report without repeating the live footer details.
     pub fn generate_push_report(&self, duration: Duration, show_changes: bool) -> String {
         self.generate_push_report_with_follow_up(duration, show_changes, 0, &[])
+    }
+
+    /// Generates the final fetch report.
+    pub fn generate_fetch_report(&self, duration: Duration) -> String {
+        self.generate_transfer_report_with_follow_up(Transfer::Fetch, duration, false, 0, &[])
     }
 
     /// Generates the final pull report without repeating the live footer details.
@@ -360,6 +409,7 @@ impl SyncStatistics {
             .saturating_add(errors);
 
         let mut transferred_details = match transfer {
+            Transfer::Fetch => clone_vec(&self.fetched_repo_details, "fetched_repo_details"),
             Transfer::Push => clone_vec(&self.pushed_repo_details, "pushed_repo_details"),
             Transfer::Pull => clone_vec(&self.pulled_repo_details, "pulled_repo_details"),
         };
@@ -388,14 +438,14 @@ impl SyncStatistics {
         let mut lines = Vec::new();
         let transfer_label = transfer.label();
         let transferred_repo_label = pluralize(transferred_repos, "repo", "repos");
-        let transferred_commit_label = pluralize(transferred_commits, "commit", "commits");
+        let transferred_unit_label = transfer.unit(transferred_commits);
 
         lines.push(format!("{BOLD_BLUE}repos {}{RESET}", transfer.command()));
         lines.push(format!("{GREEN}✓{RESET} Completed in {duration_secs:.1}s"));
         lines.push(String::new());
         lines.push(format!("{BOLD_PURPLE}▌ Summary{RESET}"));
         lines.push(format!(
-            "  {GREEN}✓{RESET} {transfer_label:<13}{transferred_repos} {transferred_repo_label} / {transferred_commits} {transferred_commit_label}"
+            "  {GREEN}✓{RESET} {transfer_label:<13}{transferred_repos} {transferred_repo_label} / {transferred_commits} {transferred_unit_label}"
         ));
         lines.push(format!(
             "  {GREEN}✓{RESET} {:<13}{up_to_date}",
@@ -424,9 +474,9 @@ impl SyncStatistics {
             ));
         } else {
             for (repo_name, repo_path, commits) in transferred_details {
-                let commit_label = if commits == 1 { "commit" } else { "commits" };
+                let unit = transfer.unit(commits);
                 lines.push(format!(
-                    "  {GREEN}✓{RESET} {:24} {:>3} {commit_label}",
+                    "  {GREEN}✓{RESET} {:24} {:>3} {unit}",
                     truncate_text(&repo_name, 24),
                     commits
                 ));
@@ -456,6 +506,10 @@ impl SyncStatistics {
 
     fn transfer_counts(&self, transfer: Transfer) -> (u64, u64) {
         match transfer {
+            Transfer::Fetch => (
+                self.fetched_repos.load(Ordering::Relaxed),
+                self.total_refs_fetched.load(Ordering::Relaxed),
+            ),
             Transfer::Push => (
                 self.pushed_repos.load(Ordering::Relaxed),
                 self.total_commits_pushed.load(Ordering::Relaxed),
@@ -545,7 +599,10 @@ fn append_failed_section(
 }
 
 fn is_transfer_success(status: Status) -> bool {
-    matches!(status, Status::Synced | Status::Pushed | Status::Pulled)
+    matches!(
+        status,
+        Status::Synced | Status::Fetched | Status::Pushed | Status::Pulled
+    )
 }
 
 fn is_transfer_skip(status: Status) -> bool {
@@ -658,11 +715,13 @@ fn next_for_git_error(error: &str, transfer: Transfer) -> String {
         "repos sync or resolve manually".to_string()
     } else if lower.contains("repository moved") && lower.contains("email privacy") {
         match transfer {
+            Transfer::Fetch => "update remote, then fetch".to_string(),
             Transfer::Push => "update remote + fix git email".to_string(),
             Transfer::Pull => "update remote, then pull".to_string(),
         }
     } else if lower.contains("email privacy") {
         match transfer {
+            Transfer::Fetch => "inspect failure".to_string(),
             Transfer::Push => "fix git email, then push".to_string(),
             Transfer::Pull => "inspect failure".to_string(),
         }
@@ -673,18 +732,24 @@ fn next_for_git_error(error: &str, transfer: Transfer) -> String {
     }
 }
 
-pub(super) fn format_relative_repo_path(path: &str) -> String {
+pub(crate) fn format_relative_repo_path(path: &str) -> String {
     let repo_path = Path::new(path);
-    let display_path = if repo_path.is_absolute() {
-        std::env::current_dir()
+    if repo_path.is_absolute() {
+        let relative = std::env::current_dir()
             .ok()
             .and_then(|cwd| repo_path.strip_prefix(cwd).ok())
-            .map_or_else(|| repo_path.to_path_buf(), Path::to_path_buf)
-    } else {
-        repo_path.to_path_buf()
-    };
+            .map(Path::to_path_buf);
+        let Some(relative) = relative else {
+            return repo_path.to_string_lossy().into_owned();
+        };
+        return prefix_relative_path(&relative);
+    }
 
-    let value = display_path.to_string_lossy();
+    prefix_relative_path(repo_path)
+}
+
+fn prefix_relative_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
     if value == "." || value.starts_with("./") {
         value.to_string()
     } else {
@@ -692,7 +757,7 @@ pub(super) fn format_relative_repo_path(path: &str) -> String {
     }
 }
 
-fn truncate_text(value: &str, width: usize) -> String {
+pub(crate) fn truncate_text(value: &str, width: usize) -> String {
     let char_count = value.chars().count();
     if char_count <= width {
         return value.to_string();

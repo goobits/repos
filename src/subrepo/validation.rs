@@ -10,6 +10,13 @@ use ignore::WalkBuilder;
 use std::collections::HashMap;
 use std::path::Path;
 
+const RESET: &str = "\x1b[0m";
+const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
+const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+const GREEN: &str = "\x1b[1;38;5;114m";
+const YELLOW: &str = "\x1b[1;38;5;221m";
+const DIM: &str = "\x1b[2m";
+
 /// Discover all nested repositories and generate a validation report
 pub fn validate_subrepos() -> Result<ValidationReport> {
     validate_subrepos_with_output(true)
@@ -144,83 +151,167 @@ fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<Su
 
 /// Display the validation report
 pub fn display_report(report: &ValidationReport) {
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("📊 Validation Report");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Total nested repos found: {}", report.total_nested);
-    println!("Unique remote URLs: {}", report.unique_remotes());
-    println!(
-        "Shared subrepos (same remote): {}",
-        report.shared_subrepos_count()
-    );
-    println!();
+    println!("{}", generate_validation_report(report));
+}
+
+fn generate_validation_report(report: &ValidationReport) -> String {
+    let shared = report.shared_subrepos_count();
+    let unique = report.unique_remotes().saturating_sub(shared);
+    let mut lines = vec![
+        format!("{BOLD_BLUE}repos nested validate{RESET}"),
+        String::new(),
+        format!("{BOLD_PURPLE}▌ Summary{RESET}"),
+        format!("  {GREEN}✓{RESET} {:<18}{shared}", "Shared groups"),
+        format!("  {DIM}·{RESET} {:<18}{unique}", "Unique groups"),
+    ];
+    if !report.no_remote.is_empty() {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} {:<18}{}",
+            "Missing remote",
+            report.no_remote.len()
+        ));
+    }
+    lines.push(format!(
+        "  {DIM}·{RESET} {:<18}{}",
+        "Checked", report.total_nested
+    ));
 
     if report.total_nested == 0 {
-        println!("❌ No nested repositories found.");
-        println!("   Subrepo tracking feature is NOT needed.");
-        return;
+        lines.push(String::new());
+        lines.push(format!("{BOLD_PURPLE}▌ Result{RESET}"));
+        lines.push(format!("  {DIM}No nested repositories found.{RESET}"));
+        return lines.join("\n");
     }
 
-    // Show instances by remote
-    if !report.by_remote.is_empty() {
-        println!("📦 Nested Repositories by Remote:");
-        println!();
-
-        for (remote, instances) in &report.by_remote {
-            let count = instances.len();
+    let mut groups = report.by_remote.iter().collect::<Vec<_>>();
+    groups.sort_by_key(|(remote, _)| *remote);
+    if !groups.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("{BOLD_PURPLE}▌ Nested Repositories{RESET}"));
+        for (remote, instances) in groups {
+            let mut instances = instances.iter().collect::<Vec<_>>();
+            instances.sort_by(|left, right| {
+                left.parent_repo
+                    .cmp(&right.parent_repo)
+                    .then_with(|| left.relative_path.cmp(&right.relative_path))
+            });
             let name = &instances[0].subrepo_name;
-
-            if count > 1 {
-                println!("🔗 {name} (found in {count} parents)");
-            } else {
-                println!("🔗 {name} (unique)");
-            }
-            println!("   Remote: {remote}");
-
+            let copies = instances.len();
+            let group_kind = if copies > 1 { "shared" } else { "unique" };
+            lines.push(format!(
+                "  {GREEN}✓{RESET} {name} ({copies} copies, {group_kind})"
+            ));
+            lines.push(format!("    {DIM}↳ remote: {remote}{RESET}"));
             for instance in instances {
-                let uncommitted = if instance.has_uncommitted {
-                    " (uncommitted)"
+                let state = if instance.has_uncommitted {
+                    "uncommitted changes"
                 } else {
-                    ""
+                    "clean"
                 };
-                println!(
-                    "     • {} @ {}{}",
-                    instance.parent_repo, instance.short_hash, uncommitted
-                );
+                lines.push(format!(
+                    "    · {} @ {} ({state})",
+                    nested_location(instance),
+                    instance.short_hash
+                ));
             }
-            println!();
         }
     }
 
-    // Show repos without remotes
     if !report.no_remote.is_empty() {
-        println!(
-            "⚠️  Nested repos without remotes ({}):",
-            report.no_remote.len()
-        );
-        for instance in &report.no_remote {
-            println!("   • {}/{}", instance.parent_repo, instance.subrepo_name);
+        let mut missing = report.no_remote.iter().collect::<Vec<_>>();
+        missing.sort_by(|left, right| {
+            left.parent_repo
+                .cmp(&right.parent_repo)
+                .then_with(|| left.relative_path.cmp(&right.relative_path))
+        });
+        lines.push(String::new());
+        lines.push(format!("{BOLD_PURPLE}▌ Missing Remote{RESET}"));
+        for instance in missing {
+            lines.push(format!(
+                "  {YELLOW}!{RESET} {} @ {}",
+                nested_location(instance),
+                instance.short_hash
+            ));
+            lines.push(format!(
+                "    {DIM}↳ next: add an origin remote or exclude this nested repository{RESET}"
+            ));
         }
-        println!();
     }
 
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("💡 Recommendation:");
-
-    let shared_count = report.shared_subrepos_count();
-
-    if shared_count >= 3 {
-        println!(
-            "   ✅ BUILD IT - You have {shared_count} subrepos shared across multiple parents"
-        );
-        println!("      This feature would help track drift between them.");
-    } else if shared_count > 0 {
-        println!("   ⚠️  MAYBE - You have {shared_count} shared subrepos");
-        println!("      Consider if manual tracking is sufficient.");
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ Result{RESET}"));
+    if shared > 0 {
+        lines.push(format!(
+            "  {GREEN}✓{RESET} Drift tracking applies to {shared} shared nested group{}.",
+            if shared == 1 { "" } else { "s" }
+        ));
+        lines.push(format!(
+            "    {DIM}↳ next: run `repos nested status` to inspect commit drift{RESET}"
+        ));
     } else {
-        println!("   ❌ SKIP IT - All nested repos are unique (no drift possible)");
-        println!("      Subrepo drift tracking is not needed.");
+        lines.push(format!(
+            "  {DIM}No nested remote is shared across parent repositories, so cross-copy drift cannot occur.{RESET}"
+        ));
     }
 
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    lines.join("\n")
+}
+
+fn nested_location(instance: &SubrepoInstance) -> String {
+    match instance.relative_path.as_str() {
+        "" | "." => instance.parent_repo.clone(),
+        relative => format!("{}/{relative}", instance.parent_repo),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_validation_report;
+    use crate::subrepo::{SubrepoInstance, ValidationReport};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn instance(parent: &str, relative: &str, dirty: bool) -> SubrepoInstance {
+        SubrepoInstance {
+            parent_repo: parent.to_string(),
+            parent_path: PathBuf::from(parent),
+            subrepo_name: "shared".to_string(),
+            subrepo_path: PathBuf::from(parent).join(relative),
+            relative_path: relative.to_string(),
+            commit_hash: format!("{parent}-commit"),
+            short_hash: format!("{parent}123"),
+            remote_url: Some("github.com/team/shared".to_string()),
+            has_uncommitted: dirty,
+            commit_timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn validation_report_is_sorted_attributable_and_actionable() {
+        let report = ValidationReport {
+            total_nested: 3,
+            by_remote: HashMap::from([(
+                "github.com/team/shared".to_string(),
+                vec![
+                    instance("zeta", "packages/shared", false),
+                    instance("alpha", "vendor/shared", true),
+                ],
+            )]),
+            no_remote: vec![instance("orphan", "nested/shared", false)],
+        };
+
+        let output = generate_validation_report(&report);
+
+        assert!(output.contains("repos nested validate"));
+        assert!(output.contains("Shared groups     1"));
+        assert!(output.contains("Missing remote    1"));
+        assert!(output.contains("Checked           3"));
+        assert!(output.contains("alpha/vendor/shared"));
+        assert!(output.contains("zeta/packages/shared"));
+        assert!(output.contains("orphan/nested/shared"));
+        assert!(output.contains("next: add an origin remote"));
+        assert!(output.contains("next: run `repos nested status`"));
+        assert!(!output.contains("BUILD IT"));
+        assert!(!output.contains("SKIP IT"));
+    }
 }

@@ -10,8 +10,9 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::core::{
-    create_processing_context, init_command, set_terminal_title, set_terminal_title_and_flush,
-    BatchOperation, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
+    clean_error_message, create_processing_context, format_relative_repo_path, init_command,
+    set_terminal_title, set_terminal_title_and_flush, truncate_text, BatchOperation,
+    GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
 use crate::git::{
     commit_changes, get_staging_status, has_staged_changes, is_detached_head, stage_files,
@@ -23,6 +24,13 @@ const STAGING_MESSAGE: &str = "staging...";
 const UNSTAGING_MESSAGE: &str = "unstaging...";
 const STATUS_MESSAGE: &str = "checking status...";
 const COMMITTING_MESSAGE: &str = "committing...";
+const RESET: &str = "\x1b[0m";
+const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
+const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+const GREEN: &str = "\x1b[1;38;5;114m";
+const YELLOW: &str = "\x1b[1;38;5;221m";
+const RED: &str = "\x1b[1;38;5;203m";
+const DIM: &str = "\x1b[2m";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StatusFilters {
@@ -49,6 +57,37 @@ struct FleetStatus {
     status: Status,
     message: String,
     upstream: UpstreamSummary,
+}
+
+struct FleetStatusEntry {
+    repository: String,
+    path: PathBuf,
+    status: FleetStatus,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FleetStatusKind {
+    Healthy,
+    NeedsWork,
+    Failed,
+}
+
+impl FleetStatusKind {
+    fn heading(self) -> &'static str {
+        match self {
+            Self::Healthy => "Healthy",
+            Self::NeedsWork => "Needs Work",
+            Self::Failed => "Failed",
+        }
+    }
+
+    fn style(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Healthy => (GREEN, "✓"),
+            Self::NeedsWork => (YELLOW, "!"),
+            Self::Failed => (RED, "!"),
+        }
+    }
 }
 
 impl FleetStatus {
@@ -93,6 +132,32 @@ impl FleetStatus {
 
     fn dirty(&self) -> bool {
         self.status == Status::Dirty
+    }
+
+    fn kind(&self) -> FleetStatusKind {
+        if self.failed() {
+            FleetStatusKind::Failed
+        } else if self.needs_work() {
+            FleetStatusKind::NeedsWork
+        } else {
+            FleetStatusKind::Healthy
+        }
+    }
+
+    fn next_action(&self) -> Option<&'static str> {
+        if self.failed() {
+            Some("inspect the reported status failure")
+        } else if self.dirty() {
+            Some("commit or stash the local changes")
+        } else if matches!(self.upstream, UpstreamSummary::NoRemote) {
+            Some("add a remote or exclude this repository")
+        } else if matches!(self.upstream, UpstreamSummary::NoUpstream) {
+            Some("set an upstream branch or run `repos push --auto-upstream`")
+        } else if self.upstream.is_diverged() {
+            Some("run `repos sync` or resolve the divergence manually")
+        } else {
+            None
+        }
     }
 }
 
@@ -384,27 +449,8 @@ async fn process_status_repositories(
     use crate::core::{acquire_semaphore_permit, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
-    if context.repositories.len() == 1 {
-        if let Some((repo_name, repo_path)) = context.repositories.first() {
-            let status = get_fleet_status(repo_path, true).await;
-            if status.matches_filters(filters) {
-                println!(
-                    "{} {:width$} {:<12}   {}",
-                    status.status.symbol(),
-                    repo_name,
-                    status.status.text(),
-                    status.message,
-                    width = context.max_name_length
-                );
-            } else {
-                println!("No repositories matched the requested status filters.");
-            }
-            println!();
-        }
-        return;
-    }
-
     let mut futures = FuturesUnordered::new();
+    let show_details = context.repositories.len() == 1;
 
     // First, create all repository progress bars
     let mut repo_progress_bars = Vec::new();
@@ -420,38 +466,154 @@ async fn process_status_repositories(
 
     // Extract values we need in the async closures before moving context.repositories
     let max_name_length = context.max_name_length;
+    let start_time = context.start_time;
     for ((repo_name, repo_path), progress_bar) in
         context.repositories.iter().zip(repo_progress_bars)
     {
         let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
+        let repository = repo_name.clone();
+        let path = repo_path.clone();
 
         let future = async move {
             let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let status = get_fleet_status(repo_path, false).await;
-            if !status.matches_filters(filters) {
-                progress_bar.finish_and_clear();
-                return;
-            }
+            let status = get_fleet_status(&path, show_details).await;
 
             progress_bar.set_prefix(format!(
                 "{} {:width$}",
                 status.status.symbol(),
-                repo_name,
+                repository,
                 width = max_name_length
             ));
             progress_bar.set_message(format!("{:<12}   {}", status.status.text(), status.message));
-            progress_bar.finish();
+            progress_bar.finish_and_clear();
+
+            FleetStatusEntry {
+                repository,
+                path,
+                status,
+            }
         };
 
         futures.push(future);
     }
 
     // Wait for all repository operations to complete
-    while futures.next().await.is_some() {}
+    let mut entries = Vec::with_capacity(context.total_repos);
+    while let Some(entry) = futures.next().await {
+        entries.push(entry);
+    }
 
-    // Add final spacing
-    println!();
+    println!(
+        "\n{}\n",
+        generate_status_report(&entries, filters, start_time.elapsed())
+    );
+}
+
+fn generate_status_report(
+    entries: &[FleetStatusEntry],
+    filters: StatusFilters,
+    duration: std::time::Duration,
+) -> String {
+    let mut entries = entries.iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        left.repository
+            .cmp(&right.repository)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+
+    let healthy = entries
+        .iter()
+        .filter(|entry| entry.status.kind() == FleetStatusKind::Healthy)
+        .count();
+    let needs_work = entries
+        .iter()
+        .filter(|entry| entry.status.kind() == FleetStatusKind::NeedsWork)
+        .count();
+    let failed = entries
+        .iter()
+        .filter(|entry| entry.status.kind() == FleetStatusKind::Failed)
+        .count();
+    let shown = entries
+        .iter()
+        .filter(|entry| entry.status.matches_filters(filters))
+        .count();
+
+    let mut lines = vec![
+        format!("{BOLD_BLUE}repos status{RESET}"),
+        format!(
+            "{GREEN}✓{RESET} Completed in {:.1}s",
+            duration.as_secs_f64()
+        ),
+        String::new(),
+        format!("{BOLD_PURPLE}▌ Summary{RESET}"),
+        format!("  {GREEN}✓{RESET} {:<16}{healthy}", "Healthy"),
+    ];
+    if needs_work > 0 {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} {:<16}{needs_work}",
+            "Needs work"
+        ));
+    }
+    if failed > 0 {
+        lines.push(format!("  {RED}!{RESET} {:<16}{failed}", "Failed"));
+    }
+    if !filters.is_empty() {
+        lines.push(format!("  {DIM}·{RESET} {:<16}{shown}", "Shown"));
+    }
+    lines.push(format!(
+        "  {DIM}·{RESET} {:<16}{}",
+        "Checked",
+        entries.len()
+    ));
+
+    append_status_section(&mut lines, &entries, filters, FleetStatusKind::Failed);
+    append_status_section(&mut lines, &entries, filters, FleetStatusKind::NeedsWork);
+    append_status_section(&mut lines, &entries, filters, FleetStatusKind::Healthy);
+
+    if shown == 0 {
+        lines.push(String::new());
+        lines.push(format!("{BOLD_PURPLE}▌ Repositories{RESET}"));
+        lines.push(format!(
+            "  {DIM}No repositories matched the requested status filters.{RESET}"
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn append_status_section(
+    lines: &mut Vec<String>,
+    entries: &[&FleetStatusEntry],
+    filters: StatusFilters,
+    kind: FleetStatusKind,
+) {
+    let matching = entries
+        .iter()
+        .filter(|entry| entry.status.kind() == kind && entry.status.matches_filters(filters))
+        .copied()
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return;
+    }
+
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ {}{RESET}", kind.heading()));
+    let (color, marker) = kind.style();
+    for entry in matching {
+        lines.push(format!(
+            "  {color}{marker}{RESET} {:24} {}",
+            truncate_text(&entry.repository, 24),
+            entry.status.message
+        ));
+        lines.push(format!(
+            "    {DIM}↳ path: {}{RESET}",
+            format_relative_repo_path(&entry.path.to_string_lossy())
+        ));
+        if let Some(next) = entry.status.next_action() {
+            lines.push(format!("    {DIM}↳ next: {next}{RESET}"));
+        }
+    }
 }
 
 async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> FleetStatus {
@@ -463,7 +625,7 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
         Err(e) => {
             return FleetStatus {
                 status: Status::StagingError,
-                message: format!("status failed: {e}"),
+                message: format!("status failed: {}", clean_error_message(&e.to_string())),
                 upstream: UpstreamSummary::Unknown,
             };
         }
@@ -912,9 +1074,13 @@ async fn perform_unstaging_operation(
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_status_repositories, format_status_details, summarize_worktree};
+    use super::{
+        filter_status_repositories, format_status_details, generate_status_report,
+        summarize_worktree, FleetStatus, FleetStatusEntry, StatusFilters, UpstreamSummary,
+    };
     use crate::git::Status;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     #[test]
     fn filters_status_repositories_by_name() {
@@ -964,5 +1130,68 @@ mod tests {
                 "    · untracked new-file.txt",
             ]
         );
+    }
+
+    #[test]
+    fn final_status_report_is_attributable_exclusive_and_filter_aware() {
+        let entries = vec![
+            FleetStatusEntry {
+                repository: "healthy".to_string(),
+                path: PathBuf::from("healthy"),
+                status: FleetStatus {
+                    status: Status::Synced,
+                    message: "branch main | clean | synced with origin/main".to_string(),
+                    upstream: UpstreamSummary::Remote {
+                        message: "synced with origin/main".to_string(),
+                        ahead: 0,
+                        behind: 0,
+                    },
+                },
+            },
+            FleetStatusEntry {
+                repository: "dirty".to_string(),
+                path: PathBuf::from("dirty"),
+                status: FleetStatus {
+                    status: Status::Dirty,
+                    message: "branch main | 2 unstaged".to_string(),
+                    upstream: UpstreamSummary::NoUpstream,
+                },
+            },
+            FleetStatusEntry {
+                repository: "broken".to_string(),
+                path: PathBuf::from("broken"),
+                status: FleetStatus {
+                    status: Status::StagingError,
+                    message: "status failed: permission denied".to_string(),
+                    upstream: UpstreamSummary::Unknown,
+                },
+            },
+        ];
+
+        let report =
+            generate_status_report(&entries, StatusFilters::default(), Duration::from_secs(2));
+        assert!(report.contains("repos status"));
+        assert!(report.contains("Healthy         1"));
+        assert!(report.contains("Needs work      1"));
+        assert!(report.contains("Failed          1"));
+        assert!(report.contains("Checked         3"));
+        assert!(report.contains("path: ./healthy"));
+        assert!(report.contains("path: ./dirty"));
+        assert!(report.contains("next: commit or stash"));
+        assert!(report.contains("path: ./broken"));
+        assert!(report.contains("next: inspect the reported status failure"));
+
+        let filtered = generate_status_report(
+            &entries,
+            StatusFilters {
+                dirty: true,
+                ..StatusFilters::default()
+            },
+            Duration::ZERO,
+        );
+        assert!(filtered.contains("Shown           1"));
+        assert!(filtered.contains("path: ./dirty"));
+        assert!(!filtered.contains("path: ./healthy"));
+        assert!(!filtered.contains("path: ./broken"));
     }
 }

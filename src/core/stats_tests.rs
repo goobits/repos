@@ -17,6 +17,7 @@ mod tests {
         assert_eq!(stats.uncommitted_count.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_commits_pulled.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.total_refs_fetched.load(Ordering::Relaxed), 0);
         assert!(stats
             .failed_repos
             .lock()
@@ -31,6 +32,11 @@ mod tests {
             .pulled_repo_details
             .lock()
             .expect("Failed to lock pulled_repo_details mutex in test")
+            .is_empty());
+        assert!(stats
+            .fetched_repo_details
+            .lock()
+            .expect("Failed to lock fetched_repo_details mutex in test")
             .is_empty());
         assert!(stats
             .operation_outcomes
@@ -90,6 +96,30 @@ mod tests {
         assert_eq!(
             pulled.as_slice(),
             &[("repo1".to_string(), "/path/1".to_string(), 7)]
+        );
+    }
+
+    #[test]
+    fn test_update_with_fetched_status() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "repo1",
+            "/path/1",
+            &Status::Fetched,
+            "2 remote refs updated",
+            false,
+        );
+
+        assert_eq!(stats.fetched_repos.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.total_refs_fetched.load(Ordering::Relaxed), 2);
+        assert_eq!(stats.synced_repos.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            stats
+                .fetched_repo_details
+                .lock()
+                .expect("Failed to lock fetched_repo_details mutex in test")
+                .as_slice(),
+            &[("repo1".to_string(), "/path/1".to_string(), 2)]
         );
     }
 
@@ -488,6 +518,102 @@ mod tests {
         assert!(!report.contains("Synced"));
         assert_eq!(report.matches("blocked").count(), 2);
         assert!(!report.contains("blocked                   uncommitted changes"));
+    }
+
+    #[test]
+    fn test_generate_pull_report_outcomes_are_exclusive_and_attributable() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "current",
+            "/repos/current",
+            &Status::Synced,
+            "up to date",
+            false,
+        );
+        stats.update(
+            "updated",
+            "/repos/updated",
+            &Status::Pulled,
+            "3 commits pulled",
+            false,
+        );
+        stats.update(
+            "blocked",
+            "/repos/blocked",
+            &Status::PullError,
+            "authentication failed",
+            false,
+        );
+        stats.update(
+            "missing",
+            "/repos/missing",
+            &Status::NoRemote,
+            "no remote",
+            false,
+        );
+
+        let report = stats.generate_pull_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("Pulled       1 repo / 3 commits"));
+        assert!(report.contains("Up to date   1"));
+        assert!(report.contains("Failed       1"));
+        assert!(report.contains("Skipped      1"));
+        assert!(report.contains("Checked      4"));
+        assert!(report.contains("▌ Pulled"));
+        assert!(report.contains("path: /repos/updated"));
+        assert!(report.contains("▌ Failed"));
+        assert!(report.contains("path: /repos/blocked"));
+        assert!(report.contains("▌ Skipped"));
+        assert!(report.contains("path: /repos/missing"));
+        assert_eq!(report.matches("blocked").count(), 2);
+    }
+
+    #[test]
+    fn test_generate_fetch_report_uses_shared_exclusive_contract() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "current",
+            "/repos/current",
+            &Status::Synced,
+            "up to date",
+            false,
+        );
+        stats.update(
+            "updated",
+            "/repos/updated",
+            &Status::Fetched,
+            "2 remote refs updated",
+            false,
+        );
+        stats.update(
+            "blocked",
+            "/repos/blocked",
+            &Status::Error,
+            "authentication failed",
+            false,
+        );
+        stats.update(
+            "missing",
+            "/repos/missing",
+            &Status::NoRemote,
+            "no remote",
+            false,
+        );
+
+        let report = stats.generate_fetch_report(Duration::from_secs(3));
+
+        assert!(report.contains("repos fetch"));
+        assert!(report.contains("Fetched      1 repo / 2 refs"));
+        assert!(report.contains("Up to date   1"));
+        assert!(report.contains("Failed       1"));
+        assert!(report.contains("Skipped      1"));
+        assert!(report.contains("Checked      4"));
+        assert!(report.contains("▌ Fetched"));
+        assert!(report.contains("path: /repos/updated"));
+        assert!(report.contains("▌ Failed"));
+        assert!(report.contains("path: /repos/blocked"));
+        assert!(report.contains("▌ Skipped"));
+        assert!(report.contains("path: /repos/missing"));
     }
 
     #[test]

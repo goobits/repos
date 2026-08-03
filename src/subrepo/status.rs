@@ -1,10 +1,12 @@
 //! Subrepo status analysis and drift detection
 
 use super::SubrepoInstance;
+use crate::core::truncate_text;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
 const RESET: &str = "\x1b[0m";
+const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
 const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
 const GREEN: &str = "\x1b[1;38;5;114m";
 const YELLOW: &str = "\x1b[1;38;5;221m";
@@ -296,36 +298,23 @@ fn paint(color: &str, value: &str) -> String {
     format!("{color}{value}{RESET}")
 }
 
-fn truncate_text(value: &str, width: usize) -> String {
-    let char_count = value.chars().count();
-    if char_count <= width {
-        return value.to_string();
-    }
-
-    if width <= 1 {
-        return "…".to_string();
-    }
-
-    let mut truncated = value.chars().take(width - 1).collect::<String>();
-    truncated.push('…');
-    truncated
-}
-
 /// Display subrepo status (problem-first by default)
 pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
+    println!("\n{}", generate_status_summary(statuses));
+
     if statuses.is_empty() {
-        println!("\n✅ No shared nested repositories found.");
-        println!("   Run 'repos nested validate' to see all nested repositories.\n");
+        println!("\n{BOLD_PURPLE}▌ Result{RESET}");
+        println!("  {DIM}No shared nested repositories found.{RESET}");
+        println!(
+            "  {DIM}↳ next: run `repos nested validate` to see every nested repository{RESET}\n"
+        );
         return;
     }
 
     let drifted: Vec<_> = statuses.iter().filter(|s| s.has_drift).collect();
     let synced: Vec<_> = statuses.iter().filter(|s| !s.has_drift).collect();
 
-    println!(
-        "\n🔍 Analyzing {} shared nested repositories...\n",
-        statuses.len()
-    );
+    println!();
 
     // Show drifted subrepos
     if !drifted.is_empty() {
@@ -365,6 +354,20 @@ pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
     }
 
     println!();
+}
+
+fn generate_status_summary(statuses: &[SubrepoStatus]) -> String {
+    let drifted = statuses.iter().filter(|status| status.has_drift).count();
+    let synced = statuses.len().saturating_sub(drifted);
+    [
+        format!("{BOLD_BLUE}repos nested status{RESET}"),
+        String::new(),
+        format!("{BOLD_PURPLE}▌ Summary{RESET}"),
+        format!("  {GREEN}✓{RESET} {:<16}{synced}", "Synced"),
+        format!("  {YELLOW}!{RESET} {:<16}{drifted}", "Drifted"),
+        format!("  {DIM}·{RESET} {:<16}{}", "Checked", statuses.len()),
+    ]
+    .join("\n")
 }
 
 /// Analyze the uncommitted state across instances
@@ -605,4 +608,70 @@ fn display_synced_status(status: &SubrepoStatus) {
     }
 
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_drift_section, generate_status_summary, SubrepoStatus};
+    use crate::subrepo::SubrepoInstance;
+    use std::path::PathBuf;
+
+    fn instance(
+        parent: &str,
+        commit: &str,
+        short: &str,
+        dirty: bool,
+        timestamp: i64,
+    ) -> SubrepoInstance {
+        SubrepoInstance {
+            parent_repo: parent.to_string(),
+            parent_path: PathBuf::from(parent),
+            subrepo_name: "shared".to_string(),
+            subrepo_path: PathBuf::from(parent).join("packages/shared"),
+            relative_path: "packages/shared".to_string(),
+            commit_hash: commit.to_string(),
+            short_hash: short.to_string(),
+            remote_url: Some("github.com/team/shared".to_string()),
+            has_uncommitted: dirty,
+            commit_timestamp: timestamp,
+        }
+    }
+
+    #[test]
+    fn nested_status_contract_counts_groups_and_names_each_drifted_copy() {
+        let drifted = SubrepoStatus::new(
+            "shared".to_string(),
+            "github.com/team/shared".to_string(),
+            vec![
+                instance("alpha", "aaaaaaaa", "aaaaaaa", false, 2),
+                instance("beta", "bbbbbbbb", "bbbbbbb", false, 1),
+                instance("gamma", "cccccccc", "ccccccc", true, 3),
+            ],
+        );
+        let synced = SubrepoStatus::new(
+            "stable".to_string(),
+            "github.com/team/stable".to_string(),
+            vec![
+                instance("alpha", "dddddddd", "ddddddd", false, 1),
+                instance("beta", "dddddddd", "ddddddd", false, 1),
+            ],
+        );
+        let statuses = vec![drifted, synced];
+
+        let summary = generate_status_summary(&statuses);
+        assert!(summary.contains("repos nested status"));
+        assert!(summary.contains("Synced          1"));
+        assert!(summary.contains("Drifted         1"));
+        assert!(summary.contains("Checked         2"));
+
+        let drift = format_drift_section(&statuses).join("\n");
+        assert!(drift.contains("Nested Package Drift"));
+        assert!(drift.contains("repos nested sync shared --to aaaaaaa"));
+        assert!(drift.contains("alpha/packages/shared"));
+        assert!(drift.contains("beta/packages/shared"));
+        assert!(drift.contains("gamma/packages/shared"));
+        assert!(drift.contains("✓ target"));
+        assert!(drift.contains("↓ update"));
+        assert!(drift.contains("! dirty"));
+    }
 }

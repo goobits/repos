@@ -1,9 +1,186 @@
 //! Subrepo synchronization operations
 
 use super::{SubrepoInstance, ValidationReport};
+use crate::core::{clean_error_message, format_relative_repo_path, truncate_text};
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
+
+const RESET: &str = "\x1b[0m";
+const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
+const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+const GREEN: &str = "\x1b[1;38;5;114m";
+const YELLOW: &str = "\x1b[1;38;5;221m";
+const RED: &str = "\x1b[1;38;5;203m";
+const DIM: &str = "\x1b[2m";
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NestedOperation {
+    Sync,
+    Update,
+}
+
+impl NestedOperation {
+    fn command(self) -> &'static str {
+        match self {
+            Self::Sync => "sync",
+            Self::Update => "update",
+        }
+    }
+
+    fn changed_label(self) -> &'static str {
+        match self {
+            Self::Sync => "Synced",
+            Self::Update => "Updated",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NestedOutcomeKind {
+    Changed,
+    Unchanged,
+    Skipped,
+    Failed,
+}
+
+struct NestedOutcome {
+    repository: String,
+    path: String,
+    kind: NestedOutcomeKind,
+    message: String,
+    next: Option<String>,
+}
+
+impl NestedOutcome {
+    fn new(
+        instance: &SubrepoInstance,
+        kind: NestedOutcomeKind,
+        message: impl Into<String>,
+        next: Option<String>,
+    ) -> Self {
+        Self {
+            repository: instance.parent_repo.clone(),
+            path: instance.subrepo_path.to_string_lossy().into_owned(),
+            kind,
+            message: message.into(),
+            next,
+        }
+    }
+}
+
+fn generate_operation_report(operation: NestedOperation, outcomes: &[NestedOutcome]) -> String {
+    let mut outcomes = outcomes.iter().collect::<Vec<_>>();
+    outcomes.sort_by(|left, right| {
+        left.repository
+            .cmp(&right.repository)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    let count = |kind| {
+        outcomes
+            .iter()
+            .filter(|outcome| outcome.kind == kind)
+            .count()
+    };
+    let changed = count(NestedOutcomeKind::Changed);
+    let unchanged = count(NestedOutcomeKind::Unchanged);
+    let skipped = count(NestedOutcomeKind::Skipped);
+    let failed = count(NestedOutcomeKind::Failed);
+
+    let mut lines = vec![
+        format!("{BOLD_BLUE}repos nested {}{RESET}", operation.command()),
+        String::new(),
+        format!("{BOLD_PURPLE}▌ Summary{RESET}"),
+        format!(
+            "  {GREEN}✓{RESET} {:<16}{changed}",
+            operation.changed_label()
+        ),
+    ];
+    if unchanged > 0 {
+        lines.push(format!("  {GREEN}✓{RESET} {:<16}{unchanged}", "Up to date"));
+    }
+    if skipped > 0 {
+        lines.push(format!("  {YELLOW}!{RESET} {:<16}{skipped}", "Skipped"));
+    }
+    if failed > 0 {
+        lines.push(format!("  {RED}!{RESET} {:<16}{failed}", "Failed"));
+    }
+    lines.push(format!(
+        "  {DIM}·{RESET} {:<16}{}",
+        "Checked",
+        outcomes.len()
+    ));
+
+    append_operation_section(
+        &mut lines,
+        &outcomes,
+        NestedOutcomeKind::Changed,
+        operation.changed_label(),
+        GREEN,
+        "✓",
+    );
+    append_operation_section(
+        &mut lines,
+        &outcomes,
+        NestedOutcomeKind::Unchanged,
+        "Up to Date",
+        GREEN,
+        "✓",
+    );
+    append_operation_section(
+        &mut lines,
+        &outcomes,
+        NestedOutcomeKind::Skipped,
+        "Skipped",
+        YELLOW,
+        "!",
+    );
+    append_operation_section(
+        &mut lines,
+        &outcomes,
+        NestedOutcomeKind::Failed,
+        "Failed",
+        RED,
+        "!",
+    );
+
+    lines.join("\n")
+}
+
+fn append_operation_section(
+    lines: &mut Vec<String>,
+    outcomes: &[&NestedOutcome],
+    kind: NestedOutcomeKind,
+    heading: &str,
+    color: &str,
+    marker: &str,
+) {
+    let matching = outcomes
+        .iter()
+        .filter(|outcome| outcome.kind == kind)
+        .copied()
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return;
+    }
+
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ {heading}{RESET}"));
+    for outcome in matching {
+        lines.push(format!(
+            "  {color}{marker}{RESET} {:24} {}",
+            truncate_text(&outcome.repository, 24),
+            outcome.message
+        ));
+        lines.push(format!(
+            "    {DIM}↳ path: {}{RESET}",
+            format_relative_repo_path(&outcome.path)
+        ));
+        if let Some(next) = &outcome.next {
+            lines.push(format!("    {DIM}↳ next: {next}{RESET}"));
+        }
+    }
+}
 
 /// Convert path to string with proper error handling
 fn path_to_str(path: &Path) -> Result<&str> {
@@ -176,13 +353,24 @@ pub fn sync_subrepo_with_report(
     let short_commit = target_commit.chars().take(7).collect::<String>();
     println!("\n🔄 Syncing {name} to {short_commit}...\n");
 
-    let mut success_count = 0;
-    let mut skip_count = 0;
-    let mut error_count = 0;
-    let mut stashed_count = 0;
+    let mut outcomes = Vec::with_capacity(instances.len());
 
     for instance in &instances {
-        let has_changes = has_uncommitted_changes(&instance.subrepo_path)?;
+        let has_changes = match has_uncommitted_changes(&instance.subrepo_path) {
+            Ok(has_changes) => has_changes,
+            Err(error) => {
+                let error = clean_error_message(&error.to_string());
+                println!("  ❌ {} (status failed: {})", instance.parent_repo, error);
+                outcomes.push(NestedOutcome::new(
+                    instance,
+                    NestedOutcomeKind::Failed,
+                    format!("status failed: {error}"),
+                    Some("inspect this nested repository, then retry".to_string()),
+                ));
+                continue;
+            }
+        };
+        let mut stashed = false;
 
         // Handle uncommitted changes
         if has_changes {
@@ -190,11 +378,17 @@ pub fn sync_subrepo_with_report(
                 // Stash changes before syncing
                 match stash_changes(&instance.subrepo_path) {
                     Ok(()) => {
-                        stashed_count += 1;
+                        stashed = true;
                     }
                     Err(e) => {
-                        println!("  ❌ {} (stash failed: {})", instance.parent_repo, e);
-                        error_count += 1;
+                        let error = clean_error_message(&e.to_string());
+                        println!("  ❌ {} (stash failed: {})", instance.parent_repo, error);
+                        outcomes.push(NestedOutcome::new(
+                            instance,
+                            NestedOutcomeKind::Failed,
+                            format!("stash failed: {error}"),
+                            Some("resolve the stash failure, then retry".to_string()),
+                        ));
                         continue;
                     }
                 }
@@ -204,7 +398,14 @@ pub fn sync_subrepo_with_report(
                     "  ⚠️  {} (uncommitted changes, use --stash or clean the repo first)",
                     instance.parent_repo
                 );
-                skip_count += 1;
+                outcomes.push(NestedOutcome::new(
+                    instance,
+                    NestedOutcomeKind::Skipped,
+                    "uncommitted changes",
+                    Some(format!(
+                        "run `repos nested sync {name} --to {short_commit} --stash` or clean it"
+                    )),
+                ));
                 continue;
             }
             // If force=true, proceed without stashing (will discard changes)
@@ -214,32 +415,46 @@ pub fn sync_subrepo_with_report(
         match checkout_commit(&instance.subrepo_path, target_commit) {
             Ok(()) => {
                 println!("  ✅ {}", instance.parent_repo);
-                success_count += 1;
+                let (message, next) = if stashed {
+                    (
+                        format!("checked out {short_commit}; local changes stashed"),
+                        Some(format!(
+                            "run `git -C '{}' stash pop` when ready to restore them",
+                            format_relative_repo_path(&instance.subrepo_path.to_string_lossy())
+                        )),
+                    )
+                } else {
+                    (format!("checked out {short_commit}"), None)
+                };
+                outcomes.push(NestedOutcome::new(
+                    instance,
+                    NestedOutcomeKind::Changed,
+                    message,
+                    next,
+                ));
             }
             Err(e) => {
-                println!("  ❌ {} ({})", instance.parent_repo, e);
-                error_count += 1;
+                let error = clean_error_message(&e.to_string());
+                println!("  ❌ {} ({})", instance.parent_repo, error);
+                outcomes.push(NestedOutcome::new(
+                    instance,
+                    NestedOutcomeKind::Failed,
+                    error,
+                    Some("resolve the checkout failure, then retry".to_string()),
+                ));
             }
         }
     }
 
-    // Summary
-    println!();
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("📊 Sync Summary");
-    println!("   ✅ {success_count} synced");
-    if stashed_count > 0 {
-        println!("   📦 {stashed_count} stashed (changes saved, run 'git stash pop' to restore)");
-    }
-    if skip_count > 0 {
-        println!("   ⚠️  {skip_count} skipped (uncommitted changes)");
-    }
-    if error_count > 0 {
-        println!("   ❌ {error_count} failed");
-    }
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    println!(
+        "\n{}\n",
+        generate_operation_report(NestedOperation::Sync, &outcomes)
+    );
 
+    let error_count = outcomes
+        .iter()
+        .filter(|outcome| outcome.kind == NestedOutcomeKind::Failed)
+        .count();
     if error_count > 0 {
         anyhow::bail!("{error_count} repositories failed to sync");
     }
@@ -269,23 +484,47 @@ pub fn update_subrepo_with_report(
 
     println!("🔄 Updating {name} to {short_latest}...\n");
 
-    let mut success_count = 0;
-    let mut skip_count = 0;
-    let mut error_count = 0;
+    let mut outcomes = Vec::with_capacity(instances.len());
 
     for instance in &instances {
         // Check if already at latest
         if instance.commit_hash == latest {
             println!("  ✨ {} (already at latest)", instance.parent_repo);
-            success_count += 1;
+            outcomes.push(NestedOutcome::new(
+                instance,
+                NestedOutcomeKind::Unchanged,
+                format!("already at {short_latest}"),
+                None,
+            ));
             continue;
         }
 
         // Check for uncommitted changes
-        if !force && has_uncommitted_changes(&instance.subrepo_path)? {
-            println!("  ⚠️  {} (uncommitted changes)", instance.parent_repo);
-            skip_count += 1;
-            continue;
+        if !force {
+            match has_uncommitted_changes(&instance.subrepo_path) {
+                Ok(true) => {
+                    println!("  ⚠️  {} (uncommitted changes)", instance.parent_repo);
+                    outcomes.push(NestedOutcome::new(
+                        instance,
+                        NestedOutcomeKind::Skipped,
+                        "uncommitted changes",
+                        Some("commit or stash the local changes, then retry".to_string()),
+                    ));
+                    continue;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    let error = clean_error_message(&error.to_string());
+                    println!("  ❌ {} (status failed: {})", instance.parent_repo, error);
+                    outcomes.push(NestedOutcome::new(
+                        instance,
+                        NestedOutcomeKind::Failed,
+                        format!("status failed: {error}"),
+                        Some("inspect this nested repository, then retry".to_string()),
+                    ));
+                    continue;
+                }
+            }
         }
 
         // Fetch and checkout
@@ -299,15 +538,28 @@ pub fn update_subrepo_with_report(
                                 "  ⚠️  {} (local commits diverge from remote)",
                                 instance.parent_repo
                             );
-                            skip_count += 1;
+                            outcomes.push(NestedOutcome::new(
+                                instance,
+                                NestedOutcomeKind::Skipped,
+                                "local commits diverge from remote",
+                                Some("review the local commits and choose a target with `repos nested sync`".to_string()),
+                            ));
                             continue;
                         }
                         Err(e) => {
+                            let error = clean_error_message(&e.to_string());
                             println!(
                                 "  ❌ {} (history check failed: {})",
-                                instance.parent_repo, e
+                                instance.parent_repo, error
                             );
-                            error_count += 1;
+                            outcomes.push(NestedOutcome::new(
+                                instance,
+                                NestedOutcomeKind::Failed,
+                                format!("history check failed: {error}"),
+                                Some(
+                                    "inspect the nested repository history, then retry".to_string(),
+                                ),
+                            ));
                             continue;
                         }
                     }
@@ -320,35 +572,47 @@ pub fn update_subrepo_with_report(
                             "  ✅ {} ({} → {})",
                             instance.parent_repo, old_short, short_latest
                         );
-                        success_count += 1;
+                        outcomes.push(NestedOutcome::new(
+                            instance,
+                            NestedOutcomeKind::Changed,
+                            format!("{old_short} → {short_latest}"),
+                            None,
+                        ));
                     }
                     Err(e) => {
-                        println!("  ❌ {} ({})", instance.parent_repo, e);
-                        error_count += 1;
+                        let error = clean_error_message(&e.to_string());
+                        println!("  ❌ {} ({})", instance.parent_repo, error);
+                        outcomes.push(NestedOutcome::new(
+                            instance,
+                            NestedOutcomeKind::Failed,
+                            error,
+                            Some("resolve the checkout failure, then retry".to_string()),
+                        ));
                     }
                 }
             }
             Err(e) => {
-                println!("  ❌ {} (fetch failed: {})", instance.parent_repo, e);
-                error_count += 1;
+                let error = clean_error_message(&e.to_string());
+                println!("  ❌ {} (fetch failed: {})", instance.parent_repo, error);
+                outcomes.push(NestedOutcome::new(
+                    instance,
+                    NestedOutcomeKind::Failed,
+                    format!("fetch failed: {error}"),
+                    Some("check the nested remote and authentication, then retry".to_string()),
+                ));
             }
         }
     }
 
-    // Summary
-    println!();
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("📊 Update Summary");
-    println!("   ✅ {success_count} updated");
-    if skip_count > 0 {
-        println!("   ⚠️  {skip_count} skipped (manual review required)");
-    }
-    if error_count > 0 {
-        println!("   ❌ {error_count} failed");
-    }
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    println!(
+        "\n{}\n",
+        generate_operation_report(NestedOperation::Update, &outcomes)
+    );
 
+    let error_count = outcomes
+        .iter()
+        .filter(|outcome| outcome.kind == NestedOutcomeKind::Failed)
+        .count();
     if error_count > 0 {
         anyhow::bail!("{error_count} repositories failed to update");
     }
@@ -358,7 +622,10 @@ pub fn update_subrepo_with_report(
 
 #[cfg(test)]
 mod tests {
-    use super::find_instances_by_name;
+    use super::{
+        find_instances_by_name, generate_operation_report, NestedOperation, NestedOutcome,
+        NestedOutcomeKind,
+    };
     use crate::subrepo::{SubrepoInstance, ValidationReport};
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -398,5 +665,54 @@ mod tests {
 
         let error = find_instances_by_name(&report, "shared").unwrap_err();
         assert!(error.to_string().contains("ambiguous"));
+    }
+
+    #[test]
+    fn final_nested_mutation_report_names_every_outcome() {
+        let outcomes = vec![
+            NestedOutcome {
+                repository: "alpha".to_string(),
+                path: "alpha/packages/shared".to_string(),
+                kind: NestedOutcomeKind::Changed,
+                message: "abc1234 → def5678".to_string(),
+                next: None,
+            },
+            NestedOutcome {
+                repository: "beta".to_string(),
+                path: "beta/packages/shared".to_string(),
+                kind: NestedOutcomeKind::Unchanged,
+                message: "already at def5678".to_string(),
+                next: None,
+            },
+            NestedOutcome {
+                repository: "gamma".to_string(),
+                path: "gamma/packages/shared".to_string(),
+                kind: NestedOutcomeKind::Skipped,
+                message: "uncommitted changes".to_string(),
+                next: Some("commit or stash the local changes, then retry".to_string()),
+            },
+            NestedOutcome {
+                repository: "omega".to_string(),
+                path: "omega/packages/shared".to_string(),
+                kind: NestedOutcomeKind::Failed,
+                message: "fetch failed: authentication failed".to_string(),
+                next: Some("check the nested remote and authentication, then retry".to_string()),
+            },
+        ];
+
+        let report = generate_operation_report(NestedOperation::Update, &outcomes);
+
+        assert!(report.contains("repos nested update"));
+        assert!(report.contains("Updated         1"));
+        assert!(report.contains("Up to date      1"));
+        assert!(report.contains("Skipped         1"));
+        assert!(report.contains("Failed          1"));
+        assert!(report.contains("Checked         4"));
+        for repository in ["alpha", "beta", "gamma", "omega"] {
+            assert!(report.contains(repository));
+            assert!(report.contains(&format!("path: ./{repository}/packages/shared")));
+        }
+        assert!(report.contains("next: commit or stash"));
+        assert!(report.contains("next: check the nested remote and authentication"));
     }
 }

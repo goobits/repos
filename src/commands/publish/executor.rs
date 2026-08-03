@@ -1,52 +1,189 @@
 use super::planner::PackageToPublish;
-use crate::core::{create_processing_context, create_progress_bar};
+use crate::core::{
+    clean_error_message, create_processing_context, create_progress_bar, format_relative_repo_path,
+    truncate_text,
+};
 use crate::git::create_and_push_tag;
 use crate::package::PublishStatus;
 use futures::stream::{FuturesUnordered, StreamExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 const PUBLISHING_MESSAGE: &str = "publishing...";
+const RESET: &str = "\x1b[0m";
+const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
+const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
+const GREEN: &str = "\x1b[1;38;5;114m";
+const YELLOW: &str = "\x1b[1;38;5;221m";
+const RED: &str = "\x1b[1;38;5;203m";
+const DIM: &str = "\x1b[2m";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PublishOutcomeKind {
+    Published,
+    AlreadyPublished,
+    Failed,
+}
+
+#[derive(Debug)]
+struct PublishOutcome {
+    package: String,
+    path: PathBuf,
+    kind: PublishOutcomeKind,
+    message: String,
+}
 
 /// Statistics for publish operations
 #[derive(Default)]
 struct PublishStatistics {
-    published: usize,
-    already_published: usize,
-    errors: Vec<(String, String)>,
+    outcomes: Vec<PublishOutcome>,
 }
 
 impl PublishStatistics {
-    fn update(&mut self, status: &PublishStatus, repo_name: &str, message: &str) {
-        match status {
-            PublishStatus::Published => self.published += 1,
-            PublishStatus::AlreadyPublished => self.already_published += 1,
-            PublishStatus::Error => self
-                .errors
-                .push((repo_name.to_string(), message.to_string())),
-            _ => {}
-        }
+    fn update(&mut self, status: &PublishStatus, package: &str, path: &Path, message: &str) {
+        let kind = match status {
+            PublishStatus::Published => PublishOutcomeKind::Published,
+            PublishStatus::AlreadyPublished => PublishOutcomeKind::AlreadyPublished,
+            PublishStatus::Error => PublishOutcomeKind::Failed,
+            PublishStatus::Skipped | PublishStatus::DryRunOk => return,
+        };
+        self.outcomes.push(PublishOutcome {
+            package: package.to_string(),
+            path: path.to_path_buf(),
+            kind,
+            message: clean_error_message(message),
+        });
     }
 
-    fn generate_summary(&self, _total: usize) -> String {
+    fn count(&self, kind: PublishOutcomeKind) -> usize {
+        self.outcomes
+            .iter()
+            .filter(|outcome| outcome.kind == kind)
+            .count()
+    }
+
+    fn generate_live_summary(&self, total: usize) -> String {
         let mut parts = Vec::new();
+        let published = self.count(PublishOutcomeKind::Published);
+        let already_published = self.count(PublishOutcomeKind::AlreadyPublished);
+        let failed = self.count(PublishOutcomeKind::Failed);
 
-        if self.published > 0 {
-            parts.push(format!("✅ {} published", self.published));
+        if published > 0 {
+            parts.push(format!("✅ {published} published"));
         }
 
-        if self.already_published > 0 {
-            parts.push(format!("⚠️  {} already published", self.already_published));
+        if already_published > 0 {
+            parts.push(format!("⚠️  {already_published} already published"));
         }
 
-        if !self.errors.is_empty() {
-            parts.push(format!("❌ {} failed", self.errors.len()));
+        if failed > 0 {
+            parts.push(format!("❌ {failed} failed"));
         }
 
-        if parts.is_empty() {
-            "No changes".to_string()
-        } else {
-            parts.join("  ")
+        let remaining = total.saturating_sub(self.outcomes.len());
+        parts.push(format!("↳ publishing {remaining} remaining"));
+
+        parts.join("  ")
+    }
+
+    fn generate_report(&self, duration: Duration) -> String {
+        let mut outcomes = self.outcomes.iter().collect::<Vec<_>>();
+        outcomes.sort_by(|left, right| {
+            left.package
+                .cmp(&right.package)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+
+        let published = self.count(PublishOutcomeKind::Published);
+        let already_published = self.count(PublishOutcomeKind::AlreadyPublished);
+        let failed = self.count(PublishOutcomeKind::Failed);
+        let mut lines = vec![
+            format!("{BOLD_BLUE}repos publish{RESET}"),
+            format!(
+                "{GREEN}✓{RESET} Completed in {:.1}s",
+                duration.as_secs_f64()
+            ),
+            String::new(),
+            format!("{BOLD_PURPLE}▌ Summary{RESET}"),
+            format!("  {GREEN}✓{RESET} {:<18}{published}", "Published"),
+            format!(
+                "  {GREEN}✓{RESET} {:<18}{already_published}",
+                "Already published"
+            ),
+        ];
+        if failed > 0 {
+            lines.push(format!("  {RED}!{RESET} {:<18}{failed}", "Failed"));
+        }
+        lines.push(format!(
+            "  {DIM}·{RESET} {:<18}{}",
+            "Checked",
+            self.outcomes.len()
+        ));
+
+        append_outcome_section(
+            &mut lines,
+            &outcomes,
+            PublishOutcomeKind::Published,
+            "Published",
+            GREEN,
+            "✓",
+        );
+        append_outcome_section(
+            &mut lines,
+            &outcomes,
+            PublishOutcomeKind::AlreadyPublished,
+            "Already published",
+            YELLOW,
+            "·",
+        );
+        append_outcome_section(
+            &mut lines,
+            &outcomes,
+            PublishOutcomeKind::Failed,
+            "Failed",
+            RED,
+            "!",
+        );
+
+        lines.join("\n")
+    }
+}
+
+fn append_outcome_section(
+    lines: &mut Vec<String>,
+    outcomes: &[&PublishOutcome],
+    kind: PublishOutcomeKind,
+    heading: &str,
+    color: &str,
+    marker: &str,
+) {
+    let matching = outcomes
+        .iter()
+        .filter(|outcome| outcome.kind == kind)
+        .copied()
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return;
+    }
+
+    lines.push(String::new());
+    lines.push(format!("{BOLD_PURPLE}▌ {heading}{RESET}"));
+    for outcome in matching {
+        lines.push(format!(
+            "  {color}{marker}{RESET} {:24} {}",
+            truncate_text(&outcome.package, 24),
+            outcome.message
+        ));
+        lines.push(format!(
+            "    {DIM}↳ path: {}{RESET}",
+            format_relative_repo_path(&outcome.path.to_string_lossy())
+        ));
+        if kind == PublishOutcomeKind::Failed {
+            lines.push(format!(
+                "    {DIM}↳ next: inspect registry credentials/version, then retry `repos publish {}`{RESET}",
+                outcome.package
+            ));
         }
     }
 }
@@ -145,8 +282,8 @@ pub async fn execute_publish(
 
             {
                 let mut stats_guard = stats_clone.lock().expect("Mutex poisoned");
-                stats_guard.update(&status, &pkg.name, &final_message);
-                footer_clone.set_message(stats_guard.generate_summary(total_packages));
+                stats_guard.update(&status, &pkg.name, &pkg.path, &final_message);
+                footer_clone.set_message(stats_guard.generate_live_summary(total_packages));
             }
         };
 
@@ -157,21 +294,56 @@ pub async fn execute_publish(
     footer_pb.finish();
 
     let final_stats = statistics.lock().expect("Mutex poisoned");
-    if !final_stats.errors.is_empty() {
-        println!("\n{}", "━".repeat(70));
-        println!("❌ Failed to publish:\n");
-        for (repo, error) in &final_stats.errors {
-            println!("  • {repo}: {error}");
-        }
-        println!("{}", "━".repeat(70));
-    }
-    println!();
+    println!("\n{}\n", final_stats.generate_report(start_time.elapsed()));
 
-    let error_count = final_stats.errors.len();
+    let error_count = final_stats.count(PublishOutcomeKind::Failed);
     drop(final_stats);
     if error_count > 0 {
         anyhow::bail!("{error_count} packages failed to publish completely");
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn final_report_names_every_publish_outcome_and_keeps_counts_exclusive() {
+        let mut stats = PublishStatistics::default();
+        stats.update(
+            &PublishStatus::Published,
+            "alpha",
+            Path::new("alpha"),
+            "published v1.2.3",
+        );
+        stats.update(
+            &PublishStatus::AlreadyPublished,
+            "beta",
+            Path::new("beta"),
+            "version already published",
+        );
+        stats.update(
+            &PublishStatus::Error,
+            "gamma",
+            Path::new("gamma"),
+            "registry rejected package",
+        );
+
+        let report = stats.generate_report(Duration::from_secs(3));
+
+        assert!(report.contains("repos publish"));
+        assert!(report.contains("Published         1"));
+        assert!(report.contains("Already published 1"));
+        assert!(report.contains("Failed            1"));
+        assert!(report.contains("Checked           3"));
+        assert!(report.contains("▌ Published"));
+        assert!(report.contains("path: ./alpha"));
+        assert!(report.contains("▌ Already published"));
+        assert!(report.contains("path: ./beta"));
+        assert!(report.contains("▌ Failed"));
+        assert!(report.contains("path: ./gamma"));
+        assert!(report.contains("next: inspect registry credentials/version"));
+    }
 }

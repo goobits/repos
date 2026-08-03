@@ -259,7 +259,7 @@ async fn save_one_repo(
         push_if_needed(repo_path, &fetch_result, auto_upstream).await;
 
     match push_status {
-        Status::Pushed | Status::Synced => (
+        Status::Pushed | Status::Fetched | Status::Synced => (
             Status::Committed,
             format!("committed; {push_message}"),
             has_uncommitted,
