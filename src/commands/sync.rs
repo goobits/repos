@@ -314,7 +314,7 @@ pub async fn handle_sync_command(
     );
     drop(push_stats);
     drop(pull_stats);
-    println!("\n{report}\n");
+    println!("{report}\n");
     set_terminal_title_and_flush("✅ repos sync");
 
     let total_errors = pull_run.error_count + push_run.error_count;
@@ -458,7 +458,6 @@ async fn process_fetch_repositories(
     footer_pb.finish_and_clear();
 
     let final_stats = acquire_stats_lock(&statistics);
-    println!();
     println!(
         "{}",
         final_stats.generate_fetch_report(start_time.elapsed())
@@ -731,7 +730,6 @@ async fn process_push_repositories(
         } else {
             format_nested_drift_work_items()
         };
-        println!();
         let report = if drift_count == 0 && drift_lines.is_empty() {
             final_stats.generate_push_report(context.start_time.elapsed(), show_changes)
         } else {
@@ -1006,7 +1004,6 @@ async fn process_pull_repositories(
         } else {
             format_nested_drift_work_items()
         };
-        println!();
         let report = if drift_count == 0 && drift_lines.is_empty() {
             final_stats.generate_pull_report(context.start_time.elapsed(), show_changes)
         } else {

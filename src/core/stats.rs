@@ -1,5 +1,6 @@
 //! Statistics tracking for repository operations
 
+use super::attention::{append_project_attention_section, AttentionKind, ProjectAttention};
 use super::report::RepositoryOutcome;
 use crate::core::config::{
     ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, TIMEOUT_SECONDS_DISPLAY,
@@ -338,7 +339,7 @@ impl SyncStatistics {
         let remaining = (total_repos as u64).saturating_sub(processed);
 
         format!(
-            "  {GREEN}✓{RESET} {up_to_date} up to date   {GREEN}{marker}{RESET} {transferred_repos} {verb} / {transferred_commits} {unit}   {RED}!{RESET} {errors} failed   {DIM}·{RESET} {skipped} skipped   {YELLOW}!{RESET} {follow_up} follow-up\n  {DIM}↳ scanning {remaining} remaining{RESET}",
+            "  {GREEN}✓{RESET} {up_to_date} up to date   {GREEN}{marker}{RESET} {transferred_repos} {verb} / {transferred_commits} {unit}   {RED}!{RESET} {errors} failed   {DIM}·{RESET} {skipped} skipped   {YELLOW}~{RESET} {follow_up} follow-up\n  {DIM}↳ scanning {remaining} remaining{RESET}",
         )
     }
 
@@ -466,7 +467,7 @@ impl SyncStatistics {
         }
         if follow_up_count > 0 {
             lines.push(format!(
-                "  {YELLOW}!{RESET} {:<13}{follow_up_count}",
+                "  {YELLOW}~{RESET} {:<13}{follow_up_count}",
                 "Follow-up"
             ));
         }
@@ -495,14 +496,25 @@ impl SyncStatistics {
         }
         lines.push(String::new());
 
-        append_failed_section(&mut lines, transfer, errors, &failed_repos, &git_failures);
-        append_transfer_skips(&mut lines, transfer, &skipped_outcomes);
-        append_transfer_follow_up(
-            &mut lines,
-            &local_follow_up,
-            show_changes,
-            extra_follow_up_lines,
-        );
+        let mut attention =
+            transfer_failure_attention(transfer, errors, &failed_repos, &git_failures);
+        attention.extend(transfer_skip_attention(transfer, &skipped_outcomes));
+        attention.extend(local_follow_up.into_iter().map(|(repository, path)| {
+            ProjectAttention::new(
+                AttentionKind::FollowUp,
+                repository,
+                path,
+                "uncommitted changes",
+                "commit or stash the local changes",
+                None,
+            )
+        }));
+        append_project_attention_section(&mut lines, attention, show_changes);
+        if !extra_follow_up_lines.is_empty() {
+            lines.push(String::new());
+            lines.extend(extra_follow_up_lines.iter().cloned());
+            lines.push(String::new());
+        }
 
         while lines.last().is_some_and(String::is_empty) {
             lines.pop();
@@ -564,45 +576,50 @@ fn clone_failure_map(
     }
 }
 
-fn append_failed_section(
-    lines: &mut Vec<String>,
+fn transfer_failure_attention(
     transfer: Transfer,
     errors: u64,
     failed_repos: &[(String, String, String)],
     git_failures: &HashMap<(String, String), GitFailure>,
-) {
+) -> Vec<ProjectAttention> {
     if errors == 0 {
-        return;
+        return Vec::new();
     }
 
-    lines.push(format!("{BOLD_PURPLE}▌ Failed{RESET}"));
     if failed_repos.is_empty() {
-        lines.push(format!("  {RED}!{RESET} {errors} repos failed"));
-        lines.push(format!("    {DIM}↳ Run `repos doctor`{RESET}"));
-    } else {
-        for (repo_name, repo_path, error) in failed_repos {
+        return vec![ProjectAttention::unattributed(
+            AttentionKind::Failed,
+            "repositories",
+            format!("{errors} repositories failed without details"),
+            "run `repos doctor`",
+        )];
+    }
+
+    failed_repos
+        .iter()
+        .map(|(repo_name, repo_path, error)| {
             let failure = git_failures.get(&(repo_name.clone(), repo_path.clone()));
             let reason = failure
                 .map(GitFailure::reason)
                 .unwrap_or_else(|| compact_git_error(error));
             let display_path = format_relative_repo_path(repo_path);
-            lines.push(format!(
-                "  {RED}!{RESET} {:24} {}",
-                truncate_text(repo_name, 24),
-                reason
-            ));
-            lines.push(format!("    {DIM}↳ path: {}{RESET}", display_path));
-            if let Some(remote) = failure.and_then(|failure| failure.remote.as_ref()) {
-                lines.push(format!("    {DIM}↳ remote: {}{RESET}", remote.display()));
-            }
             let next = failure.map_or_else(
                 || next_for_git_error(error, transfer),
                 |failure| failure.next_action(&display_path),
             );
-            lines.push(format!("    {DIM}↳ next: {}{RESET}", next));
-        }
-    }
-    lines.push(String::new());
+            let remote = failure
+                .and_then(|failure| failure.remote.as_ref())
+                .map(|remote| remote.display());
+            ProjectAttention::new(
+                AttentionKind::Failed,
+                repo_name.clone(),
+                repo_path.clone(),
+                reason,
+                next,
+                remote,
+            )
+        })
+        .collect()
 }
 
 fn is_transfer_success(status: Status) -> bool {
@@ -624,35 +641,27 @@ fn is_transfer_skip(status: Status) -> bool {
     )
 }
 
-fn append_transfer_skips(
-    lines: &mut Vec<String>,
+fn transfer_skip_attention(
     transfer: Transfer,
     outcomes: &[&RepositoryOutcome],
-) {
-    if outcomes.is_empty() {
-        return;
-    }
-
-    lines.push(format!("{BOLD_PURPLE}▌ Skipped{RESET}"));
-    for outcome in outcomes {
-        let mut reason = clean_error_message(&outcome.message);
-        if outcome.has_uncommitted && !reason.contains("uncommitted") {
-            reason.push_str(" + uncommitted changes");
-        }
-        lines.push(format!(
-            "  {DIM}·{RESET} {:24} {reason}",
-            truncate_text(&outcome.repository, 24)
-        ));
-        lines.push(format!(
-            "    {DIM}↳ path: {}{RESET}",
-            format_relative_repo_path(&outcome.path)
-        ));
-        lines.push(format!(
-            "    {DIM}↳ next: {}{RESET}",
-            transfer_skip_next(transfer, outcome)
-        ));
-    }
-    lines.push(String::new());
+) -> Vec<ProjectAttention> {
+    outcomes
+        .iter()
+        .map(|outcome| {
+            let mut reason = clean_error_message(&outcome.message);
+            if outcome.has_uncommitted && !reason.contains("uncommitted") {
+                reason.push_str(" + uncommitted changes");
+            }
+            ProjectAttention::new(
+                AttentionKind::Skipped,
+                outcome.repository.clone(),
+                outcome.path.clone(),
+                reason,
+                transfer_skip_next(transfer, outcome),
+                None,
+            )
+        })
+        .collect()
 }
 
 fn transfer_skip_next(transfer: Transfer, outcome: &RepositoryOutcome) -> &'static str {
@@ -664,46 +673,6 @@ fn transfer_skip_next(transfer: Transfer, outcome: &RepositoryOutcome) -> &'stat
         Status::NoChanges => "no action",
         _ => "run `repos status --skipped`",
     }
-}
-
-fn append_transfer_follow_up(
-    lines: &mut Vec<String>,
-    local_changes: &[(String, String)],
-    show_changes: bool,
-    extra_lines: &[String],
-) {
-    if local_changes.is_empty() && extra_lines.is_empty() {
-        return;
-    }
-
-    lines.push(format!(
-        "{BOLD_PURPLE}▌ Follow-up{RESET} {DIM}(does not change outcome counts){RESET}"
-    ));
-    for (repo_name, repo_path) in local_changes {
-        lines.push(format!(
-            "  {YELLOW}!{RESET} {:24} uncommitted changes",
-            truncate_text(repo_name, 24)
-        ));
-        lines.push(format!(
-            "    {DIM}↳ path: {}{RESET}",
-            format_relative_repo_path(repo_path)
-        ));
-        lines.push(format!(
-            "    {DIM}↳ next: commit or stash the local changes{RESET}"
-        ));
-        if show_changes {
-            if let Ok(changes) = get_repo_changes(repo_path) {
-                for change in changes {
-                    lines.push(format!("      {DIM}· {change}{RESET}"));
-                }
-            }
-        }
-    }
-    if !local_changes.is_empty() && !extra_lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines.extend(extra_lines.iter().cloned());
-    lines.push(String::new());
 }
 
 fn compact_git_error(error: &str) -> String {

@@ -101,9 +101,9 @@ fn analyze_subrepos_from_report(report: super::ValidationReport) -> Vec<SubrepoS
         statuses.push(SubrepoStatus::new(name, remote_url, instances));
     }
 
-    // Sort by sync score (worst first)
-    // Use total_cmp to handle NaN safely (treats NaN as less than all other values)
-    statuses.sort_by(|a, b| a.sync_score.total_cmp(&b.sync_score));
+    // Keep the full nested-status view problem-first. The concise drift report
+    // applies its own alphabetical ordering for cross-project comparison.
+    statuses.sort_by(|left, right| left.sync_score.total_cmp(&right.sync_score));
 
     statuses
 }
@@ -118,33 +118,29 @@ pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
 /// Format nested drift with its own report section header.
 #[must_use]
 pub fn format_drift_section(statuses: &[SubrepoStatus]) -> Vec<String> {
-    format_drift_summary_lines(statuses, true)
+    format_drift_summary_lines(statuses)
 }
 
 /// Format nested drift as actionable work items for another report section.
 #[must_use]
 pub fn format_drift_work_items(statuses: &[SubrepoStatus]) -> (usize, Vec<String>) {
     let drifted_count = statuses.iter().filter(|status| status.has_drift).count();
-    (drifted_count, format_drift_summary_lines(statuses, false))
+    (drifted_count, format_drift_summary_lines(statuses))
 }
 
-fn format_drift_summary_lines(
-    statuses: &[SubrepoStatus],
-    include_section_header: bool,
-) -> Vec<String> {
-    let drifted: Vec<_> = statuses.iter().filter(|s| s.has_drift).collect();
+fn format_drift_summary_lines(statuses: &[SubrepoStatus]) -> Vec<String> {
+    let mut drifted = statuses
+        .iter()
+        .filter(|status| status.has_drift)
+        .collect::<Vec<_>>();
+    drifted.sort_by(|left, right| compare_package_statuses(left, right));
 
     if drifted.is_empty() {
         return Vec::new();
     }
 
     let mut lines = Vec::new();
-    if include_section_header {
-        lines.push(format!("{BOLD_PURPLE}▌ Nested Package Drift{RESET}"));
-    } else {
-        lines.push(format!("{BOLD_PURPLE}  Nested Package Drift{RESET}"));
-        lines.push(paint(DIM, "  ────────────────────"));
-    }
+    lines.push(format!("{BOLD_PURPLE}▌ Nested Package Drift{RESET}"));
 
     let group_label = if drifted.len() == 1 {
         "group is"
@@ -204,16 +200,14 @@ fn format_drift_summary_item(status: &SubrepoStatus, lines: &mut Vec<String>) {
         .instances
         .iter()
         .map(|instance| DriftRow {
-            rank: drift_rank(instance, target_hash),
             state: DriftState::from_instance(instance, target_hash),
             location: instance_location(instance),
             short_hash: instance.short_hash.clone(),
         })
         .collect::<Vec<_>>();
     rows.sort_by(|a, b| {
-        a.rank
-            .cmp(&b.rank)
-            .then_with(|| a.location.cmp(&b.location))
+        a.location
+            .cmp(&b.location)
             .then_with(|| a.short_hash.cmp(&b.short_hash))
     });
 
@@ -230,7 +224,6 @@ fn format_drift_summary_item(status: &SubrepoStatus, lines: &mut Vec<String>) {
 }
 
 struct DriftRow {
-    rank: u8,
     state: DriftState,
     location: String,
     short_hash: String,
@@ -271,14 +264,10 @@ impl DriftState {
     }
 }
 
-fn drift_rank(instance: &SubrepoInstance, target_hash: &str) -> u8 {
-    if instance.has_uncommitted {
-        2
-    } else if instance.commit_hash == target_hash {
-        0
-    } else {
-        1
-    }
+fn compare_package_statuses(left: &SubrepoStatus, right: &SubrepoStatus) -> std::cmp::Ordering {
+    left.name
+        .cmp(&right.name)
+        .then_with(|| left.remote_url.cmp(&right.remote_url))
 }
 
 fn instance_location(instance: &SubrepoInstance) -> String {
@@ -618,6 +607,7 @@ mod tests {
 
     fn instance(
         parent: &str,
+        package: &str,
         commit: &str,
         short: &str,
         dirty: bool,
@@ -626,9 +616,9 @@ mod tests {
         SubrepoInstance {
             parent_repo: parent.to_string(),
             parent_path: PathBuf::from(parent),
-            subrepo_name: "shared".to_string(),
-            subrepo_path: PathBuf::from(parent).join("packages/shared"),
-            relative_path: "packages/shared".to_string(),
+            subrepo_name: package.to_string(),
+            subrepo_path: PathBuf::from(parent).join(format!("packages/{package}")),
+            relative_path: format!("packages/{package}"),
             commit_hash: commit.to_string(),
             short_hash: short.to_string(),
             remote_url: Some("github.com/team/shared".to_string()),
@@ -643,17 +633,17 @@ mod tests {
             "shared".to_string(),
             "github.com/team/shared".to_string(),
             vec![
-                instance("alpha", "aaaaaaaa", "aaaaaaa", false, 2),
-                instance("beta", "bbbbbbbb", "bbbbbbb", false, 1),
-                instance("gamma", "cccccccc", "ccccccc", true, 3),
+                instance("alpha", "shared", "aaaaaaaa", "aaaaaaa", false, 2),
+                instance("beta", "shared", "bbbbbbbb", "bbbbbbb", false, 1),
+                instance("gamma", "shared", "cccccccc", "ccccccc", true, 3),
             ],
         );
         let synced = SubrepoStatus::new(
             "stable".to_string(),
             "github.com/team/stable".to_string(),
             vec![
-                instance("alpha", "dddddddd", "ddddddd", false, 1),
-                instance("beta", "dddddddd", "ddddddd", false, 1),
+                instance("alpha", "stable", "dddddddd", "ddddddd", false, 1),
+                instance("beta", "stable", "dddddddd", "ddddddd", false, 1),
             ],
         );
         let statuses = vec![drifted, synced];
@@ -673,5 +663,39 @@ mod tests {
         assert!(drift.contains("✓ target"));
         assert!(drift.contains("↓ update"));
         assert!(drift.contains("! dirty"));
+    }
+
+    #[test]
+    fn nested_drift_is_alphabetical_by_package_then_project() {
+        let zeta = SubrepoStatus::new(
+            "zeta".to_string(),
+            "github.com/team/zeta".to_string(),
+            vec![
+                instance("zulu-project", "zeta", "bbbbbbbb", "bbbbbbb", false, 2),
+                instance("alpha-project", "zeta", "aaaaaaaa", "aaaaaaa", false, 1),
+            ],
+        );
+        let alpha = SubrepoStatus::new(
+            "alpha".to_string(),
+            "github.com/team/alpha".to_string(),
+            vec![
+                instance("zulu-project", "alpha", "dddddddd", "ddddddd", false, 2),
+                instance("alpha-project", "alpha", "cccccccc", "ccccccc", false, 1),
+            ],
+        );
+
+        let drift = format_drift_section(&[zeta, alpha]).join("\n");
+
+        let alpha_package = drift.find("pkg:alpha").expect("alpha package");
+        let zeta_package = drift.find("pkg:zeta").expect("zeta package");
+        assert!(alpha_package < zeta_package, "{drift}");
+
+        let alpha_project = drift
+            .find("alpha-project/packages/alpha")
+            .expect("alpha project copy");
+        let zulu_project = drift
+            .find("zulu-project/packages/alpha")
+            .expect("zulu project copy");
+        assert!(alpha_project < zulu_project, "{drift}");
     }
 }

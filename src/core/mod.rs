@@ -1,4 +1,5 @@
 // Internal modules - not part of public API
+pub(crate) mod attention;
 pub(crate) mod config;
 pub(crate) mod discovery;
 pub(crate) mod progress;

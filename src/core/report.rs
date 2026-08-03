@@ -8,9 +8,10 @@ use crate::git::failure::GitFailure;
 use crate::git::Status;
 use crate::utils::compare_repository_locations;
 
+use super::attention::{append_project_attention_section, AttentionKind, ProjectAttention};
 use super::stats::{
-    clean_error_message, format_relative_repo_path, get_repo_changes, truncate_text,
-    SyncStatistics, BOLD_BLUE, BOLD_PURPLE, DIM, GREEN, RED, RESET, YELLOW,
+    clean_error_message, format_relative_repo_path, truncate_text, SyncStatistics, BOLD_BLUE,
+    BOLD_PURPLE, DIM, GREEN, RED, RESET, YELLOW,
 };
 
 #[derive(Clone, Debug)]
@@ -432,7 +433,7 @@ pub(crate) fn generate_sync_report(
     }
     if follow_up_count > 0 {
         lines.push(format!(
-            "  {YELLOW}!{RESET} {:<16}{follow_up_count}",
+            "  {YELLOW}~{RESET} {:<16}{follow_up_count}",
             "Follow-up"
         ));
     }
@@ -464,9 +465,23 @@ pub(crate) fn generate_sync_report(
         "↑",
         &clone_transfer_details(&push.pushed_repo_details),
     );
-    append_sync_failures(&mut lines, &repositories, &pull_failures, &push_failures);
-    append_sync_skips(&mut lines, &repositories);
-    append_sync_follow_up(&mut lines, &local_changes, show_changes, drift_lines);
+    let mut attention = sync_failure_attention(&repositories, &pull_failures, &push_failures);
+    attention.extend(sync_skip_attention(&repositories));
+    attention.extend(local_changes.into_iter().map(|(repository, path)| {
+        ProjectAttention::new(
+            AttentionKind::FollowUp,
+            repository,
+            path,
+            "uncommitted changes",
+            "commit or stash the local changes",
+            None,
+        )
+    }));
+    append_project_attention_section(&mut lines, attention, show_changes);
+    if !drift_lines.is_empty() {
+        lines.push(String::new());
+        lines.extend(drift_lines.iter().cloned());
+    }
 
     while lines.last().is_some_and(String::is_empty) {
         lines.pop();
@@ -580,116 +595,97 @@ fn append_transfer_repositories(
     }
 }
 
-fn append_sync_failures(
-    lines: &mut Vec<String>,
+fn sync_failure_attention(
     repositories: &BTreeMap<String, SyncRepository>,
     pull_failures: &HashMap<(String, String), GitFailure>,
     push_failures: &HashMap<(String, String), GitFailure>,
-) {
-    let mut failed = repositories
+) -> Vec<ProjectAttention> {
+    repositories
         .iter()
         .filter(|(_, repository)| sync_outcome(repository) == SyncOutcome::Failed)
-        .collect::<Vec<_>>();
-    failed.sort_by(|left, right| {
-        compare_repository_locations(&left.1.path, left.0, &right.1.path, right.0)
-    });
-    if failed.is_empty() {
-        return;
-    }
-    lines.push(String::new());
-    lines.push(format!("{BOLD_PURPLE}▌ Failed{RESET}"));
-    for (name, repository) in failed {
-        let path = format_relative_repo_path(&repository.path);
-        let pull_failure = repository
-            .pull
-            .as_ref()
-            .filter(|outcome| is_failure(outcome.status));
-        let push_failure = repository
-            .push
-            .as_ref()
-            .filter(|outcome| is_failure(outcome.status));
-        let mut reasons = Vec::new();
-        let mut structured_failure = None;
-        if let Some(outcome) = pull_failure {
-            let failure = pull_failures.get(&(name.clone(), outcome.path.clone()));
-            reasons.push(format!(
-                "pull: {}",
-                failure.map_or_else(|| clean_error_message(&outcome.message), GitFailure::reason)
-            ));
-            structured_failure = failure;
-        }
-        if let Some(outcome) = push_failure {
-            let failure = push_failures.get(&(name.clone(), outcome.path.clone()));
-            reasons.push(format!(
-                "push: {}",
-                failure.map_or_else(|| clean_error_message(&outcome.message), GitFailure::reason)
-            ));
-            structured_failure = failure.or(structured_failure);
-        }
+        .map(|(name, repository)| {
+            let display_path = format_relative_repo_path(&repository.path);
+            let pull_failure = repository
+                .pull
+                .as_ref()
+                .filter(|outcome| is_failure(outcome.status));
+            let push_failure = repository
+                .push
+                .as_ref()
+                .filter(|outcome| is_failure(outcome.status));
+            let mut reasons = Vec::new();
+            let mut structured_failure = None;
+            if let Some(outcome) = pull_failure {
+                let failure = pull_failures.get(&(name.clone(), outcome.path.clone()));
+                reasons.push(format!(
+                    "pull: {}",
+                    failure
+                        .map_or_else(|| clean_error_message(&outcome.message), GitFailure::reason)
+                ));
+                structured_failure = failure;
+            }
+            if let Some(outcome) = push_failure {
+                let failure = push_failures.get(&(name.clone(), outcome.path.clone()));
+                reasons.push(format!(
+                    "push: {}",
+                    failure
+                        .map_or_else(|| clean_error_message(&outcome.message), GitFailure::reason)
+                ));
+                structured_failure = failure.or(structured_failure);
+            }
 
-        lines.push(format!(
-            "  {RED}!{RESET} {:24} {}",
-            truncate_text(name, 24),
-            reasons.join("; ")
-        ));
-        lines.push(format!("    {DIM}↳ path: {path}{RESET}"));
-        if let Some(remote) = structured_failure.and_then(|failure| failure.remote.as_ref()) {
-            lines.push(format!("    {DIM}↳ remote: {}{RESET}", remote.display()));
-        }
-        let next = structured_failure.map_or_else(
-            || "run `repos doctor`, then inspect this repository".to_string(),
-            |failure| failure.next_action(&path),
-        );
-        lines.push(format!("    {DIM}↳ next: {next}{RESET}"));
-    }
+            let next = structured_failure.map_or_else(
+                || "run `repos doctor`, then inspect this repository".to_string(),
+                |failure| failure.next_action(&display_path),
+            );
+            let remote = structured_failure
+                .and_then(|failure| failure.remote.as_ref())
+                .map(|remote| remote.display());
+            ProjectAttention::new(
+                AttentionKind::Failed,
+                name.clone(),
+                repository.path.clone(),
+                reasons.join("; "),
+                next,
+                remote,
+            )
+        })
+        .collect()
 }
 
-fn append_sync_skips(lines: &mut Vec<String>, repositories: &BTreeMap<String, SyncRepository>) {
-    let mut skipped = repositories
+fn sync_skip_attention(repositories: &BTreeMap<String, SyncRepository>) -> Vec<ProjectAttention> {
+    repositories
         .iter()
         .filter(|(_, repository)| sync_outcome(repository) == SyncOutcome::Skipped)
-        .collect::<Vec<_>>();
-    skipped.sort_by(|left, right| {
-        compare_repository_locations(&left.1.path, left.0, &right.1.path, right.0)
-    });
-    if skipped.is_empty() {
-        return;
-    }
-    lines.push(String::new());
-    lines.push(format!("{BOLD_PURPLE}▌ Skipped{RESET}"));
-    for (name, repository) in skipped {
-        let mut reasons = Vec::new();
-        let mut statuses = Vec::new();
-        if let Some(outcome) = repository
-            .pull
-            .as_ref()
-            .filter(|outcome| is_skip(outcome.status))
-        {
-            reasons.push(format!("pull: {}", clean_error_message(&outcome.message)));
-            statuses.push(("pull", outcome));
-        }
-        if let Some(outcome) = repository
-            .push
-            .as_ref()
-            .filter(|outcome| is_skip(outcome.status))
-        {
-            reasons.push(format!("push: {}", clean_error_message(&outcome.message)));
-            statuses.push(("push", outcome));
-        }
-        lines.push(format!(
-            "  {DIM}·{RESET} {:24} {}",
-            truncate_text(name, 24),
-            reasons.join("; ")
-        ));
-        lines.push(format!(
-            "    {DIM}↳ path: {}{RESET}",
-            format_relative_repo_path(&repository.path)
-        ));
-        lines.push(format!(
-            "    {DIM}↳ next: {}{RESET}",
-            sync_skip_next(&statuses)
-        ));
-    }
+        .map(|(name, repository)| {
+            let mut reasons = Vec::new();
+            let mut statuses = Vec::new();
+            if let Some(outcome) = repository
+                .pull
+                .as_ref()
+                .filter(|outcome| is_skip(outcome.status))
+            {
+                reasons.push(format!("pull: {}", clean_error_message(&outcome.message)));
+                statuses.push(("pull", outcome));
+            }
+            if let Some(outcome) = repository
+                .push
+                .as_ref()
+                .filter(|outcome| is_skip(outcome.status))
+            {
+                reasons.push(format!("push: {}", clean_error_message(&outcome.message)));
+                statuses.push(("push", outcome));
+            }
+            ProjectAttention::new(
+                AttentionKind::Skipped,
+                name.clone(),
+                repository.path.clone(),
+                reasons.join("; "),
+                sync_skip_next(&statuses),
+                None,
+            )
+        })
+        .collect()
 }
 
 fn sync_skip_next(statuses: &[(&str, &RepositoryOutcome)]) -> &'static str {
@@ -743,46 +739,7 @@ fn sync_local_changes(
             }
         }
     }
-    let mut local = local.into_iter().collect::<Vec<_>>();
-    local.sort_by(|left, right| compare_repository_locations(&left.1, &left.0, &right.1, &right.0));
-    local
-}
-
-fn append_sync_follow_up(
-    lines: &mut Vec<String>,
-    local_changes: &[(String, String)],
-    show_changes: bool,
-    drift_lines: &[String],
-) {
-    if local_changes.is_empty() && drift_lines.is_empty() {
-        return;
-    }
-    lines.push(String::new());
-    lines.push(format!("{BOLD_PURPLE}▌ Follow-up{RESET}"));
-    for (name, path) in local_changes {
-        lines.push(format!(
-            "  {YELLOW}!{RESET} {:24} uncommitted changes",
-            truncate_text(name, 24)
-        ));
-        lines.push(format!(
-            "    {DIM}↳ path: {}{RESET}",
-            format_relative_repo_path(path)
-        ));
-        lines.push(format!(
-            "    {DIM}↳ next: commit or stash the local changes{RESET}"
-        ));
-        if show_changes {
-            if let Ok(changes) = get_repo_changes(path) {
-                for change in changes {
-                    lines.push(format!("      {DIM}· {change}{RESET}"));
-                }
-            }
-        }
-    }
-    if !local_changes.is_empty() && !drift_lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines.extend(drift_lines.iter().cloned());
+    local.into_iter().collect()
 }
 
 fn plural(count: u64, singular: &'static str, plural: &'static str) -> &'static str {
@@ -1012,6 +969,10 @@ mod tests {
         assert!(report.contains("path: ./missing"));
         assert!(report.contains("Follow-up       1"));
         assert!(report.contains("uncommitted changes"));
+        assert_eq!(report.matches("▌ Needs Attention by Project").count(), 1);
+        assert!(!report.contains("▌ Failed"));
+        assert!(!report.contains("▌ Skipped"));
+        assert!(!report.contains("▌ Follow-up"));
     }
 
     #[test]

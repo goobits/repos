@@ -422,9 +422,8 @@ mod tests {
         let report = stats.generate_push_report(Duration::from_secs(3), false);
 
         assert!(report.contains("Follow-up    1"));
-        assert!(report.contains("repos                    uncommitted changes"));
-        assert!(report.contains("does not change outcome counts"));
-        assert!(report.contains("repos"));
+        assert!(report.contains("▌ Needs Attention by Project"));
+        assert!(report.contains("follow-up repos                    uncommitted changes"));
     }
 
     #[test]
@@ -484,6 +483,11 @@ mod tests {
         );
 
         let report = stats.generate_push_report(Duration::ZERO, false);
+        assert_eq!(report.matches("▌ Needs Attention by Project").count(), 1);
+        assert_eq!(report.matches("(3 issues)").count(), 2);
+        assert!(!report.contains("▌ Failed"));
+        assert!(!report.contains("▌ Skipped"));
+        assert!(!report.contains("▌ Follow-up"));
         assert_projects_are_grouped(
             &report,
             &[
@@ -507,10 +511,12 @@ mod tests {
         );
 
         let report = stats.generate_push_report(Duration::from_secs(3), false);
-        let occurrences = report.matches("doppleganger").count();
-
-        assert_eq!(occurrences, 2);
-        assert!(report.contains("no upstream + uncommitted changes"));
+        assert_eq!(
+            report.matches("no upstream + uncommitted changes").count(),
+            1
+        );
+        assert!(report.contains("skipped"));
+        assert!(!report.contains("follow-up doppleganger"));
         assert!(!report.contains("repo has uncommitted changes"));
         assert!(!report.contains("Local Changes"));
     }
@@ -528,8 +534,8 @@ mod tests {
 
         let report = stats.generate_push_report(Duration::from_secs(3), false);
 
-        assert!(report.contains("▌ Skipped"));
-        assert!(report.contains("assets                   no upstream"));
+        assert!(report.contains("▌ Needs Attention by Project"));
+        assert!(report.contains("skipped   assets                   no upstream"));
         assert!(report.contains("path: ./assets"));
         assert!(report.contains("next: repos push --auto-upstream"));
         assert!(!report.contains("▌ Needs Work"));
@@ -600,7 +606,7 @@ mod tests {
         assert!(report.contains("Skipped      1"));
         assert!(report.contains("Checked      4"));
         assert!(!report.contains("Synced"));
-        assert_eq!(report.matches("blocked").count(), 2);
+        assert!(report.contains("failed    blocked                  authentication failed"));
         assert!(!report.contains("blocked                   uncommitted changes"));
     }
 
@@ -645,11 +651,11 @@ mod tests {
         assert!(report.contains("Checked      4"));
         assert!(report.contains("▌ Pulled"));
         assert!(report.contains("path: /repos/updated"));
-        assert!(report.contains("▌ Failed"));
+        assert!(report.contains("▌ Needs Attention by Project"));
         assert!(report.contains("path: /repos/blocked"));
-        assert!(report.contains("▌ Skipped"));
         assert!(report.contains("path: /repos/missing"));
-        assert_eq!(report.matches("blocked").count(), 2);
+        assert!(report.contains("failed    blocked"));
+        assert!(report.contains("skipped   missing"));
     }
 
     #[test]
@@ -694,10 +700,11 @@ mod tests {
         assert!(report.contains("Checked      4"));
         assert!(report.contains("▌ Fetched"));
         assert!(report.contains("path: /repos/updated"));
-        assert!(report.contains("▌ Failed"));
+        assert!(report.contains("▌ Needs Attention by Project"));
         assert!(report.contains("path: /repos/blocked"));
-        assert!(report.contains("▌ Skipped"));
         assert!(report.contains("path: /repos/missing"));
+        assert!(report.contains("failed    blocked"));
+        assert!(report.contains("skipped   missing"));
     }
 
     #[test]

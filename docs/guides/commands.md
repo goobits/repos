@@ -21,8 +21,13 @@ Safety model:
 - mutating daily workflows expose `--dry-run` where practical.
 
 Repository-oriented report sections are sorted by path, keeping a top-level
-project and its nested packages together. Nested package drift stays
-package-first so copies of the same package remain easy to compare.
+project and its nested packages together. Nested package drift is sorted by
+package name, then by each copy's project path.
+
+Transfer and sync reports combine actionable details under `Needs Attention by
+Project`. Within each project, `!` marks failures, `·` marks skipped
+repositories, and `~` marks non-exclusive follow-up work. Nested drift remains
+its own package-oriented section.
 
 ## Overview
 
@@ -225,9 +230,9 @@ repos push --auto-upstream
 ```
 
 The final report uses exclusive `Pushed`, `Up to date`, `Failed`, and `Skipped`
-outcomes that add up to `Checked`. It names pushed and skipped repositories,
-and every failure or skip includes its path, reason, and next action. Local
-changes and nested drift appear separately as non-exclusive follow-up work.
+outcomes that add up to `Checked`. Pushed repositories are named; failures,
+skips, and local follow-up work are grouped by top-level project with a path,
+reason, and next action. Nested drift remains a separate package-first view.
 
 Options:
 
@@ -254,9 +259,9 @@ repos pull
 repos pull --rebase
 ```
 
-The final report mirrors `repos push`: exclusive outcomes, named pulled and
-skipped repositories, actionable failure/skip details, and a separate
-non-exclusive follow-up section.
+The final report mirrors `repos push`: exclusive outcomes, named pulled
+repositories, and one project-grouped section for actionable failures, skips,
+and non-exclusive local follow-up work.
 
 Options:
 

@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
-- Repository-oriented report sections are now sorted by path, grouping nested packages under their top-level project; nested package drift remains package-first for cross-project comparison.
+- Repository-oriented report sections are now sorted by path, grouping nested packages under their top-level project; nested package drift is sorted alphabetically by package, then by each copy's project path.
+- Transfer and sync reports now combine failed, skipped, and local follow-up details into one project-grouped attention section with fixed-width `!`, `·`, and `~` markers. Final reports also begin after a single visual break from progress output.
 - The source installer now builds and installs from one portable external Cargo target directory, respects `CARGO_TARGET_DIR`, and no longer assumes a checkout-local `target/` path.
 - Repository discovery no longer inherits ignore files above the requested scan root, so a parent repository cannot hide child repositories from commands run inside that child directory tree.
 - Status, publish, and nested mutation reports now name their outcomes, include checked totals, and provide paths and next steps where action is required.
