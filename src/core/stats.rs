@@ -19,6 +19,49 @@ const YELLOW: &str = "\x1b[1;38;5;221m";
 const RED: &str = "\x1b[1;38;5;203m";
 const DIM: &str = "\x1b[2m";
 
+#[derive(Clone, Copy)]
+enum Transfer {
+    Push,
+    Pull,
+}
+
+impl Transfer {
+    fn command(self) -> &'static str {
+        match self {
+            Self::Push => "push",
+            Self::Pull => "pull",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Push => "Pushed",
+            Self::Pull => "Pulled",
+        }
+    }
+
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Push => "pushed",
+            Self::Pull => "pulled",
+        }
+    }
+
+    fn marker(self) -> &'static str {
+        match self {
+            Self::Push => "↑",
+            Self::Pull => "↓",
+        }
+    }
+
+    fn no_upstream_action(self) -> &'static str {
+        match self {
+            Self::Push => "repos push --auto-upstream",
+            Self::Pull => "set upstream or skip",
+        }
+    }
+}
+
 /// Statistics for tracking repository synchronization results
 ///
 /// Uses atomic counters for lock-free reads and writes of simple counters,
@@ -40,6 +83,7 @@ pub struct SyncStatistics {
     pub no_remote_repos: Mutex<Vec<(String, String)>>,      // (repo_name, repo_path)
     pub uncommitted_repos: Mutex<Vec<(String, String)>>,    // (repo_name, repo_path)
     pub pushed_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
+    pub pulled_repo_details: Mutex<Vec<(String, String, u64)>>, // (repo_name, repo_path, commits)
     pub skipped_reasons: Mutex<Vec<String>>,
     pub(crate) git_failures: Mutex<HashMap<(String, String), GitFailure>>,
 }
@@ -68,6 +112,7 @@ impl SyncStatistics {
             no_remote_repos: Mutex::new(Vec::new()),
             uncommitted_repos: Mutex::new(Vec::new()),
             pushed_repo_details: Mutex::new(Vec::new()),
+            pulled_repo_details: Mutex::new(Vec::new()),
             skipped_reasons: Mutex::new(Vec::new()),
             git_failures: Mutex::new(HashMap::new()),
         }
@@ -100,9 +145,15 @@ impl SyncStatistics {
             Status::Pulled => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
                 self.pulled_repos.fetch_add(1, Ordering::Relaxed);
-                if let Some(commits) = parse_commit_count(message) {
+                let commits = parse_commit_count(message).unwrap_or(0);
+                if commits > 0 {
                     self.total_commits_pulled
                         .fetch_add(commits, Ordering::Relaxed);
+                }
+                if let Ok(mut guard) = self.pulled_repo_details.lock() {
+                    guard.push((repo_name.to_string(), repo_path.to_string(), commits));
+                } else {
+                    eprintln!("Warning: Failed to record pulled repo: {repo_name}");
                 }
             }
             Status::Synced
@@ -214,65 +265,66 @@ impl SyncStatistics {
 
     /// Generates a push-specific completion summary.
     pub fn generate_push_summary(&self, duration: Duration) -> String {
-        let duration_secs = duration.as_secs_f64();
-
-        let synced = self.synced_repos.load(Ordering::Relaxed);
-        let pushed_repos = self.pushed_repos.load(Ordering::Relaxed);
-        let pushed_commits = self.total_commits_pushed.load(Ordering::Relaxed);
-        let errors = self.error_repos.load(Ordering::Relaxed);
-
-        if errors > 0 {
-            format!(
-                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed_repos} pushed ({pushed_commits} commits) • {errors} failed"
-            )
-        } else {
-            format!(
-                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pushed_repos} pushed ({pushed_commits} commits)"
-            )
-        }
+        self.generate_transfer_summary(Transfer::Push, duration)
     }
 
     /// Generates a pull/sync-specific completion summary.
     pub fn generate_pull_summary(&self, duration: Duration) -> String {
-        let duration_secs = duration.as_secs_f64();
+        self.generate_transfer_summary(Transfer::Pull, duration)
+    }
 
+    fn generate_transfer_summary(&self, transfer: Transfer, duration: Duration) -> String {
+        let duration_secs = duration.as_secs_f64();
         let synced = self.synced_repos.load(Ordering::Relaxed);
-        let pulled_repos = self.pulled_repos.load(Ordering::Relaxed);
-        let pulled_commits = self.total_commits_pulled.load(Ordering::Relaxed);
+        let (transferred_repos, transferred_commits) = self.transfer_counts(transfer);
+        let verb = transfer.verb();
         let errors = self.error_repos.load(Ordering::Relaxed);
 
         if errors > 0 {
             format!(
-                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pulled_repos} pulled ({pulled_commits} commits) • {errors} failed"
+                "✅ Completed in {duration_secs:.1}s • {synced} synced • {transferred_repos} {verb} ({transferred_commits} commits) • {errors} failed"
             )
         } else {
             format!(
-                "✅ Completed in {duration_secs:.1}s • {synced} synced • {pulled_repos} pulled ({pulled_commits} commits)"
+                "✅ Completed in {duration_secs:.1}s • {synced} synced • {transferred_repos} {verb} ({transferred_commits} commits)"
             )
         }
     }
 
     /// Generates a compact live push footer.
     pub fn generate_push_live_summary(&self, total_repos: usize) -> String {
+        self.generate_transfer_live_summary(Transfer::Push, total_repos)
+    }
+
+    /// Generates a compact live pull footer.
+    pub fn generate_pull_live_summary(&self, total_repos: usize) -> String {
+        self.generate_transfer_live_summary(Transfer::Pull, total_repos)
+    }
+
+    fn generate_transfer_live_summary(&self, transfer: Transfer, total_repos: usize) -> String {
         let synced = self.synced_repos.load(Ordering::Relaxed);
-        let pushed_repos = self.pushed_repos.load(Ordering::Relaxed);
-        let pushed_commits = self.total_commits_pushed.load(Ordering::Relaxed);
+        let (transferred_repos, transferred_commits) = self.transfer_counts(transfer);
+        let marker = transfer.marker();
+        let verb = transfer.verb();
         let errors = self.error_repos.load(Ordering::Relaxed);
         let skipped = self.skipped_repos.load(Ordering::Relaxed);
-        let needs_work = self.no_upstream_count() as u64
-            + self.no_remote_count() as u64
-            + self.uncommitted_count.load(Ordering::Relaxed);
+        let needs_work = self.needs_work_repo_count();
         let processed = synced.saturating_add(errors).saturating_add(skipped);
         let remaining = (total_repos as u64).saturating_sub(processed);
 
         format!(
-            "  {GREEN}✓{RESET} {synced} synced   {GREEN}↑{RESET} {pushed_repos} pushed / {pushed_commits} commits   {RED}!{RESET} {errors} failed   {YELLOW}!{RESET} {needs_work} needs work   {DIM}·{RESET} {skipped} skipped\n  {DIM}↳ scanning {remaining} remaining{RESET}",
+            "  {GREEN}✓{RESET} {synced} synced   {GREEN}{marker}{RESET} {transferred_repos} {verb} / {transferred_commits} commits   {RED}!{RESET} {errors} failed   {YELLOW}!{RESET} {needs_work} needs work   {DIM}·{RESET} {skipped} skipped\n  {DIM}↳ scanning {remaining} remaining{RESET}",
         )
     }
 
     /// Generates the final push report without repeating the live footer details.
     pub fn generate_push_report(&self, duration: Duration, show_changes: bool) -> String {
         self.generate_push_report_with_needs_work(duration, show_changes, 0, &[])
+    }
+
+    /// Generates the final pull report without repeating the live footer details.
+    pub fn generate_pull_report(&self, duration: Duration, show_changes: bool) -> String {
+        self.generate_pull_report_with_needs_work(duration, show_changes, 0, &[])
     }
 
     /// Generates the final push report with additional actionable work lines.
@@ -283,22 +335,66 @@ impl SyncStatistics {
         extra_needs_work_count: usize,
         extra_needs_work_lines: &[String],
     ) -> String {
+        self.generate_transfer_report_with_needs_work(
+            Transfer::Push,
+            duration,
+            show_changes,
+            extra_needs_work_count,
+            extra_needs_work_lines,
+        )
+    }
+
+    /// Generates the final pull report with additional actionable work lines.
+    pub fn generate_pull_report_with_needs_work(
+        &self,
+        duration: Duration,
+        show_changes: bool,
+        extra_needs_work_count: usize,
+        extra_needs_work_lines: &[String],
+    ) -> String {
+        self.generate_transfer_report_with_needs_work(
+            Transfer::Pull,
+            duration,
+            show_changes,
+            extra_needs_work_count,
+            extra_needs_work_lines,
+        )
+    }
+
+    fn generate_transfer_report_with_needs_work(
+        &self,
+        transfer: Transfer,
+        duration: Duration,
+        show_changes: bool,
+        extra_needs_work_count: usize,
+        extra_needs_work_lines: &[String],
+    ) -> String {
         let duration_secs = duration.as_secs_f64();
         let synced = self.synced_repos.load(Ordering::Relaxed);
-        let pushed_repos = self.pushed_repos.load(Ordering::Relaxed);
-        let pushed_commits = self.total_commits_pushed.load(Ordering::Relaxed);
+        let (transferred_repos, transferred_commits) = self.transfer_counts(transfer);
         let skipped = self.skipped_repos.load(Ordering::Relaxed);
         let errors = self.error_repos.load(Ordering::Relaxed);
 
-        let pushed_details = clone_vec(&self.pushed_repo_details, "pushed_repo_details");
-        let failed_repos = clone_vec(&self.failed_repos, "failed_repos");
-        let no_upstream_repos = clone_vec(&self.no_upstream_repos, "no_upstream_repos");
-        let no_remote_repos = clone_vec(&self.no_remote_repos, "no_remote_repos");
-        let uncommitted_repos = clone_vec(&self.uncommitted_repos, "uncommitted_repos");
+        let mut transferred_details = match transfer {
+            Transfer::Push => clone_vec(&self.pushed_repo_details, "pushed_repo_details"),
+            Transfer::Pull => clone_vec(&self.pulled_repo_details, "pulled_repo_details"),
+        };
+        let mut failed_repos = clone_vec(&self.failed_repos, "failed_repos");
+        let mut no_upstream_repos = clone_vec(&self.no_upstream_repos, "no_upstream_repos");
+        let mut no_remote_repos = clone_vec(&self.no_remote_repos, "no_remote_repos");
+        let mut uncommitted_repos = clone_vec(&self.uncommitted_repos, "uncommitted_repos");
         let skipped_reasons = clone_vec(&self.skipped_reasons, "skipped_reasons");
         let git_failures = clone_failure_map(&self.git_failures);
 
+        transferred_details
+            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        failed_repos.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        no_upstream_repos.sort();
+        no_remote_repos.sort();
+        uncommitted_repos.sort();
+
         let mut issue_rows = build_issue_rows(
+            transfer,
             &failed_repos,
             &no_upstream_repos,
             &no_remote_repos,
@@ -324,33 +420,40 @@ impl SyncStatistics {
         let issue_count = issue_rows.len();
         let needs_work = issue_count + local_issue_count + extra_needs_work_count;
         let mut lines = Vec::new();
-        let pushed_repo_label = pluralize(pushed_repos, "repo", "repos");
-        let pushed_commit_label = pluralize(pushed_commits, "commit", "commits");
+        let transfer_label = transfer.label();
+        let transferred_repo_label = pluralize(transferred_repos, "repo", "repos");
+        let transferred_commit_label = pluralize(transferred_commits, "commit", "commits");
 
-        lines.push(format!("{BOLD_BLUE}repos push{RESET}"));
+        lines.push(format!("{BOLD_BLUE}repos {}{RESET}", transfer.command()));
         lines.push(format!("{GREEN}✓{RESET} Completed in {duration_secs:.1}s"));
         lines.push(String::new());
         lines.push(format!("{BOLD_PURPLE}▌ Summary{RESET}"));
-        lines.push(format!("  {GREEN}✓{RESET} Synced       {synced}"));
+        lines.push(format!("  {GREEN}✓{RESET} {:<13}{synced}", "Synced"));
         lines.push(format!(
-            "  {GREEN}✓{RESET} Pushed       {pushed_repos} {pushed_repo_label} / {pushed_commits} {pushed_commit_label}"
+            "  {GREEN}✓{RESET} {transfer_label:<13}{transferred_repos} {transferred_repo_label} / {transferred_commits} {transferred_commit_label}"
         ));
         if errors > 0 {
-            lines.push(format!("  {RED}!{RESET} Failed       {errors}"));
+            lines.push(format!("  {RED}!{RESET} {:<13}{errors}", "Failed"));
         }
         if needs_work > 0 {
-            lines.push(format!("  {YELLOW}!{RESET} Needs work   {needs_work}"));
+            lines.push(format!(
+                "  {YELLOW}!{RESET} {:<13}{needs_work}",
+                "Needs work"
+            ));
         }
         if skipped > 0 {
-            lines.push(format!("  {DIM}·{RESET} Skipped      {skipped}"));
+            lines.push(format!("  {DIM}·{RESET} {:<13}{skipped}", "Skipped"));
         }
         lines.push(String::new());
 
-        lines.push(format!("{BOLD_PURPLE}▌ Pushed{RESET}"));
-        if pushed_details.is_empty() {
-            lines.push(format!("  {DIM}Nothing pushed this run.{RESET}"));
+        lines.push(format!("{BOLD_PURPLE}▌ {transfer_label}{RESET}"));
+        if transferred_details.is_empty() {
+            lines.push(format!(
+                "  {DIM}Nothing {} this run.{RESET}",
+                transfer.verb()
+            ));
         } else {
-            for (repo_name, _repo_path, commits) in pushed_details {
+            for (repo_name, _repo_path, commits) in transferred_details {
                 let commit_label = if commits == 1 { "commit" } else { "commits" };
                 lines.push(format!(
                     "  {GREEN}✓{RESET} {:24} {:>3} {commit_label}",
@@ -361,7 +464,7 @@ impl SyncStatistics {
         }
         lines.push(String::new());
 
-        append_failed_section(&mut lines, errors, &failed_repos, &git_failures);
+        append_failed_section(&mut lines, transfer, errors, &failed_repos, &git_failures);
 
         if skipped > 0 {
             append_skipped_section(&mut lines, skipped, &skipped_reasons);
@@ -414,25 +517,34 @@ impl SyncStatistics {
         lines.join("\n")
     }
 
-    /// Generates a compact live pull/sync footer.
-    pub fn generate_pull_live_summary(&self) -> String {
-        format!(
-            "🔽 {} Pulled / {} Commits  🟢 {} Synced  🔴 {} Failed  🟡 {} No Upstream  🟠 {} Skipped",
-            self.pulled_repos.load(Ordering::Relaxed),
-            self.total_commits_pulled.load(Ordering::Relaxed),
-            self.synced_repos.load(Ordering::Relaxed),
-            self.error_repos.load(Ordering::Relaxed),
-            self.no_upstream_count(),
-            self.skipped_repos.load(Ordering::Relaxed)
-        )
+    fn transfer_counts(&self, transfer: Transfer) -> (u64, u64) {
+        match transfer {
+            Transfer::Push => (
+                self.pushed_repos.load(Ordering::Relaxed),
+                self.total_commits_pushed.load(Ordering::Relaxed),
+            ),
+            Transfer::Pull => (
+                self.pulled_repos.load(Ordering::Relaxed),
+                self.total_commits_pulled.load(Ordering::Relaxed),
+            ),
+        }
     }
 
-    fn no_upstream_count(&self) -> usize {
-        self.no_upstream_repos.lock().map_or(0, |repos| repos.len())
-    }
-
-    fn no_remote_count(&self) -> usize {
-        self.no_remote_repos.lock().map_or(0, |repos| repos.len())
+    fn needs_work_repo_count(&self) -> u64 {
+        let mut names = HashSet::new();
+        if let Ok(repos) = self.failed_repos.lock() {
+            names.extend(repos.iter().map(|(name, _, _)| name.clone()));
+        }
+        if let Ok(repos) = self.no_upstream_repos.lock() {
+            names.extend(repos.iter().map(|(name, _)| name.clone()));
+        }
+        if let Ok(repos) = self.no_remote_repos.lock() {
+            names.extend(repos.iter().map(|(name, _)| name.clone()));
+        }
+        if let Ok(repos) = self.uncommitted_repos.lock() {
+            names.extend(repos.iter().map(|(name, _)| name.clone()));
+        }
+        names.len() as u64
     }
 
     /// Generates detailed warning messages for repositories needing attention
@@ -627,6 +739,8 @@ impl IssueRow {
 
         if self.next == "repos push --auto-upstream" {
             self.next = "commit/clean, then auto-upstream".to_string();
+        } else if self.next == "set upstream or skip" {
+            self.next = "commit/clean, then set upstream".to_string();
         }
     }
 }
@@ -655,6 +769,7 @@ fn clone_failure_map(
 
 fn append_failed_section(
     lines: &mut Vec<String>,
+    transfer: Transfer,
     errors: u64,
     failed_repos: &[(String, String, String)],
     git_failures: &HashMap<(String, String), GitFailure>,
@@ -672,7 +787,7 @@ fn append_failed_section(
             let failure = git_failures.get(&(repo_name.clone(), repo_path.clone()));
             let reason = failure
                 .map(GitFailure::reason)
-                .unwrap_or_else(|| compact_push_error(error));
+                .unwrap_or_else(|| compact_git_error(error));
             let display_path = format_relative_repo_path(repo_path);
             lines.push(format!(
                 "  {RED}!{RESET} {:24} {}",
@@ -684,7 +799,7 @@ fn append_failed_section(
                 lines.push(format!("    {DIM}↳ remote: {}{RESET}", remote.display()));
             }
             let next = failure.map_or_else(
-                || next_for_push_error(error),
+                || next_for_git_error(error, transfer),
                 |failure| failure.next_action(&display_path),
             );
             lines.push(format!("    {DIM}↳ next: {}{RESET}", next));
@@ -809,6 +924,7 @@ fn push_next_step(lines: &mut Vec<String>, next_index: &mut usize, step: &str) {
 }
 
 fn build_issue_rows(
+    transfer: Transfer,
     failed_repos: &[(String, String, String)],
     no_upstream_repos: &[(String, String)],
     no_remote_repos: &[(String, String)],
@@ -826,9 +942,9 @@ fn build_issue_rows(
                 path: repo_path.clone(),
                 reason: failure
                     .map(GitFailure::reason)
-                    .unwrap_or_else(|| compact_push_error(error)),
+                    .unwrap_or_else(|| compact_git_error(error)),
                 next: failure.map_or_else(
-                    || next_for_push_error(error),
+                    || next_for_git_error(error, transfer),
                     |failure| failure.next_action(&display_path),
                 ),
             });
@@ -841,7 +957,7 @@ fn build_issue_rows(
                 repo: repo_name.clone(),
                 path: repo_path.clone(),
                 reason: "no upstream".to_string(),
-                next: "repos push --auto-upstream".to_string(),
+                next: transfer.no_upstream_action().to_string(),
             });
         }
     }
@@ -860,7 +976,7 @@ fn build_issue_rows(
     rows
 }
 
-fn compact_push_error(error: &str) -> String {
+fn compact_git_error(error: &str) -> String {
     let lower = error.to_lowercase();
     if lower.contains("diverged") {
         return error
@@ -870,16 +986,22 @@ fn compact_push_error(error: &str) -> String {
     clean_error_message(error)
 }
 
-fn next_for_push_error(error: &str) -> String {
+fn next_for_git_error(error: &str, transfer: Transfer) -> String {
     let lower = error.to_lowercase();
     if lower.contains("diverged") {
         "repos sync or resolve manually".to_string()
     } else if lower.contains("repository moved") && lower.contains("email privacy") {
-        "update remote + fix git email".to_string()
+        match transfer {
+            Transfer::Push => "update remote + fix git email".to_string(),
+            Transfer::Pull => "update remote, then pull".to_string(),
+        }
     } else if lower.contains("email privacy") {
-        "fix git email, then push".to_string()
+        match transfer {
+            Transfer::Push => "fix git email, then push".to_string(),
+            Transfer::Pull => "inspect failure".to_string(),
+        }
     } else if lower.contains("repository moved") {
-        "update remote, then push".to_string()
+        format!("update remote, then {}", transfer.command())
     } else {
         "inspect failure".to_string()
     }

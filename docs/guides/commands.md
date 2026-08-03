@@ -195,7 +195,8 @@ repos push
 repos push --auto-upstream
 ```
 
-The final report recommends real follow-up filters such as
+The final report names every pushed repository and its commit count, then
+recommends real follow-up filters such as
 `repos status --failed`, `repos status --skipped`, and
 `repos status --needs-work` when a push cannot finish cleanly.
 
@@ -223,6 +224,10 @@ Granular pull command.
 repos pull
 repos pull --rebase
 ```
+
+The final report mirrors `repos push`: it names every pulled repository and
+its commit count, then groups failures, skipped repositories, local changes,
+and follow-up actions in the same sections.
 
 Options:
 

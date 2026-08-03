@@ -489,17 +489,6 @@ fn format_nested_drift_work_items() -> (usize, Vec<String>) {
         .unwrap_or_else(|_| (0, Vec::new()))
 }
 
-/// Check for nested repository drift and display concise summary
-fn check_and_display_drift() {
-    // Try to analyze nested repos - if it fails (e.g., none found), silently skip.
-    if let Ok(statuses) = crate::subrepo::status::analyze_subrepos_quiet() {
-        // Only display if there's drift to report
-        if statuses.iter().any(|s| s.has_drift) {
-            crate::subrepo::status::display_drift_summary(&statuses);
-        }
-    }
-}
-
 /// Handles the repository pull command
 pub async fn handle_pull_command(
     use_rebase: bool,
@@ -558,12 +547,7 @@ pub async fn handle_pull_command(
         };
 
     // Process all repositories concurrently
-    process_pull_repositories(context, use_rebase, verbose, show_changes).await?;
-
-    // Check for nested repository drift unless explicitly skipped
-    if !no_drift_check {
-        check_and_display_drift();
-    }
+    process_pull_repositories(context, use_rebase, verbose, show_changes, no_drift_check).await?;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos");
@@ -580,6 +564,7 @@ async fn process_pull_repositories(
     use_rebase: bool,
     verbose: bool,
     show_changes: bool,
+    no_drift_check: bool,
 ) -> Result<()> {
     use crate::core::acquire_stats_lock;
     use crate::git::{fetch_and_analyze_for_pull, pull_if_needed};
@@ -590,9 +575,11 @@ async fn process_pull_repositories(
     let fetch_concurrency = (context.max_concurrency * 2).min(FETCH_CONCURRENT_CAP);
     let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_concurrency));
 
-    let pull_footer =
-        "🔽 0 Pulled / 0 Commits  🟢 0 Synced  🔴 0 Failed  🟡 0 No Upstream  🟠 0 Skipped"
-            .to_string();
+    let pull_footer = context
+        .statistics
+        .lock()
+        .unwrap()
+        .generate_pull_live_summary(context.total_repos);
     let (repo_progress_bars, footer_pb, single_pb) =
         create_sync_progress(&context, verbose, "🔽 Processing...", pull_footer);
 
@@ -618,6 +605,7 @@ async fn process_pull_repositories(
         let verbose_clone = verbose;
         let max_name_length_clone = max_name_length;
         let start_time_clone = start_time;
+        let total_repos_clone = context.total_repos;
 
         let future = async move {
             use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
@@ -726,12 +714,7 @@ async fn process_pull_repositories(
                     progress_bar.finish();
                 }
             } else if let Some(progress_bar) = single_pb_clone.as_ref() {
-                progress_bar.set_message(format!(
-                    "{} {} ({})",
-                    status.symbol(),
-                    repo_name,
-                    status.text()
-                ));
+                progress_bar.set_message(format_live_repo_status(repo_name, status));
                 progress_bar.inc(1);
             }
 
@@ -751,7 +734,8 @@ async fn process_pull_repositories(
             drop(stats_guard);
             if !verbose_clone {
                 let stats_locked = stats_clone.lock().unwrap();
-                footer_clone.set_message(stats_locked.generate_pull_live_summary());
+                footer_clone
+                    .set_message(stats_locked.generate_pull_live_summary(total_repos_clone));
             }
         };
         pipeline_futures.push(future);
@@ -763,23 +747,29 @@ async fn process_pull_repositories(
     if has_rate_limit.load(std::sync::atomic::Ordering::Acquire) {
         let count = rate_limit_count.load(std::sync::atomic::Ordering::Acquire);
         eprintln!("\n⚠️  Rate limit detected on {count} operation(s).");
-        eprintln!("💡 Try reducing concurrency: repos sync --jobs 3");
+        eprintln!("💡 Try reducing concurrency: repos pull --jobs 3");
     }
 
-    footer_pb.finish();
+    footer_pb.finish_and_clear();
 
     let final_stats = acquire_stats_lock(&context.statistics);
-    if !verbose {
-        let summary = final_stats.generate_pull_summary(context.start_time.elapsed());
-        println!();
-        println!("{summary}");
-    }
-    let detailed_summary = final_stats.generate_detailed_summary(show_changes);
-    if !detailed_summary.is_empty() {
-        println!("\n{}", "━".repeat(70));
-        println!("{detailed_summary}");
-        println!("{}", "━".repeat(70));
-    }
+    let (drift_count, drift_lines) = if no_drift_check {
+        (0, Vec::new())
+    } else {
+        format_nested_drift_work_items()
+    };
+    println!();
+    let report = if drift_count == 0 && drift_lines.is_empty() {
+        final_stats.generate_pull_report(context.start_time.elapsed(), show_changes)
+    } else {
+        final_stats.generate_pull_report_with_needs_work(
+            context.start_time.elapsed(),
+            show_changes,
+            drift_count,
+            &drift_lines,
+        )
+    };
+    println!("{report}");
     println!();
 
     let error_count = final_stats

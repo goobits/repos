@@ -38,6 +38,11 @@ mod tests {
             .expect("Failed to lock pushed_repo_details mutex in test")
             .is_empty());
         assert!(stats
+            .pulled_repo_details
+            .lock()
+            .expect("Failed to lock pulled_repo_details mutex in test")
+            .is_empty());
+        assert!(stats
             .skipped_reasons
             .lock()
             .expect("Failed to lock skipped_reasons mutex in test")
@@ -88,6 +93,14 @@ mod tests {
         assert_eq!(stats.pulled_repos.load(Ordering::Relaxed), 1);
         assert_eq!(stats.total_commits_pulled.load(Ordering::Relaxed), 7);
         assert_eq!(stats.synced_repos.load(Ordering::Relaxed), 1);
+        let pulled = stats
+            .pulled_repo_details
+            .lock()
+            .expect("Failed to lock pulled_repo_details mutex in test");
+        assert_eq!(
+            pulled.as_slice(),
+            &[("repo1".to_string(), "/path/1".to_string(), 7)]
+        );
     }
 
     #[test]
@@ -240,6 +253,82 @@ mod tests {
 
         assert!(summary.contains("2 pulled (12 commits)"));
         assert!(!summary.contains("pushed"));
+    }
+
+    #[test]
+    fn test_generate_pull_live_summary_matches_push_shape() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "updated",
+            "/repos/updated",
+            &Status::Pulled,
+            "4 commits pulled",
+            false,
+        );
+        stats.update("skipped", "/repos/skipped", &Status::Skip, "skip", false);
+
+        let summary = stats.generate_pull_live_summary(4);
+
+        assert!(summary.contains("\x1b["));
+        assert!(summary.contains("✓\x1b[0m 1 synced"));
+        assert!(summary.contains("↓\x1b[0m 1 pulled / 4 commits"));
+        assert!(summary.contains("·\x1b[0m 1 skipped"));
+        assert!(summary.contains("↳ scanning 2 remaining"));
+    }
+
+    #[test]
+    fn test_live_summary_deduplicates_needs_work_repositories() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "blocked",
+            "/repos/blocked",
+            &Status::NoUpstream,
+            "no upstream",
+            true,
+        );
+
+        let summary = stats.generate_push_live_summary(1);
+
+        assert!(summary.contains("1 needs work"));
+        assert!(!summary.contains("2 needs work"));
+    }
+
+    #[test]
+    fn test_generate_pull_report_lists_pulled_repositories() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "widgets",
+            "/repos/widgets",
+            &Status::Pulled,
+            "2 commits pulled",
+            false,
+        );
+
+        let report = stats.generate_pull_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("repos pull"));
+        assert!(report.contains("▌ Pulled"));
+        assert!(report.contains("widgets"));
+        assert!(report.contains("2 commits"));
+        assert!(!report.contains("Nothing pulled"));
+        assert!(!report.contains("repos push"));
+    }
+
+    #[test]
+    fn test_generate_pull_report_uses_pull_specific_upstream_action() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "widgets",
+            "/repos/widgets",
+            &Status::NoUpstream,
+            "no upstream",
+            false,
+        );
+
+        let report = stats.generate_pull_report(Duration::from_secs(3), false);
+
+        assert!(report.contains("set upstream or skip"));
+        assert!(!report.contains("repos push --auto-upstream"));
     }
 
     #[test]

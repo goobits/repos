@@ -10,15 +10,16 @@
 
 mod common;
 use common::fixtures::TestRepo;
-use common::git::{add_bare_remote, is_git_available, run_git_ok, IsolatedGitConfig};
+use common::git::{
+    add_bare_remote, clone_repo, create_test_commit, is_git_available, run_git_ok,
+    IsolatedGitConfig,
+};
 
 use goobits_repos::commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
     handle_unstage_command, StatusFilters,
 };
-use goobits_repos::commands::sync::{
-    handle_pull_command, handle_push_command, handle_sync_command,
-};
+use goobits_repos::commands::sync::{handle_push_command, handle_sync_command};
 use goobits_repos::git::{fetch_and_analyze, push_if_needed, Status};
 use std::env;
 use std::fs;
@@ -359,40 +360,38 @@ async fn test_push_command_with_uncommitted_changes() {
     );
 }
 
-#[tokio::test]
-async fn test_pull_command_with_single_repo() {
-    let _lock = common::lock_test().await;
+#[test]
+fn test_pull_command_reports_pulled_repository() {
     if !is_git_available() {
-        eprintln!("Git not available, skipping test");
         return;
     }
 
-    let original_dir = env::current_dir().expect("Failed to get current dir");
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    let updater_root = TempDir::new().expect("Failed to create updater directory");
+    let updater = updater_root.path().join("updater");
+    clone_repo(&remote.path().join("remote.git"), &updater).expect("Failed to clone test remote");
+    create_test_commit(&updater, "remote.txt", "remote change", "Remote update")
+        .expect("Failed to create remote commit");
+    run_git_ok(&updater, &["push"]);
 
-    // Create a test repository with a remote
-    let repo = match TestRepo::new() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to create test repo: {}, skipping", e);
-            return;
-        }
-    };
-    let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
-
-    // Change to repo directory
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
-
-    // Run pull command - should complete without errors
-    let result = handle_pull_command(false, false, false, true, None, false).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
+    let pull = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["pull", "--sequential", "--no-drift-check"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos pull");
+    let stdout = String::from_utf8_lossy(&pull.stdout);
 
     assert!(
-        result.is_ok(),
-        "Pull command should complete without panicking: {:?}",
-        result
+        pull.status.success(),
+        "Pull command failed:\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&pull.stderr)
     );
+    assert!(stdout.contains("repos pull"), "{stdout}");
+    assert!(stdout.contains("▌ Pulled"), "{stdout}");
+    assert!(stdout.contains("current"), "{stdout}");
+    assert!(stdout.contains("1 commit"), "{stdout}");
+    assert!(!stdout.contains("Pushed"), "{stdout}");
 }
 
 #[tokio::test]
