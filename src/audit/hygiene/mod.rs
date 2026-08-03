@@ -25,6 +25,7 @@ async fn acquire_semaphore_permit(
 /// Processes all repositories concurrently for hygiene checking
 pub async fn process_hygiene_repositories(
     context: GenericProcessingContext<HygieneStatistics>,
+    show_report: bool,
 ) -> HygieneStatistics {
     let mut futures = FuturesUnordered::new();
 
@@ -104,14 +105,15 @@ pub async fn process_hygiene_repositories(
         .lock()
         .expect("Failed to acquire stats lock")
         .clone();
-    let detailed_summary = final_stats.generate_detailed_summary();
-    if !detailed_summary.is_empty() {
-        println!("\n{}", "━".repeat(70));
-        println!("{detailed_summary}");
-        println!("{}", "━".repeat(70));
-    }
+    if show_report {
+        let detailed_summary = final_stats.generate_detailed_summary();
+        if !detailed_summary.is_empty() {
+            println!("\n{}", "━".repeat(70));
+            println!("{detailed_summary}");
+            println!("{}", "━".repeat(70));
+        }
 
-    // Add final spacing
-    println!();
+        println!();
+    }
     final_stats
 }

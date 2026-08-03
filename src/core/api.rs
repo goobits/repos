@@ -30,6 +30,7 @@ pub use super::discovery::find_repos_from_path;
 
 /// Common initialization for commands that scan repositories.
 pub use super::discovery::init_command;
+pub(crate) use super::discovery::init_command_quiet;
 
 // Configuration
 pub use super::config::GIT_CONCURRENT_CAP;

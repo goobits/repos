@@ -162,6 +162,12 @@ pub async fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(Strin
     // Flush stdout - ignore errors as this is non-critical
     let _ = std::io::stdout().flush();
 
+    init_command_quiet().await
+}
+
+/// Common initialization without a human-oriented scanning preamble.
+#[must_use]
+pub(crate) async fn init_command_quiet() -> (std::time::Instant, Vec<(String, PathBuf)>) {
     let start_time = std::time::Instant::now();
     let repos = tokio::task::spawn_blocking(find_repos)
         .await

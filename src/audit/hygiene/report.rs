@@ -31,7 +31,8 @@ impl HygieneStatus {
 }
 
 /// Type of hygiene violation
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ViolationType {
     GitignoreViolation,  // File tracked but matches .gitignore
     UniversalBadPattern, // File matches universal bad patterns
@@ -39,7 +40,7 @@ pub enum ViolationType {
 }
 
 /// Individual hygiene violation
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct HygieneViolation {
     pub file_path: String,
     pub violation_type: ViolationType,
@@ -79,6 +80,13 @@ impl HygieneStatistics {
 
     #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
+        let mut failed_repos = self.failed_repos.clone();
+        failed_repos.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+
+        let mut violation_repos = self.violation_repos.clone();
+        violation_repos
+            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+
         serde_json::json!({
             "clean_repos": self.clean_repos,
             "repos_with_violations": self.repos_with_violations,
@@ -87,7 +95,20 @@ impl HygieneStatistics {
             "universal_violations": self.universal_violations,
             "large_files": self.large_files,
             "error_repos": self.error_repos,
-            "failed_repos": self.failed_repos,
+            "failed_repos": failed_repos.into_iter().map(|(repository, path, error)| {
+                serde_json::json!({
+                    "repository": repository,
+                    "path": path,
+                    "error": error,
+                })
+            }).collect::<Vec<_>>(),
+            "violation_repos": violation_repos.into_iter().map(|(repository, path, violations)| {
+                serde_json::json!({
+                    "repository": repository,
+                    "path": path,
+                    "violations": violations,
+                })
+            }).collect::<Vec<_>>(),
         })
     }
 

@@ -111,7 +111,7 @@ impl FixOptions {
 }
 
 /// Result of a fix operation
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct FixResult {
     pub repo_name: String,
     pub fixes_applied: Vec<String>,
@@ -140,9 +140,9 @@ pub async fn apply_fixes(
 
     if repos_to_fix.is_empty() {
         if options.target_repos.is_some() {
-            println!("\n❌ No violations found in specified repositories");
+            eprintln!("\n❌ No violations found in specified repositories");
         } else {
-            println!("\n✅ No hygiene violations to fix!");
+            eprintln!("\n✅ No hygiene violations to fix!");
         }
         return Ok(results);
     }
@@ -152,22 +152,22 @@ pub async fn apply_fixes(
         show_fix_summary(&repos_to_fix, &options).await?;
 
         if !options.dry_run && !confirm_fixes(&options).await? {
-            println!("\n❌ Fix operation cancelled");
+            eprintln!("\n❌ Fix operation cancelled");
             return Ok(results);
         }
     }
 
     // Safety check: Verify git status before proceeding
-    println!("\n🔍 Performing safety checks...");
+    eprintln!("\n🔍 Performing safety checks...");
     for (repo_name, repo_path, _) in &repos_to_fix {
         if let Err(e) = check_repository_safety(repo_path, &options).await {
-            println!("❌ Safety check failed for {repo_name}: {e}");
+            eprintln!("❌ Safety check failed for {repo_name}: {e}");
             return Err(e);
         }
     }
-    println!("✅ All repositories passed safety checks\n");
+    eprintln!("✅ All repositories passed safety checks\n");
 
-    println!(
+    eprintln!(
         "🧹 Applying fixes to {} repositories...\n",
         repos_to_fix.len()
     );
@@ -180,20 +180,20 @@ pub async fn apply_fixes(
             errors: Vec::new(),
         };
 
-        println!("Processing {repo_name}...");
+        eprintln!("Processing {repo_name}...");
 
         // Apply gitignore fixes
         if options.fix_gitignore {
             match fix_gitignore_violations(&repo_path, &violations, &options).await {
                 Ok(msg) => {
                     if !msg.is_empty() {
-                        println!("  ✓ {msg}");
+                        eprintln!("  ✓ {msg}");
                         result.fixes_applied.push(msg);
                     }
                 }
                 Err(e) => {
                     let error_msg = format!("gitignore fix failed: {e}");
-                    println!("  ✗ {error_msg}");
+                    eprintln!("  ✗ {error_msg}");
                     result.errors.push(error_msg);
                 }
             }
@@ -204,13 +204,13 @@ pub async fn apply_fixes(
             match fix_large_files(&repo_path, &violations, &options).await {
                 Ok(msg) => {
                     if !msg.is_empty() {
-                        println!("  ✓ {msg}");
+                        eprintln!("  ✓ {msg}");
                         result.fixes_applied.push(msg);
                     }
                 }
                 Err(e) => {
                     let error_msg = format!("large file fix failed: {e}");
-                    println!("  ✗ {error_msg}");
+                    eprintln!("  ✗ {error_msg}");
                     result.errors.push(error_msg);
                 }
             }
@@ -221,13 +221,13 @@ pub async fn apply_fixes(
             match fix_secrets_in_history(&repo_path, &options).await {
                 Ok(msg) => {
                     if !msg.is_empty() {
-                        println!("  ✓ {msg}");
+                        eprintln!("  ✓ {msg}");
                         result.fixes_applied.push(msg);
                     }
                 }
                 Err(e) => {
                     let error_msg = format!("secret removal failed: {e}");
-                    println!("  ✗ {error_msg}");
+                    eprintln!("  ✗ {error_msg}");
                     result.errors.push(error_msg);
                 }
             }
@@ -247,7 +247,7 @@ async fn show_fix_summary(
     repos: &[(String, String, Vec<HygieneViolation>)],
     options: &FixOptions,
 ) -> Result<()> {
-    println!("\n📋 Fix Summary\n");
+    eprintln!("\n📋 Fix Summary\n");
 
     let mut total_gitignore = 0;
     let mut total_large = 0;
@@ -263,32 +263,32 @@ async fn show_fix_summary(
         }
     }
 
-    println!("Found violations in {} repositories:", repos.len());
+    eprintln!("Found violations in {} repositories:", repos.len());
 
     if options.fix_gitignore {
-        println!(
+        eprintln!(
             "  📝 {} files need .gitignore entries",
             total_gitignore + total_patterns
         );
         if options.untrack_files {
-            println!("     → Will untrack files after adding to .gitignore");
+            eprintln!("     → Will untrack files after adding to .gitignore");
         } else {
-            println!("     → Will only add to .gitignore (files remain tracked)");
+            eprintln!("     → Will only add to .gitignore (files remain tracked)");
         }
     }
 
     if options.fix_large {
-        println!("  📦 {total_large} large files in history");
-        println!("     → Will remove from Git history (requires force-push)");
+        eprintln!("  📦 {total_large} large files in history");
+        eprintln!("     → Will remove from Git history (requires force-push)");
     }
 
     if options.fix_secrets {
-        println!("  🔑 Secrets will be scanned and removed");
-        println!("     → Will rewrite Git history (requires force-push)");
+        eprintln!("  🔑 Secrets will be scanned and removed");
+        eprintln!("     → Will rewrite Git history (requires force-push)");
     }
 
     if options.dry_run {
-        println!("\n⚠️  DRY RUN MODE - No changes will be made");
+        eprintln!("\n⚠️  DRY RUN MODE - No changes will be made");
     }
 
     Ok(())
@@ -300,34 +300,34 @@ async fn confirm_fixes(options: &FixOptions) -> Result<bool> {
         return Ok(true); // Always proceed in dry-run mode
     }
 
-    println!("\n═══════════════════════════════════════════════════════════════════");
-    println!("⚠️  CONFIRMATION REQUIRED");
-    println!("═══════════════════════════════════════════════════════════════════");
+    eprintln!("\n═══════════════════════════════════════════════════════════════════");
+    eprintln!("⚠️  CONFIRMATION REQUIRED");
+    eprintln!("═══════════════════════════════════════════════════════════════════");
 
     if options.fix_large || options.fix_secrets {
-        println!("\n🔴 DESTRUCTIVE OPERATION - HISTORY REWRITE");
-        println!("   • Git history will be permanently rewritten");
-        println!("   • Backups saved in refs/original/pre-fix-backup-*");
-        println!("   • git filter-repo also saves refs in .git/filter-repo/");
-        println!("   • You will need to force-push: git push --force-with-lease");
-        println!("   • All collaborators must re-clone or reset their branches");
-        println!("\n   ROLLBACK: git reset --hard refs/original/pre-fix-backup-<timestamp>");
+        eprintln!("\n🔴 DESTRUCTIVE OPERATION - HISTORY REWRITE");
+        eprintln!("   • Git history will be permanently rewritten");
+        eprintln!("   • Backups saved in refs/original/pre-fix-backup-*");
+        eprintln!("   • git filter-repo also saves refs in .git/filter-repo/");
+        eprintln!("   • You will need to force-push: git push --force-with-lease");
+        eprintln!("   • All collaborators must re-clone or reset their branches");
+        eprintln!("\n   ROLLBACK: git reset --hard refs/original/pre-fix-backup-<timestamp>");
     } else if options.untrack_files {
-        println!("\n🟡 MODERATE OPERATION - FILE UNTRACKING");
-        println!("   • Files will be removed from Git tracking");
-        println!("   • Files remain in your working directory");
-        println!("   • Changes are reversible with: git add <files>");
+        eprintln!("\n🟡 MODERATE OPERATION - FILE UNTRACKING");
+        eprintln!("   • Files will be removed from Git tracking");
+        eprintln!("   • Files remain in your working directory");
+        eprintln!("   • Changes are reversible with: git add <files>");
     } else {
-        println!("\n🟢 SAFE OPERATION - GITIGNORE UPDATE");
-        println!("   • Only .gitignore files will be modified");
-        println!("   • Files remain tracked until manually untracked");
-        println!("   • Changes are easily reversible");
+        eprintln!("\n🟢 SAFE OPERATION - GITIGNORE UPDATE");
+        eprintln!("   • Only .gitignore files will be modified");
+        eprintln!("   • Files remain tracked until manually untracked");
+        eprintln!("   • Changes are easily reversible");
     }
 
-    println!("\n═══════════════════════════════════════════════════════════════════");
+    eprintln!("\n═══════════════════════════════════════════════════════════════════");
 
-    print!("\nType 'yes' to proceed or anything else to cancel: ");
-    io::stdout().flush()?;
+    eprint!("\nType 'yes' to proceed or anything else to cancel: ");
+    io::stderr().flush()?;
 
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
@@ -537,7 +537,7 @@ async fn fix_large_files(
     }
 
     // git filter-repo automatically creates backup in .git/filter-repo/original/refs
-    println!("    Creating backup before history rewrite...");
+    eprintln!("    Creating backup before history rewrite...");
 
     // Create our own backup ref as well for extra safety
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
@@ -550,13 +550,13 @@ async fn fix_large_files(
         .await?;
     ensure_command_success(&backup_output, "creating large-file backup ref")?;
 
-    println!("    Backup created at: {backup_ref}");
+    eprintln!("    Backup created at: {backup_ref}");
 
     let mut paths_content = String::new();
 
     for file in &large_files {
         let size_mb = file.size_bytes.unwrap_or(0) as f64 / 1_048_576.0;
-        println!(
+        eprintln!(
             "    Removing {} ({:.1} MB) from history...",
             file.file_path, size_mb
         );
@@ -677,8 +677,8 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
         .await?;
     ensure_command_success(&backup_output, "creating secret-removal backup ref")?;
 
-    println!("    Backup created at: {backup_ref}");
-    println!("    Found {} files with secrets", secret_files.len());
+    eprintln!("    Backup created at: {backup_ref}");
+    eprintln!("    Found {} files with secrets", secret_files.len());
 
     let mut replacements_content = String::new();
 
@@ -714,7 +714,7 @@ async fn fix_secrets_in_history(repo_path: &str, options: &FixOptions) -> Result
 
     // For files that contain secrets but patterns are too long, remove entire files
     if !secret_files.is_empty() && secret_patterns.is_empty() {
-        println!("    Removing entire files containing secrets...");
+        eprintln!("    Removing entire files containing secrets...");
 
         let paths_content: String = secret_files
             .iter()
@@ -836,7 +836,7 @@ async fn check_repository_safety(repo_path: &str, options: &FixOptions) -> Resul
             .map_err(|e| anyhow!("invalid ahead count '{}': {e}", ahead.1))?;
 
         if ahead_count > 0 {
-            println!(
+            eprintln!(
                 "⚠️  Warning: Repository is {ahead_count} commits ahead of remote.\n   \
                  After history rewrite, you'll need: git push --force-with-lease"
             );
@@ -858,19 +858,19 @@ async fn check_filter_repo_installed() -> bool {
 
 /// Show final results of fix operations
 fn show_fix_results(results: &[FixResult]) {
-    println!("\n═══════════════════════════════════════════════════════════════════");
+    eprintln!("\n═══════════════════════════════════════════════════════════════════");
 
     let successful = results.iter().filter(|r| r.errors.is_empty()).count();
     let failed = results.iter().filter(|r| !r.errors.is_empty()).count();
 
-    println!("✅ Fix Summary: {successful} successful, {failed} failed");
+    eprintln!("✅ Fix Summary: {successful} successful, {failed} failed");
 
     if failed > 0 {
-        println!("\n⚠️  Failed fixes:");
+        eprintln!("\n⚠️  Failed fixes:");
         for result in results.iter().filter(|r| !r.errors.is_empty()) {
-            println!("  {} - {}", result.repo_name, result.errors.join(", "));
+            eprintln!("  {} - {}", result.repo_name, result.errors.join(", "));
         }
     }
 
-    println!("═══════════════════════════════════════════════════════════════════");
+    eprintln!("═══════════════════════════════════════════════════════════════════");
 }

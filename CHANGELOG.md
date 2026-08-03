@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - HTTP credentials, URL user information, and query strings are redacted from Git failure reports.
+- Secret and hygiene reports retain repository and file attribution, while `repos audit --json` emits one redirect-safe JSON document even with dry-run fixes.
 
 ## [4.0.0] - 2026-05-05
 

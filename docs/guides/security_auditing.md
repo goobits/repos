@@ -271,6 +271,9 @@ Type 'yes' to proceed or anything else to cancel:
 repos audit --json
 ```
 
+Standard output contains exactly one JSON document. Progress and fix diagnostics
+use standard error, so redirecting stdout produces a parseable report.
+
 ```json
 {
   "truffle": {
@@ -282,6 +285,14 @@ repos audit --json
       "unverified_secrets": 2,
       "scan_duration_seconds": 12.4
     },
+    "findings": [
+      {
+        "repository": "web-app",
+        "detector": "AWS",
+        "verified": true,
+        "file": ".env"
+      }
+    ],
     "secrets_by_detector": {
       "GitHub": 2,
       "AWS": 1
@@ -293,8 +304,22 @@ repos audit --json
     "repos_with_violations": 2,
     "total_violations": 4,
     "error_repos": 0,
-    "failed_repos": []
+    "failed_repos": [],
+    "violation_repos": [
+      {
+        "repository": "web-app",
+        "path": "./web-app",
+        "violations": [
+          {
+            "file_path": ".env",
+            "violation_type": "gitignore_violation",
+            "size_bytes": null
+          }
+        ]
+      }
+    ]
   },
+  "fixes": null,
   "message": "Completed audit summary"
 }
 ```

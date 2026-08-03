@@ -44,6 +44,7 @@ fn test_truffle_statistics_initialization() {
         stats.secrets_by_detector.is_empty(),
         "Should start with empty detector map"
     );
+    assert!(stats.findings.is_empty(), "Should start with no findings");
     assert!(
         stats.failed_repos.is_empty(),
         "Should start with no failed repos"
@@ -111,6 +112,21 @@ fn test_truffle_statistics_add_repo_result_with_unverified_secrets() {
         *stats.secrets_by_detector.get("GitHub").unwrap(),
         1,
         "Should count GitHub detector"
+    );
+    assert_eq!(stats.findings.len(), 2, "Should retain both findings");
+    assert!(
+        stats
+            .findings
+            .iter()
+            .all(|finding| finding.repository == "test-repo"),
+        "Each finding should retain its repository"
+    );
+    assert!(
+        stats
+            .findings
+            .iter()
+            .any(|finding| finding.file == "config/aws.yml"),
+        "Each finding should retain its file path"
     );
 }
 
@@ -282,6 +298,14 @@ fn test_truffle_statistics_generate_summary_with_only_unverified() {
 #[test]
 fn test_truffle_statistics_generate_detailed_report_text() {
     let mut stats = TruffleStatistics::new();
+    stats.add_repo_result(
+        "credentials-api",
+        &[SecretFinding {
+            detector_name: "AWS".to_string(),
+            verified: true,
+            file_path: "config/credentials.yml".to_string(),
+        }],
+    );
     stats.verified_secrets = 2;
     stats.unverified_secrets = 3;
     stats.secrets_by_detector.insert("AWS".to_string(), 3);
@@ -308,6 +332,7 @@ fn test_truffle_statistics_generate_detailed_report_text() {
     );
     assert!(report.contains("3 × AWS"), "Should show AWS count");
     assert!(report.contains("2 × GitHub"), "Should show GitHub count");
+    assert!(report.contains("credentials-api · AWS · config/credentials.yml"));
     assert!(report.contains("SCAN FAILURES (1)"), "Should show failures");
     assert!(
         report.contains("failed-repo - Timeout"),
@@ -318,6 +343,14 @@ fn test_truffle_statistics_generate_detailed_report_text() {
 #[test]
 fn test_truffle_statistics_generate_detailed_report_json() {
     let mut stats = TruffleStatistics::new();
+    stats.add_repo_result(
+        "secrets-repo",
+        &[SecretFinding {
+            detector_name: "AWS".to_string(),
+            verified: true,
+            file_path: "config/credentials.yml".to_string(),
+        }],
+    );
     stats.total_repos_scanned = 5;
     stats.repos_with_secrets = 2;
     stats.total_secrets = 4;
@@ -365,10 +398,11 @@ fn test_truffle_statistics_generate_detailed_report_json() {
         parsed["failed_repos"].is_array(),
         "JSON should contain failed_repos array"
     );
-    assert_eq!(
-        parsed["failed_repos"][0][0], "repo1",
-        "JSON should contain failed repo name"
-    );
+    assert_eq!(parsed["failed_repos"][0]["repository"], "repo1");
+    assert_eq!(parsed["failed_repos"][0]["error"], "Error");
+    assert_eq!(parsed["findings"][0]["repository"], "secrets-repo");
+    assert_eq!(parsed["findings"][0]["detector"], "AWS");
+    assert_eq!(parsed["findings"][0]["file"], "config/credentials.yml");
 }
 
 #[test]
@@ -642,6 +676,35 @@ fn test_hygiene_statistics_generate_detailed_summary_empty() {
     assert!(
         detailed.is_empty(),
         "Empty stats should produce empty detailed summary"
+    );
+}
+
+#[test]
+fn test_hygiene_json_retains_repository_and_violation_details() {
+    let mut stats = HygieneStatistics::new();
+    stats.update(
+        "web-app",
+        "/workspace/web-app",
+        &HygieneStatus::Violations,
+        "one violation",
+        vec![HygieneViolation {
+            file_path: ".env".to_string(),
+            violation_type: ViolationType::GitignoreViolation,
+            size_bytes: None,
+        }],
+    );
+
+    let json = stats.to_json();
+
+    assert_eq!(json["violation_repos"][0]["repository"], "web-app");
+    assert_eq!(json["violation_repos"][0]["path"], "/workspace/web-app");
+    assert_eq!(
+        json["violation_repos"][0]["violations"][0]["file_path"],
+        ".env"
+    );
+    assert_eq!(
+        json["violation_repos"][0]["violations"][0]["violation_type"],
+        "gitignore_violation"
     );
 }
 

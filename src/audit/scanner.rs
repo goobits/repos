@@ -16,8 +16,9 @@ use tokio::process::Command;
 
 use super::hygiene::{process_hygiene_repositories, HygieneStatistics};
 use crate::core::{
-    create_generic_processing_context, init_command, set_terminal_title_and_flush,
-    GenericProcessingContext, HYGIENE_CONCURRENT_LIMIT, NO_REPOS_MESSAGE, TRUFFLE_CONCURRENT_LIMIT,
+    create_generic_processing_context, init_command, init_command_quiet,
+    set_terminal_title_and_flush, GenericProcessingContext, HYGIENE_CONCURRENT_LIMIT,
+    NO_REPOS_MESSAGE, TRUFFLE_CONCURRENT_LIMIT,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -29,6 +30,15 @@ const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 const TRUFFLEHOG_INSTALL_SCRIPT_SHA256: &str =
     "c394defeaea8a7c48f828a2051b608a9b19f43f34b891407b66a386c3e2591e2";
 
+/// Safe, attributable secret metadata retained for human and JSON reports.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ReportedSecretFinding {
+    pub repository: String,
+    pub detector: String,
+    pub verified: bool,
+    pub file: String,
+}
+
 /// Comprehensive statistics for `TruffleHog` scanning
 #[derive(Clone, Default, Debug)]
 pub struct TruffleStatistics {
@@ -38,6 +48,7 @@ pub struct TruffleStatistics {
     pub verified_secrets: u32,
     pub unverified_secrets: u32,
     pub secrets_by_detector: HashMap<String, u32>,
+    pub findings: Vec<ReportedSecretFinding>,
     pub failed_repos: Vec<(String, String)>, // (repo_name, error_message)
     pub scan_duration: Duration,
 }
@@ -48,7 +59,7 @@ impl TruffleStatistics {
         Self::default()
     }
 
-    pub fn add_repo_result(&mut self, _repo_name: &str, secrets: &[SecretFinding]) {
+    pub fn add_repo_result(&mut self, repo_name: &str, secrets: &[SecretFinding]) {
         self.total_repos_scanned += 1;
 
         if !secrets.is_empty() {
@@ -66,6 +77,13 @@ impl TruffleStatistics {
                     .secrets_by_detector
                     .entry(secret.detector_name.clone())
                     .or_insert(0) += 1;
+
+                self.findings.push(ReportedSecretFinding {
+                    repository: repo_name.to_string(),
+                    detector: secret.detector_name.clone(),
+                    verified: secret.verified,
+                    file: secret.file_path.clone(),
+                });
             }
         }
     }
@@ -100,19 +118,7 @@ impl TruffleStatistics {
 
     pub fn generate_detailed_report(&self, json: bool) -> Result<String> {
         if json {
-            let json_output = serde_json::json!({
-                "summary": {
-                    "total_repos_scanned": self.total_repos_scanned,
-                    "repos_with_secrets": self.repos_with_secrets,
-                    "total_secrets": self.total_secrets,
-                    "verified_secrets": self.verified_secrets,
-                    "unverified_secrets": self.unverified_secrets,
-                    "scan_duration_seconds": self.scan_duration.as_secs_f64()
-                },
-                "secrets_by_detector": self.secrets_by_detector,
-                "failed_repos": self.failed_repos
-            });
-            Ok(serde_json::to_string_pretty(&json_output)?)
+            Ok(serde_json::to_string_pretty(&self.to_json())?)
         } else {
             let mut report = Vec::new();
 
@@ -122,6 +128,7 @@ impl TruffleStatistics {
                     self.verified_secrets
                 ));
                 report.push("   These secrets are confirmed to be active and should be rotated immediately!".to_string());
+                append_findings(&mut report, &self.findings, true);
                 report.push(String::new());
             }
 
@@ -133,6 +140,7 @@ impl TruffleStatistics {
                 report.push(
                     "   These appear to be secrets but couldn't be verified as active.".to_string(),
                 );
+                append_findings(&mut report, &self.findings, false);
                 report.push(String::new());
             }
 
@@ -157,6 +165,61 @@ impl TruffleStatistics {
             Ok(report.join("\n"))
         }
     }
+
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut findings = self.findings.clone();
+        findings.sort_by(|left, right| {
+            right
+                .verified
+                .cmp(&left.verified)
+                .then_with(|| left.repository.cmp(&right.repository))
+                .then_with(|| left.file.cmp(&right.file))
+                .then_with(|| left.detector.cmp(&right.detector))
+        });
+
+        let mut failed_repos = self.failed_repos.clone();
+        failed_repos.sort();
+
+        serde_json::json!({
+            "summary": {
+                "total_repos_scanned": self.total_repos_scanned,
+                "repos_with_secrets": self.repos_with_secrets,
+                "total_secrets": self.total_secrets,
+                "verified_secrets": self.verified_secrets,
+                "unverified_secrets": self.unverified_secrets,
+                "scan_duration_seconds": self.scan_duration.as_secs_f64()
+            },
+            "findings": findings,
+            "secrets_by_detector": self.secrets_by_detector,
+            "failed_repos": failed_repos.into_iter().map(|(repository, error)| {
+                serde_json::json!({
+                    "repository": repository,
+                    "error": error,
+                })
+            }).collect::<Vec<_>>(),
+        })
+    }
+}
+
+fn append_findings(report: &mut Vec<String>, findings: &[ReportedSecretFinding], verified: bool) {
+    let mut matching = findings
+        .iter()
+        .filter(|finding| finding.verified == verified)
+        .collect::<Vec<_>>();
+    matching.sort_by(|left, right| {
+        left.repository
+            .cmp(&right.repository)
+            .then_with(|| left.file.cmp(&right.file))
+            .then_with(|| left.detector.cmp(&right.detector))
+    });
+
+    for finding in matching {
+        report.push(format!(
+            "   • {} · {} · {}",
+            finding.repository, finding.detector, finding.file
+        ));
+    }
 }
 
 /// Individual secret finding from `TruffleHog`
@@ -164,7 +227,6 @@ impl TruffleStatistics {
 pub struct SecretFinding {
     pub detector_name: String,
     pub verified: bool,
-    #[allow(dead_code)]
     pub file_path: String,
 }
 
@@ -176,11 +238,19 @@ pub async fn run_truffle_scan(
     json: bool,
     target_repos: Option<Vec<String>>,
 ) -> Result<(TruffleStatistics, HygieneStatistics)> {
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = if json {
+        init_command_quiet().await
+    } else {
+        init_command(SCANNING_MESSAGE).await
+    };
 
     if repos.is_empty() {
-        println!("\r{NO_REPOS_MESSAGE}");
-        set_terminal_title_and_flush("✅ repos");
+        if !json {
+            println!("\r{NO_REPOS_MESSAGE}");
+        }
+        if !json {
+            set_terminal_title_and_flush("✅ repos");
+        }
         return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
     }
 
@@ -195,8 +265,12 @@ pub async fn run_truffle_scan(
     };
 
     if repos_to_scan.is_empty() {
-        println!("\r❌ No matching repositories found");
-        set_terminal_title_and_flush("✅ repos");
+        if !json {
+            println!("\r❌ No matching repositories found");
+        }
+        if !json {
+            set_terminal_title_and_flush("✅ repos");
+        }
         return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
     }
 
@@ -206,8 +280,10 @@ pub async fn run_truffle_scan(
     } else {
         "repositories"
     };
-    print!("\r🔍 Auditing {total_repos} {repo_word}                    \n");
-    println!();
+    if !json {
+        print!("\r🔍 Auditing {total_repos} {repo_word}                    \n");
+        println!();
+    }
 
     // Install TruffleHog if requested and not already installed
     if install_tools {
@@ -247,7 +323,7 @@ pub async fn run_truffle_scan(
     )?;
 
     // Run hygiene checking
-    let hygiene_stats = process_hygiene_repositories(hygiene_context).await;
+    let hygiene_stats = process_hygiene_repositories(hygiene_context, !json).await;
 
     // Get final statistics
     let final_truffle_stats = {
@@ -256,18 +332,9 @@ pub async fn run_truffle_scan(
         stats
     };
 
-    // Display results
-    if json {
-        let truffle_json = serde_json::from_str::<serde_json::Value>(
-            &final_truffle_stats.generate_detailed_report(true)?,
-        )?;
-        let combined_output = serde_json::json!({
-            "truffle": truffle_json,
-            "hygiene": hygiene_stats.to_json(),
-            "message": final_truffle_stats.generate_summary(),
-        });
-        println!("{}", serde_json::to_string_pretty(&combined_output)?);
-    } else {
+    // JSON is rendered by the command handler after optional fixes so stdout
+    // contains exactly one complete document.
+    if !json {
         println!("\n{}", "═".repeat(70));
         println!("🔍 SECRET SCANNING RESULTS");
         println!("{}", "═".repeat(70));
@@ -452,11 +519,11 @@ async fn is_trufflehog_installed() -> bool {
 /// Install `TruffleHog` if not already present
 async fn ensure_trufflehog_installed() -> Result<()> {
     if is_trufflehog_installed().await {
-        println!("✅ TruffleHog is already installed");
+        eprintln!("✅ TruffleHog is already installed");
         return Ok(());
     }
 
-    println!("📦 Installing TruffleHog...");
+    eprintln!("📦 Installing TruffleHog...");
 
     // Detect platform and install accordingly
     let install_cmd = if cfg!(target_os = "macos") {
@@ -477,7 +544,7 @@ async fn ensure_trufflehog_installed() -> Result<()> {
         return Err(anyhow!("Automatic TruffleHog installation not supported on this platform. Please install manually."));
     };
 
-    println!("Running: {} {}", install_cmd.0, install_cmd.1.join(" "));
+    eprintln!("Running: {} {}", install_cmd.0, install_cmd.1.join(" "));
 
     let output = Command::new(install_cmd.0)
         .args(&install_cmd.1)
@@ -496,7 +563,7 @@ async fn ensure_trufflehog_installed() -> Result<()> {
         ));
     }
 
-    println!("✅ TruffleHog installed successfully");
+    eprintln!("✅ TruffleHog installed successfully");
     Ok(())
 }
 
@@ -523,14 +590,14 @@ async fn verify_file_checksum(path: &std::path::Path, expected_sha256: &str) -> 
 /// Install `TruffleHog` using direct download script
 async fn install_trufflehog_direct() -> Result<()> {
     // Security warning before downloading external script
-    println!("\n⚠️  SECURITY NOTICE:");
-    println!("   This will download and execute an installation script from:");
-    println!(
+    eprintln!("\n⚠️  SECURITY NOTICE:");
+    eprintln!("   This will download and execute an installation script from:");
+    eprintln!(
         "   https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh"
     );
-    println!("   The script will be verified against a known checksum before execution.\n");
+    eprintln!("   The script will be verified against a known checksum before execution.\n");
 
-    println!("📥 Downloading TruffleHog installation script...");
+    eprintln!("📥 Downloading TruffleHog installation script...");
 
     let script_url =
         "https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh";
@@ -550,7 +617,7 @@ async fn install_trufflehog_direct() -> Result<()> {
         let home = std::env::var("HOME")?;
         let user_bin = format!("{home}/.local/bin");
         tokio::fs::create_dir_all(&user_bin).await?;
-        println!("⚠️  Installing to {user_bin} (add to PATH if needed)");
+        eprintln!("⚠️  Installing to {user_bin} (add to PATH if needed)");
         user_bin
     };
 
@@ -568,13 +635,13 @@ async fn install_trufflehog_direct() -> Result<()> {
         return Err(anyhow!("Failed to download TruffleHog installer: {stderr}"));
     }
 
-    println!("✅ Download complete, verifying checksum...");
+    eprintln!("✅ Download complete, verifying checksum...");
 
     // Verify the downloaded script's checksum
     let temp_script_path = std::path::Path::new(&temp_script);
     match verify_file_checksum(temp_script_path, TRUFFLEHOG_INSTALL_SCRIPT_SHA256).await {
         Ok(true) => {
-            println!("✅ Checksum verification passed");
+            eprintln!("✅ Checksum verification passed");
         }
         Ok(false) => {
             let _ = tokio::fs::remove_file(&temp_script).await;
@@ -589,7 +656,7 @@ async fn install_trufflehog_direct() -> Result<()> {
     }
 
     // Execute the downloaded script
-    println!("🔧 Executing installation script...");
+    eprintln!("🔧 Executing installation script...");
     let install_output = Command::new("sh")
         .args([&temp_script, "-b", &install_path])
         .output()
