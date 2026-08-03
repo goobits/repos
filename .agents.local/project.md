@@ -73,7 +73,8 @@ make aw-doctor                  # validate Agent Workspace repo setup
 
 ## Local Cautions
 
-- Active generated folders: `target/` and ignored local checkout outputs under `infra/aw/`.
+- Build artifacts are routed to `/tmp/goobits-workspace-target` by `.cargo/config.toml`; keep generated output off the shared checkout.
+- `infra/aw/` is an ignored local source checkout, not a home for build output.
 - Slow/expensive commands: full `cargo test` and first AW build can compile many dependencies.
 - Shared resources: tests mutate current working directory and use a global test lock.
 - Deployment or credential constraints: package publishing commands may require registry credentials.
