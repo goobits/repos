@@ -44,7 +44,7 @@ pub async fn handle_publish_command(
 
     if !plan.inspection_errors.is_empty() {
         for (repo, error) in &plan.inspection_errors {
-            eprintln!("❌ {repo}: status inspection failed: {error}");
+            eprintln!("❌ {repo}: inspection failed: {error}");
         }
         anyhow::bail!(
             "{} repositories could not be inspected safely",
@@ -109,22 +109,13 @@ pub async fn handle_publish_command(
         );
 
         for pkg in &plan.packages {
-            if let Some(info) = pkg.manager.get_info(&pkg.path).await {
-                println!(
-                    "  {} {:<30} ({:<7}) v{}",
-                    pkg.manager.icon(),
-                    pkg.name,
-                    pkg.manager.name(),
-                    info.version
-                );
-            } else {
-                println!(
-                    "  {} {:<30} ({:<7}) version unknown",
-                    pkg.manager.icon(),
-                    pkg.name,
-                    pkg.manager.name()
-                );
-            }
+            println!(
+                "  {} {:<30} ({:<7}) v{}",
+                pkg.manager.icon(),
+                pkg.package_name,
+                pkg.manager.name(),
+                pkg.version
+            );
         }
         println!(
             "\nWould publish {} packages (dry-run - nothing published)\n",

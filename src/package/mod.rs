@@ -33,6 +33,9 @@ pub trait PackageManager: Send + Sync {
     /// Gets package information (name, version) from the repository.
     async fn get_info(&self, path: &Path) -> Option<PackageInfo>;
 
+    /// Returns registry package names that must be available before this package.
+    async fn dependencies(&self, path: &Path) -> Vec<String>;
+
     /// Publishes the package to its respective registry.
     ///
     /// Returns `(success, message)`.

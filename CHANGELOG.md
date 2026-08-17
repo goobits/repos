@@ -12,10 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
+- Transfer and sync reports now end with compact final totals, including pull/push transfer counts for `repos sync`, so long actionable reports leave the run result visible.
 - Repository-oriented report sections are now sorted by path, grouping nested packages under their top-level project; nested package drift is sorted alphabetically by package, then by each copy's project path.
 - Transfer and sync reports now combine failed, skipped, and local follow-up details into one project-grouped attention section with fixed-width `!`, `·`, and `~` markers. Final reports also begin after a single visual break from progress output.
+- `repos status` now refreshes upstream refs before comparing commits, treats ahead and behind branches as work to do, and reports exact next actions without moving local branches or worktrees.
+- Concise transfer progress is explicitly finished before final reports render, preventing progress repaint from indenting or erasing report details in interactive terminals.
 - The source installer now builds and installs from one portable external Cargo target directory, respects `CARGO_TARGET_DIR`, and no longer assumes a checkout-local `target/` path.
-- Repository discovery no longer inherits ignore files above the requested scan root, so a parent repository cannot hide child repositories from commands run inside that child directory tree.
+- Repository discovery no longer applies Git/tool ignore rules to fleet inventory, so ignored nested repositories still participate. Curated dependency/build directories and explicit `.reposignore` entries remain excluded.
 - Status, publish, and nested mutation reports now name their outcomes, include checked totals, and provide paths and next steps where action is required.
 - `repos doctor` now emits a sorted summary with separate warnings/blockers, inspects both fetch and push URLs, skips HTTP access probes that could trigger credential helpers, and provides sanitized per-repo fixes.
 - Push and pull summaries now use exclusive outcome counts that add up to `Checked`; skipped repositories are named with path/reason/next-step details, while local and nested work is explicitly non-exclusive follow-up.
@@ -23,10 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `save`, `stage`, `unstage`, `commit`, and `config` now use operation-specific summaries that name every changed or planned repository and give path/reason/next-step details for non-successes.
 - **Push/pull report UX:** Both transfer commands now use the same compact ANSI-colored report, name repositories and commit counts, deduplicate follow-up work, and keep nested drift as a short action list.
 - **Push progress:** Concise mode names a repository when its operation is still running after 10 seconds instead of leaving only the last completed repository visible.
+- Commit, save, push, pull, sync, and audit fixes now use dependency waves: children run before parent commits/pushes, while parents run before child pulls. Independent repositories within each wave remain concurrent.
+- Parent commits refresh gitlinks after child commits, and parent pushes verify that each exact gitlink commit is reachable from fetched child remote refs.
+- Package publishing now verifies a clean, fully pushed release commit and publishes local package dependencies in topological waves. Duplicate identities and dependency cycles fail before registry mutation.
+- Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
+
+### Fixed
+- Dirty worktree classification is retained when remote status refresh fails.
+- Existing release tags are never moved to a different commit; `--tag` can push a matching local tag after an already-published registry result.
+- Nested drift commands no longer conflate independent embedded repositories with Git submodules or linked worktrees.
 
 ### Security
 - HTTP credentials, URL user information, and query strings are redacted from Git failure reports.
 - Secret and hygiene reports retain repository and file attribution, while `repos audit --json` emits one redirect-safe JSON document even with dry-run fixes.
+- Audit safety is rechecked immediately before each mutation, and bulk history rewrites across parent/submodule dependency sets are refused.
 
 ## [4.0.0] - 2026-05-05
 

@@ -148,7 +148,7 @@ enum Commands {
         /// Pattern to match files (e.g., "*.md", "README.md", "*")
         pattern: String,
     },
-    /// Show staging status across all repositories, or only specific repositories/paths
+    /// Show current worktree and remote status across repositories
     Status {
         /// Show repositories that need action before sync/push is clean
         #[arg(long)]

@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
@@ -30,6 +31,20 @@ impl PackageManager for Cargo {
         get_package_info_internal(path).await
     }
 
+    async fn dependencies(&self, path: &Path) -> Vec<String> {
+        get_manifest(path)
+            .await
+            .map(|manifest| {
+                manifest
+                    .dependencies
+                    .into_iter()
+                    .chain(manifest.build_dependencies)
+                    .map(|(name, value)| renamed_dependency(name, &value))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String) {
         publish_internal(path, dry_run).await
     }
@@ -39,6 +54,10 @@ impl PackageManager for Cargo {
 #[derive(Deserialize)]
 struct CargoToml {
     package: CargoPackage,
+    #[serde(default)]
+    dependencies: HashMap<String, toml::Value>,
+    #[serde(default, rename = "build-dependencies")]
+    build_dependencies: HashMap<String, toml::Value>,
 }
 
 #[derive(Deserialize)]
@@ -47,12 +66,24 @@ struct CargoPackage {
     version: String,
 }
 
+fn renamed_dependency(name: String, value: &toml::Value) -> String {
+    value
+        .as_table()
+        .and_then(|table| table.get("package"))
+        .and_then(toml::Value::as_str)
+        .map_or(name, str::to_string)
+}
+
+async fn get_manifest(repo_path: &Path) -> Option<CargoToml> {
+    let content = tokio::fs::read_to_string(repo_path.join("Cargo.toml"))
+        .await
+        .ok()?;
+    toml::from_str(&content).ok()
+}
+
 /// Gets package information from Cargo.toml
 async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
-    let cargo_toml_path = repo_path.join("Cargo.toml");
-
-    let content = tokio::fs::read_to_string(&cargo_toml_path).await.ok()?;
-    let cargo: CargoToml = toml::from_str(&content).ok()?;
+    let cargo = get_manifest(repo_path).await?;
 
     Some(PackageInfo {
         manager_name: "cargo".to_string(),

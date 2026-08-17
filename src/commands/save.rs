@@ -9,8 +9,8 @@ use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::core::{
     acquire_semaphore_permit, clean_error_message, create_processing_context, init_command,
-    set_terminal_title, set_terminal_title_and_flush, BatchOperation, GIT_CONCURRENT_CAP,
-    NO_REPOS_MESSAGE,
+    set_terminal_title, set_terminal_title_and_flush, BatchOperation, GitlinkPrerequisite,
+    RepositoryOrder, RepositoryTopology, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
 use crate::git::{
     commit_changes, fetch_and_analyze, get_staging_status, has_staged_changes, is_detached_head,
@@ -99,49 +99,57 @@ async fn process_save_repositories(
     let start_time = context.start_time;
     let total_repos = context.total_repos;
 
-    let mut futures = FuturesUnordered::new();
-    for ((repo_name, repo_path), progress_bar) in context.repositories.iter().zip(progress_bars) {
-        let semaphore = std::sync::Arc::clone(&context.semaphore);
-        let stats = std::sync::Arc::clone(&context.statistics);
-        let footer = footer_pb.clone();
-        let commit_message = commit_message.clone();
+    let topology = RepositoryTopology::new(&context.repositories);
+    for wave in topology.waves(RepositoryOrder::ChildrenFirst) {
+        let mut futures = FuturesUnordered::new();
+        for index in wave {
+            let (repo_name, repo_path) = &context.repositories[index];
+            let progress_bar = progress_bars[index].clone();
+            let gitlink_prerequisites =
+                topology.gitlink_prerequisites(index, &context.repositories);
+            let semaphore = std::sync::Arc::clone(&context.semaphore);
+            let stats = std::sync::Arc::clone(&context.statistics);
+            let footer = footer_pb.clone();
+            let commit_message = commit_message.clone();
 
-        let future = async move {
-            let _permit = acquire_semaphore_permit(&semaphore).await;
+            let future = async move {
+                let _permit = acquire_semaphore_permit(&semaphore).await;
 
-            let (status, message, has_uncommitted) = save_one_repo(
-                repo_path,
-                &commit_message,
-                include_untracked,
-                auto_upstream,
-                dry_run,
-            )
-            .await;
+                let (status, message, has_uncommitted) = save_one_repo(
+                    repo_path,
+                    &commit_message,
+                    include_untracked,
+                    auto_upstream,
+                    dry_run,
+                    &gitlink_prerequisites,
+                )
+                .await;
 
-            progress_bar.set_prefix(format!(
-                "{} {:width$}",
-                status.symbol(),
-                repo_name,
-                width = max_name_length
-            ));
-            progress_bar.set_message(format!("{:<12}   {}", status.text(), message));
-            progress_bar.finish();
+                progress_bar.set_prefix(format!(
+                    "{} {:width$}",
+                    status.symbol(),
+                    repo_name,
+                    width = max_name_length
+                ));
+                progress_bar.set_message(format!("{:<12}   {}", status.text(), message));
+                progress_bar.finish();
 
-            let stats_guard = acquire_stats_lock(&stats);
-            stats_guard.update(
-                repo_name,
-                &repo_path.to_string_lossy(),
-                &status,
-                &message,
-                has_uncommitted,
-            );
-            footer.set_message(stats_guard.generate_batch_live_summary(operation, total_repos));
-        };
+                let stats_guard = acquire_stats_lock(&stats);
+                stats_guard.update(
+                    repo_name,
+                    &repo_path.to_string_lossy(),
+                    &status,
+                    &message,
+                    has_uncommitted,
+                );
+                footer.set_message(stats_guard.generate_batch_live_summary(operation, total_repos));
+            };
 
-        futures.push(future);
+            futures.push(future);
+        }
+
+        while futures.next().await.is_some() {}
     }
-
-    while futures.next().await.is_some() {}
 
     footer_pb.finish();
 
@@ -168,6 +176,7 @@ async fn save_one_repo(
     include_untracked: bool,
     auto_upstream: bool,
     dry_run: bool,
+    gitlink_prerequisites: &[GitlinkPrerequisite],
 ) -> (Status, String, bool) {
     match is_detached_head(repo_path).await {
         Ok(true) => {
@@ -255,6 +264,19 @@ async fn save_one_repo(
     }
 
     let fetch_result = fetch_and_analyze(repo_path, auto_upstream).await;
+    if fetch_result.will_push(auto_upstream) {
+        let unpublished = crate::git::operations::unpublished_gitlinks(gitlink_prerequisites).await;
+        if !unpublished.is_empty() {
+            return (
+                Status::Error,
+                format!(
+                    "committed; push blocked because submodule commits are not reachable from fetched remote refs: {}",
+                    unpublished.join(", ")
+                ),
+                fetch_result.has_uncommitted,
+            );
+        }
+    }
     let (push_status, push_message, has_uncommitted) =
         push_if_needed(repo_path, &fetch_result, auto_upstream).await;
 

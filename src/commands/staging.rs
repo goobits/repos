@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 
 use crate::core::{
     clean_error_message, create_processing_context, format_relative_repo_path, init_command,
-    set_terminal_title, set_terminal_title_and_flush, truncate_text, BatchOperation,
-    GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
+    print_final_report, set_terminal_title, set_terminal_title_and_flush, truncate_text,
+    BatchOperation, RepositoryOrder, RepositoryTopology, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
+use crate::git::failure::GitFailure;
 use crate::git::{
     commit_changes, get_staging_status, has_staged_changes, is_detached_head, stage_files,
     unstage_files, Status,
@@ -56,8 +57,10 @@ impl StatusFilters {
 
 struct FleetStatus {
     status: Status,
+    worktree_status: Status,
     message: String,
     upstream: UpstreamSummary,
+    failure: Option<GitFailure>,
 }
 
 struct FleetStatusEntry {
@@ -111,7 +114,7 @@ impl FleetStatus {
                 self.upstream,
                 UpstreamSummary::NoRemote | UpstreamSummary::NoUpstream
             )
-            || self.upstream.is_diverged()
+            || self.upstream.needs_sync()
             || self.failed()
     }
 
@@ -132,7 +135,7 @@ impl FleetStatus {
     }
 
     fn dirty(&self) -> bool {
-        self.status == Status::Dirty
+        self.worktree_status == Status::Dirty
     }
 
     fn kind(&self) -> FleetStatusKind {
@@ -145,17 +148,23 @@ impl FleetStatus {
         }
     }
 
-    fn next_action(&self) -> Option<&'static str> {
-        if self.failed() {
-            Some("inspect the reported status failure")
+    fn next_action(&self, repo_path: &Path) -> Option<String> {
+        if let Some(failure) = &self.failure {
+            Some(failure.next_action(&format_relative_repo_path(&repo_path.to_string_lossy())))
+        } else if self.failed() {
+            Some("inspect the reported status failure".to_string())
         } else if self.dirty() {
-            Some("commit or stash the local changes")
+            Some("commit or stash the local changes".to_string())
         } else if matches!(self.upstream, UpstreamSummary::NoRemote) {
-            Some("add a remote or exclude this repository")
+            Some("add a remote or exclude this repository".to_string())
         } else if matches!(self.upstream, UpstreamSummary::NoUpstream) {
-            Some("set an upstream branch or run `repos push --auto-upstream`")
+            Some("set an upstream branch or run `repos push --auto-upstream`".to_string())
         } else if self.upstream.is_diverged() {
-            Some("run `repos sync` or resolve the divergence manually")
+            Some("run `repos sync` or resolve the divergence manually".to_string())
+        } else if self.upstream.behind().is_some_and(|count| count > 0) {
+            Some("run `repos pull`".to_string())
+        } else if self.upstream.ahead().is_some_and(|count| count > 0) {
+            Some("run `repos push`".to_string())
         } else {
             None
         }
@@ -272,10 +281,14 @@ pub async fn handle_staging_status_command(
         };
 
     // Process all repositories concurrently for status
-    process_status_repositories(context, filters).await;
+    let failed = process_status_repositories(context, filters).await;
 
     // Set terminal title to green checkbox to indicate completion
     set_terminal_title_and_flush("✅ repos status");
+
+    if failed > 0 {
+        anyhow::bail!("{failed} repositories failed status inspection");
+    }
 
     Ok(())
 }
@@ -446,7 +459,7 @@ async fn process_staging_repositories(
 async fn process_status_repositories(
     context: crate::core::ProcessingContext,
     filters: StatusFilters,
-) {
+) -> usize {
     use crate::core::{acquire_semaphore_permit, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
@@ -505,10 +518,13 @@ async fn process_status_repositories(
         entries.push(entry);
     }
 
-    println!(
-        "\n{}\n",
-        generate_status_report(&entries, filters, start_time.elapsed())
-    );
+    let failed = entries.iter().filter(|entry| entry.status.failed()).count();
+    print_final_report(&generate_status_report(
+        &entries,
+        filters,
+        start_time.elapsed(),
+    ));
+    failed
 }
 
 fn generate_status_report(
@@ -609,7 +625,15 @@ fn append_status_section(
             "    {DIM}↳ path: {}{RESET}",
             format_relative_repo_path(&entry.path.to_string_lossy())
         ));
-        if let Some(next) = entry.status.next_action() {
+        if let Some(remote) = entry
+            .status
+            .failure
+            .as_ref()
+            .and_then(|failure| failure.remote.as_ref())
+        {
+            lines.push(format!("    {DIM}↳ remote: {}{RESET}", remote.display()));
+        }
+        if let Some(next) = entry.status.next_action(&entry.path) {
             lines.push(format!("    {DIM}↳ next: {next}{RESET}"));
         }
     }
@@ -624,8 +648,10 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
         Err(e) => {
             return FleetStatus {
                 status: Status::StagingError,
+                worktree_status: Status::StagingError,
                 message: format!("status failed: {}", clean_error_message(&e.to_string())),
                 upstream: UpstreamSummary::Unknown,
+                failure: None,
             };
         }
     };
@@ -635,6 +661,27 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
         _ => "unknown".to_string(),
     };
     parts.insert(0, format!("branch {branch}"));
+
+    let refresh = crate::git::fetch_and_analyze_for_pull(repo_path).await;
+    if refresh.status == Status::Error {
+        let failure = refresh.failure;
+        let reason = failure
+            .as_ref()
+            .map_or_else(|| clean_error_message(&refresh.message), GitFailure::reason);
+        parts.push(reason);
+        let mut message = parts.join(" | ");
+        if !details.is_empty() {
+            message.push('\n');
+            message.push_str(&details.join("\n"));
+        }
+        return FleetStatus {
+            status: Status::Error,
+            worktree_status: working_status,
+            message,
+            upstream: UpstreamSummary::Unknown,
+            failure,
+        };
+    }
 
     let upstream = summarize_upstream(repo_path).await;
     if let Some(summary) = upstream.message() {
@@ -649,8 +696,10 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
 
     FleetStatus {
         status: working_status,
+        worktree_status: working_status,
         message,
         upstream,
+        failure: None,
     }
 }
 
@@ -754,9 +803,20 @@ impl UpstreamSummary {
         matches!(self, UpstreamSummary::Remote { ahead, behind, .. } if *ahead > 0 && *behind > 0)
     }
 
+    fn needs_sync(&self) -> bool {
+        matches!(self, UpstreamSummary::Remote { ahead, behind, .. } if *ahead > 0 || *behind > 0)
+    }
+
     fn ahead(&self) -> Option<u32> {
         match self {
             UpstreamSummary::Remote { ahead, .. } => Some(*ahead),
+            _ => None,
+        }
+    }
+
+    fn behind(&self) -> Option<u32> {
+        match self {
+            UpstreamSummary::Remote { behind, .. } => Some(*behind),
             _ => None,
         }
     }
@@ -842,7 +902,7 @@ pub async fn handle_commit_command(message: String, include_empty: bool) -> Resu
     Ok(())
 }
 
-/// Processes all repositories concurrently for commit operations
+/// Commits child-first dependency waves, concurrently within each wave.
 async fn process_commit_repositories(
     context: crate::core::ProcessingContext,
     message: String,
@@ -851,7 +911,6 @@ async fn process_commit_repositories(
     use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
-    let mut futures = FuturesUnordered::new();
     let operation = BatchOperation::Commit;
 
     // First, create all repository progress bars
@@ -882,50 +941,68 @@ async fn process_commit_repositories(
     let start_time = context.start_time;
     let total_repos = context.total_repos;
 
-    for ((repo_name, repo_path), progress_bar) in
-        context.repositories.iter().zip(repo_progress_bars)
-    {
-        let stats_clone = std::sync::Arc::clone(&context.statistics);
-        let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
-        let footer_clone = footer_pb.clone();
-        let message_clone = message.clone();
+    let topology = RepositoryTopology::new(&context.repositories);
+    let mut completed = vec![None; context.total_repos];
+    for wave in topology.waves(RepositoryOrder::ChildrenFirst) {
+        let mut futures = FuturesUnordered::new();
+        for index in wave {
+            let (repo_name, repo_path) = &context.repositories[index];
+            let progress_bar = repo_progress_bars[index].clone();
+            let committed_gitlinks = topology
+                .gitlink_children(index)
+                .iter()
+                .filter(|child| completed[**child] == Some(Status::Committed))
+                .map(|child| context.repositories[*child].1.clone())
+                .collect::<Vec<_>>();
+            let stats_clone = std::sync::Arc::clone(&context.statistics);
+            let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
+            let footer_clone = footer_pb.clone();
+            let message_clone = message.clone();
 
-        let future = async move {
-            let _permit = acquire_semaphore_permit(&semaphore_clone).await;
+            let future = async move {
+                let _permit = acquire_semaphore_permit(&semaphore_clone).await;
 
-            let (status, message) =
-                perform_commit_operation(repo_path, &message_clone, include_empty).await;
+                let (status, message) = perform_commit_operation(
+                    repo_path,
+                    &message_clone,
+                    include_empty,
+                    &committed_gitlinks,
+                )
+                .await;
 
-            progress_bar.set_prefix(format!(
-                "{} {:width$}",
-                status.symbol(),
-                repo_name,
-                width = max_name_length
-            ));
-            progress_bar.set_message(format!("{:<12}   {}", status.text(), message));
-            progress_bar.finish();
+                progress_bar.set_prefix(format!(
+                    "{} {:width$}",
+                    status.symbol(),
+                    repo_name,
+                    width = max_name_length
+                ));
+                progress_bar.set_message(format!("{:<12}   {}", status.text(), message));
+                progress_bar.finish();
 
-            // Update statistics based on operation result
-            let stats_guard = acquire_stats_lock(&stats_clone);
-            let repo_path_str = repo_path.to_string_lossy();
-            stats_guard.update(
-                repo_name,
-                &repo_path_str,
-                &status,
-                &message,
-                false, // commit operations don't track uncommitted changes
-            );
+                // Update statistics based on operation result
+                let stats_guard = acquire_stats_lock(&stats_clone);
+                let repo_path_str = repo_path.to_string_lossy();
+                stats_guard.update(
+                    repo_name,
+                    &repo_path_str,
+                    &status,
+                    &message,
+                    false, // commit operations don't track uncommitted changes
+                );
 
-            // Update the footer summary after each repository completes
-            let summary = stats_guard.generate_batch_live_summary(operation, total_repos);
-            footer_clone.set_message(summary);
-        };
+                // Update the footer summary after each repository completes
+                let summary = stats_guard.generate_batch_live_summary(operation, total_repos);
+                footer_clone.set_message(summary);
+                (index, status)
+            };
 
-        futures.push(future);
+            futures.push(future);
+        }
+
+        while let Some((index, status)) = futures.next().await {
+            completed[index] = Some(status);
+        }
     }
-
-    // Wait for all repository operations to complete
-    while futures.next().await.is_some() {}
 
     // Finish the footer progress bar
     footer_pb.finish();
@@ -972,6 +1049,7 @@ async fn perform_commit_operation(
     repo_path: &std::path::Path,
     message: &str,
     include_empty: bool,
+    committed_gitlinks: &[PathBuf],
 ) -> (Status, String) {
     use crate::core::clean_error_message;
 
@@ -991,6 +1069,42 @@ async fn perform_commit_operation(
                     clean_error_message(&e.to_string())
                 ),
             );
+        }
+    }
+
+    for child_path in committed_gitlinks {
+        let Ok(relative) = child_path.strip_prefix(repo_path) else {
+            return (
+                Status::CommitError,
+                format!(
+                    "failed to refresh submodule pointer outside parent: {}",
+                    child_path.display()
+                ),
+            );
+        };
+        let Some(relative) = relative.to_str() else {
+            return (
+                Status::CommitError,
+                "failed to refresh non-UTF-8 submodule path".to_string(),
+            );
+        };
+        match crate::git::operations::run_git(repo_path, &["add", "--", relative]).await {
+            Ok((true, _, _)) => {}
+            Ok((false, _, stderr)) => {
+                return (
+                    Status::CommitError,
+                    format!(
+                        "failed to refresh submodule pointer: {}",
+                        clean_error_message(&stderr)
+                    ),
+                );
+            }
+            Err(error) => {
+                return (
+                    Status::CommitError,
+                    format!("failed to refresh submodule pointer: {error}"),
+                );
+            }
         }
     }
 
@@ -1139,12 +1253,14 @@ mod tests {
                 path: PathBuf::from("healthy"),
                 status: FleetStatus {
                     status: Status::Synced,
+                    worktree_status: Status::Synced,
                     message: "branch main | clean | synced with origin/main".to_string(),
                     upstream: UpstreamSummary::Remote {
                         message: "synced with origin/main".to_string(),
                         ahead: 0,
                         behind: 0,
                     },
+                    failure: None,
                 },
             },
             FleetStatusEntry {
@@ -1152,8 +1268,10 @@ mod tests {
                 path: PathBuf::from("dirty"),
                 status: FleetStatus {
                     status: Status::Dirty,
+                    worktree_status: Status::Dirty,
                     message: "branch main | 2 unstaged".to_string(),
                     upstream: UpstreamSummary::NoUpstream,
+                    failure: None,
                 },
             },
             FleetStatusEntry {
@@ -1161,8 +1279,10 @@ mod tests {
                 path: PathBuf::from("broken"),
                 status: FleetStatus {
                     status: Status::StagingError,
+                    worktree_status: Status::StagingError,
                     message: "status failed: permission denied".to_string(),
                     upstream: UpstreamSummary::Unknown,
+                    failure: None,
                 },
             },
         ];
@@ -1192,5 +1312,50 @@ mod tests {
         assert!(filtered.contains("path: ./dirty"));
         assert!(!filtered.contains("path: ./healthy"));
         assert!(!filtered.contains("path: ./broken"));
+    }
+
+    #[test]
+    fn ahead_and_behind_repositories_need_action() {
+        for (ahead, behind, next) in [
+            (1, 0, "run `repos push`"),
+            (0, 2, "run `repos pull`"),
+            (1, 2, "run `repos sync` or resolve the divergence manually"),
+        ] {
+            let status = FleetStatus {
+                status: Status::Synced,
+                worktree_status: Status::Synced,
+                message: String::new(),
+                upstream: UpstreamSummary::Remote {
+                    message: String::new(),
+                    ahead,
+                    behind,
+                },
+                failure: None,
+            };
+
+            assert!(status.needs_work());
+            assert_eq!(
+                status.next_action(&PathBuf::from("repo")).as_deref(),
+                Some(next)
+            );
+        }
+    }
+
+    #[test]
+    fn dirty_filter_preserves_worktree_state_when_remote_refresh_fails() {
+        let status = FleetStatus {
+            status: Status::Error,
+            worktree_status: Status::Dirty,
+            message: "branch main | 1 unstaged | network error during fetch".to_string(),
+            upstream: UpstreamSummary::Unknown,
+            failure: None,
+        };
+
+        assert!(status.dirty());
+        assert!(status.failed());
+        assert!(status.matches_filters(StatusFilters {
+            dirty: true,
+            ..StatusFilters::default()
+        }));
     }
 }

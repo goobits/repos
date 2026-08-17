@@ -92,6 +92,51 @@ fn test_ancestor_gitignore_does_not_hide_repositories_below_scan_root() {
 }
 
 #[test]
+fn test_parent_gitignore_does_not_hide_nested_repositories() {
+    if !is_git_available() {
+        eprintln!("Git not available, skipping test");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let parent = temp_dir.path().join("parent");
+    let child = parent.join("tools/private-tool");
+    fs::create_dir_all(&child).expect("Failed to create repository directories");
+    setup_git_repo(&parent).expect("Failed to initialize parent repository");
+    fs::write(parent.join(".gitignore"), "/tools/\n").expect("Failed to create parent .gitignore");
+    setup_git_repo(&child).expect("Failed to initialize ignored child repository");
+
+    let found = find_repos_from_path(temp_dir.path());
+    let paths = found.into_iter().map(|(_, path)| path).collect::<Vec<_>>();
+
+    assert!(paths.contains(&parent));
+    assert!(paths.contains(&child));
+}
+
+#[test]
+fn test_reposignore_explicitly_excludes_repository_from_fleet() {
+    if !is_git_available() {
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let included = temp_dir.path().join("tools/included");
+    let excluded = temp_dir.path().join("infra/excluded");
+    fs::create_dir_all(&included).expect("Failed to create included repository directory");
+    fs::create_dir_all(&excluded).expect("Failed to create excluded repository directory");
+    setup_git_repo(&included).expect("Failed to initialize included repository");
+    setup_git_repo(&excluded).expect("Failed to initialize excluded repository");
+    fs::write(temp_dir.path().join(".reposignore"), "/infra/excluded/\n")
+        .expect("Failed to create fleet ignore file");
+
+    let found = find_repos_from_path(temp_dir.path());
+    let paths = found.into_iter().map(|(_, path)| path).collect::<Vec<_>>();
+
+    assert!(paths.contains(&included));
+    assert!(!paths.contains(&excluded));
+}
+
+#[test]
 fn test_find_repos_with_duplicate_names() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");

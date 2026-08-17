@@ -178,8 +178,82 @@ fn test_update_allows_fast_forward_commit() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
-fn test_sync_with_conflicts_fails() -> Result<()> {
+fn test_update_uses_one_immutable_target_for_every_copy() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "f.txt", "v1", "Initial")?;
+    let initial = get_head_commit(&remote_path)?;
+
+    let mut instances = Vec::new();
+    for name in ["parent-a", "parent-b"] {
+        let parent_path = root.join(name);
+        std::fs::create_dir(&parent_path)?;
+        setup_git_repo(&parent_path)?;
+        let subrepo_path = parent_path.join("sub");
+        clone_repo(&remote_path, &subrepo_path)?;
+        instances.push(SubrepoInstance {
+            parent_repo: name.to_string(),
+            parent_path,
+            subrepo_name: "upstream".to_string(),
+            subrepo_path,
+            relative_path: "sub".to_string(),
+            commit_hash: initial.clone(),
+            short_hash: initial[..7].to_string(),
+            remote_url: Some(remote_path.to_string_lossy().into_owned()),
+            has_uncommitted: false,
+            commit_timestamp: 0,
+        });
+    }
+
+    create_test_commit(&remote_path, "f.txt", "v2", "Remote update")?;
+    let selected_target = get_head_commit(&remote_path)?;
+    let marker = root.join("remote-advanced-during-update");
+    let hook = instances[0].subrepo_path.join(".git/hooks/post-checkout");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nif [ ! -f '{}' ]; then\n  touch '{}'\n  printf 'v3' > '{}/f.txt'\n  git -C '{}' add f.txt\n  git -C '{}' commit -m 'Racing update' >/dev/null\nfi\n",
+            marker.display(),
+            marker.display(),
+            remote_path.display(),
+            remote_path.display(),
+            remote_path.display(),
+        ),
+    )?;
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))?;
+
+    let report = ValidationReport {
+        total_nested: 2,
+        by_remote: HashMap::from([(
+            remote_path.to_string_lossy().into_owned(),
+            instances.clone(),
+        )]),
+        no_remote: Vec::new(),
+    };
+
+    update_subrepo_with_report("upstream", false, &report)?;
+
+    assert!(marker.exists(), "race hook did not advance the remote");
+    assert_ne!(get_head_commit(&remote_path)?, selected_target);
+    for instance in instances {
+        assert_eq!(
+            get_head_commit(&instance.subrepo_path)?,
+            selected_target,
+            "every copy must use the target selected before mutation"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn test_sync_force_discards_tracked_changes() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
 
@@ -224,14 +298,9 @@ fn test_sync_with_conflicts_fails() -> Result<()> {
         no_remote: vec![],
     };
 
-    // Try sync with force=true (discards changes) - wait, does checkout -f discard changes?
-    // The current checkout_commit doesn't use -f.
-    // So even with force=true in sync_subrepo, it might still fail if checkout fails.
-    // Actually, sync_subrepo with force=true just skips the has_uncommitted_changes check.
-
-    let result = sync_subrepo_with_report("upstream", &commit2, false, true, &report);
-    // It should return an error because checkout fails
-    assert!(result.is_err());
+    sync_subrepo_with_report("upstream", &commit2, false, true, &report)?;
+    assert_eq!(get_head_commit(&sub_path)?, commit2);
+    assert_eq!(std::fs::read_to_string(sub_path.join("common.txt"))?, "v2");
 
     Ok(())
 }

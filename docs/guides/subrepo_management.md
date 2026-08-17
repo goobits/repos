@@ -51,6 +51,7 @@ repos nested sync shared-lib --to abc1234 --stash
 
 Default behavior:
 
+- Verifies the requested commit is available in every eligible copy before changing any checkout.
 - Syncs clean nested repositories to the requested commit.
 - Skips nested repositories with uncommitted changes.
 - Does not discard local changes.
@@ -63,9 +64,10 @@ Use `--stash` to stash local changes before syncing.
 repos nested update shared-lib
 ```
 
-Updates matching nested repositories to the latest remote commit when that move
-is a fast-forward. Dirty repositories and repositories with divergent local
-commits are skipped for manual review.
+Resolves one immutable latest remote commit, then updates every eligible copy to
+that same target when the move is a fast-forward. Dirty repositories and
+repositories with divergent local commits are skipped for manual review. A
+preflight failure aborts ready checkouts before mutation.
 
 ## Recommended Workflow
 

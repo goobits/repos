@@ -567,6 +567,43 @@ mod tests {
     }
 
     #[test]
+    fn test_transfer_report_ends_with_totals_after_long_details() {
+        let stats = SyncStatistics::new();
+        stats.update(
+            "assets",
+            "/workspace/assets",
+            &Status::Pushed,
+            "2 commits pushed",
+            false,
+        );
+        stats.update(
+            "blocked",
+            "/workspace/blocked",
+            &Status::Error,
+            "authentication failed",
+            false,
+        );
+        let drift = vec![
+            "▌ Nested Package Drift".to_string(),
+            "  auth 8 copies".to_string(),
+        ];
+
+        let report =
+            stats.generate_push_report_with_follow_up(Duration::from_secs(3), false, 1, &drift);
+
+        let drift_index = report
+            .rfind("▌ Nested Package Drift")
+            .expect("nested drift should be present");
+        let totals_index = report
+            .rfind("▌ Final Totals")
+            .expect("final totals should be present");
+        assert!(totals_index > drift_index, "{report}");
+        assert_eq!(report.matches("▌ Summary").count(), 1);
+        assert_eq!(report.matches("▌ Final Totals").count(), 1);
+        assert!(report.trim_end().ends_with("Checked      2"), "{report}");
+    }
+
+    #[test]
     fn test_generate_push_report_outcomes_are_exclusive_and_failures_are_not_repeated() {
         let stats = SyncStatistics::new();
         stats.update(

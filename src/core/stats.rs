@@ -29,6 +29,17 @@ enum Transfer {
     Pull,
 }
 
+#[derive(Clone, Copy)]
+struct TransferTotals {
+    transferred_repos: u64,
+    transferred_commits: u64,
+    up_to_date: u64,
+    errors: u64,
+    skipped: u64,
+    follow_up: usize,
+    checked: u64,
+}
+
 impl Transfer {
     fn command(self) -> &'static str {
         match self {
@@ -445,33 +456,20 @@ impl SyncStatistics {
         let follow_up_count = local_follow_up.len() + extra_follow_up_count;
         let mut lines = Vec::new();
         let transfer_label = transfer.label();
-        let transferred_repo_label = pluralize(transferred_repos, "repo", "repos");
-        let transferred_unit_label = transfer.unit(transferred_commits);
+        let totals = TransferTotals {
+            transferred_repos,
+            transferred_commits,
+            up_to_date,
+            errors,
+            skipped,
+            follow_up: follow_up_count,
+            checked,
+        };
 
         lines.push(format!("{BOLD_BLUE}repos {}{RESET}", transfer.command()));
         lines.push(format!("{GREEN}✓{RESET} Completed in {duration_secs:.1}s"));
         lines.push(String::new());
-        lines.push(format!("{BOLD_PURPLE}▌ Summary{RESET}"));
-        lines.push(format!(
-            "  {GREEN}✓{RESET} {transfer_label:<13}{transferred_repos} {transferred_repo_label} / {transferred_commits} {transferred_unit_label}"
-        ));
-        lines.push(format!(
-            "  {GREEN}✓{RESET} {:<13}{up_to_date}",
-            "Up to date"
-        ));
-        if errors > 0 {
-            lines.push(format!("  {RED}!{RESET} {:<13}{errors}", "Failed"));
-        }
-        if skipped > 0 {
-            lines.push(format!("  {DIM}·{RESET} {:<13}{skipped}", "Skipped"));
-        }
-        if follow_up_count > 0 {
-            lines.push(format!(
-                "  {YELLOW}~{RESET} {:<13}{follow_up_count}",
-                "Follow-up"
-            ));
-        }
-        lines.push(format!("  {DIM}·{RESET} {:<13}{checked}", "Checked"));
+        append_transfer_totals(&mut lines, "Summary", transfer, totals);
         lines.push(String::new());
 
         lines.push(format!("{BOLD_PURPLE}▌ {transfer_label}{RESET}"));
@@ -520,6 +518,9 @@ impl SyncStatistics {
             lines.pop();
         }
 
+        lines.push(String::new());
+        append_transfer_totals(&mut lines, "Final Totals", transfer, totals);
+
         lines.join("\n")
     }
 
@@ -552,6 +553,46 @@ impl SyncStatistics {
             .filter(|outcome| outcome.has_uncommitted && is_transfer_success(outcome.status))
             .count() as u64
     }
+}
+
+fn append_transfer_totals(
+    lines: &mut Vec<String>,
+    heading: &str,
+    transfer: Transfer,
+    totals: TransferTotals,
+) {
+    let transfer_label = transfer.label();
+    let repository_label = pluralize(totals.transferred_repos, "repo", "repos");
+    let unit_label = transfer.unit(totals.transferred_commits);
+
+    lines.push(format!("{BOLD_PURPLE}▌ {heading}{RESET}"));
+    lines.push(format!(
+        "  {GREEN}✓{RESET} {transfer_label:<13}{} {repository_label} / {} {unit_label}",
+        totals.transferred_repos, totals.transferred_commits
+    ));
+    lines.push(format!(
+        "  {GREEN}✓{RESET} {:<13}{}",
+        "Up to date", totals.up_to_date
+    ));
+    if totals.errors > 0 {
+        lines.push(format!("  {RED}!{RESET} {:<13}{}", "Failed", totals.errors));
+    }
+    if totals.skipped > 0 {
+        lines.push(format!(
+            "  {DIM}·{RESET} {:<13}{}",
+            "Skipped", totals.skipped
+        ));
+    }
+    if totals.follow_up > 0 {
+        lines.push(format!(
+            "  {YELLOW}~{RESET} {:<13}{}",
+            "Follow-up", totals.follow_up
+        ));
+    }
+    lines.push(format!(
+        "  {DIM}·{RESET} {:<13}{}",
+        "Checked", totals.checked
+    ));
 }
 
 fn clone_vec<T: Clone>(values: &Mutex<Vec<T>>, label: &str) -> Vec<T> {

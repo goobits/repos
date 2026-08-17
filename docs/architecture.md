@@ -35,9 +35,10 @@ Most fleet commands follow the same sequence:
 
 1. Discover repositories below the current directory.
 2. Build a processing context with shared progress and statistics.
-3. Run repository work concurrently under semaphores.
-4. Classify every result and update aggregate statistics.
-5. Print a final report and return an error when hard failures occurred.
+3. Build parent/child dependency waves when the operation can affect nested state.
+4. Run independent repository work concurrently under semaphores.
+5. Classify every result and update aggregate statistics.
+6. Print a final report and return an error when hard failures occurred.
 
 `repos sync` runs the pull workflow first and the push workflow second. Both
 results are retained, so a push failure cannot hide a pull failure or vice
@@ -46,10 +47,12 @@ versa.
 ## Repository Discovery
 
 `core::discovery` uses `ignore::WalkBuilder` with a parallel walker. It follows
-directory symlinks, skips dependency/build directories and `.git` internals,
-and limits traversal depth. Ignore files above the requested scan root are not
-consulted, so an ancestor repository cannot hide repositories below the current
-directory.
+directory symlinks, skips curated dependency/build directories and `.git`
+internals, and limits traversal depth. Git, global, and tool-specific ignore
+files are not fleet inventory controls: an ignored nested repository is still
+discovered and ordered. Command scope comes from the requested scan root, and
+`.reposignore` provides explicit per-tree fleet exclusions using gitignore
+pattern syntax.
 
 Discovered paths are deduplicated and sorted before names are assigned. When
 multiple paths have the same directory name, the lexically first path owns the
@@ -91,6 +94,12 @@ write permit -> push or pull -> record result -> release write permit
 ```
 
 Fetches may use up to twice the configured Git concurrency, capped at 24.
+Pipelines are grouped into topology waves. Commit, save, and push execute the
+deepest nested repositories first; pull executes parents first. Independent
+repositories in a wave still run concurrently. Only indexed Git gitlinks are
+hard publication dependencies—ordinary nested repositories and linked
+worktrees receive deterministic ordering without being treated as submodules.
+
 The standalone `repos fetch` command uses the common Git concurrency limit,
 updates every configured remote, and never changes a local branch or worktree.
 Secret scanning is limited to one repository and hygiene scanning to three.
@@ -106,27 +115,41 @@ Secret scanning is limited to one repository and hygiene scanning to three.
 - Audit scanners distinguish a clean scan from an inspection failure.
 - History-rewriting audit fixes require a clean repository and, when a remote
   exists, a reachable configured upstream that is not ahead of local `HEAD`.
+- Parent pushes containing Git gitlinks require the exact indexed child commit
+  to be reachable from freshly fetched remote-tracking refs. A normal detached
+  submodule checkout is therefore safe when its commit is published, while a
+  local-only child commit blocks the parent.
+- Bulk history rewrites are refused when the selected set crosses a
+  parent/submodule dependency, because rewriting the child invalidates the
+  parent's historical gitlinks.
 - Downloaded installer scripts are executed only after checksum verification.
 
 ## Nested Repositories
 
-Nested repositories are ordinary Git repositories inside parent repositories,
-not Git submodules. Validation groups them by a normalized remote identity.
+Nested drift repositories are ordinary Git repositories with their own `.git`
+directory inside parent repositories, not Git submodules or linked worktrees.
+Fleet commands still discover submodule checkouts, but only use their indexed
+gitlinks for ordering and publication safety. Validation groups independent
+nested repositories by a normalized remote identity.
 Equivalent GitHub HTTPS and SSH URLs share a group; case is preserved for paths
 on hosts where repository paths may be case-sensitive.
 
 Sync and update select a single remote group by nested repository name. If the
 same name refers to different remotes, the command stops as ambiguous before
-checking out any commit. Normal updates also require the remote target to be a
-fast-forward from each current commit, so divergent local commits stay checked
-out for manual review.
+checking out any commit. Each batch resolves one immutable target and preflights
+its availability in every eligible copy before moving a checkout. Normal
+updates also require the remote target to be a fast-forward from each current
+commit, so divergent local commits stay checked out for manual review.
 
 ## Package Publishing
 
 `commands::publish::planner` discovers package managers, applies visibility and
 exact repository-name filters, and blocks unsafe dirty or uninspectable
-repositories. `executor` delegates publication to the package adapter and only
-creates/pushes a tag after a successful publish.
+repositories. A real publish also requires the release commit to match its
+upstream after fetch. `executor` derives local registry dependencies from
+manifests, rejects duplicate identities/cycles before mutation, and publishes
+dependency waves in order. Tags are created or pushed only when they resolve to
+the planned release commit.
 
 Package adapters implement the `PackageManager` trait for Cargo, npm, and PyPI.
 Registry credentials remain owned by those package-manager tools.

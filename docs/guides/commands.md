@@ -27,7 +27,9 @@ package name, then by each copy's project path.
 Transfer and sync reports combine actionable details under `Needs Attention by
 Project`. Within each project, `!` marks failures, `·` marks skipped
 repositories, and `~` marks non-exclusive follow-up work. Nested drift remains
-its own package-oriented section.
+its own package-oriented section. A compact `Final Totals` footer repeats the
+outcome counts after all details, so long reports end with the result of the run;
+`sync` also repeats its pulled and pushed repository and commit totals there.
 
 ## Overview
 
@@ -76,14 +78,19 @@ repos status ./packages/logger
 
 Pass one or more repository names or paths to inspect only those repositories.
 
-Reports branch, worktree state, and upstream status per repository.
-When exactly one repository is checked, dirty files are listed below the summary.
+Status refreshes the current upstream before comparing commits, without moving
+the local branch or worktree. It reports branch, worktree, and current remote
+state per repository; ahead, behind, and diverged branches all need work and
+include the exact next command. Under the SSH-only transport policy, HTTP(S)
+remotes are reported with an SSH conversion command before credential helpers
+can run. When exactly one repository is checked, dirty files are listed below
+the summary.
 
 Options:
 
 | Option | Description |
 |---|---|
-| `--needs-work` | Show dirty, missing-remote, missing-upstream, diverged, or failed repos |
+| `--needs-work` | Show dirty, ahead, behind, diverged, missing-remote, missing-upstream, or failed repos |
 | `--dirty` | Show repos with uncommitted worktree changes |
 | `--no-remote` | Show repos without a configured remote |
 | `--no-upstream` | Show repos without an upstream branch |
@@ -106,6 +113,8 @@ Safe default:
 - Commits repositories with staged changes.
 - Pushes successful commits.
 - Skips branches without upstream unless `--auto-upstream` is passed.
+- Saves nested children before parents so parent gitlinks record the new child commits.
+- Before pushing a parent gitlink, verifies that the exact child commit is reachable from fetched remote refs.
 
 Options:
 
@@ -144,6 +153,7 @@ Default behavior:
 - Skips dirty repositories instead of stashing implicitly.
 - Reports nested repository drift.
 - Leaves directional behavior available through `repos pull` and `repos push`.
+- Pulls parents before children, then pushes children before parents.
 
 Options:
 
@@ -229,6 +239,11 @@ repos push
 repos push --auto-upstream
 ```
 
+Nested children are pushed before parents. Repositories at the same dependency
+level remain concurrent, even with `--jobs`. For Git submodules, a parent push
+is blocked unless the exact indexed child commit is reachable from freshly
+fetched child remote refs; a normal published detached checkout is allowed.
+
 The final report uses exclusive `Pushed`, `Up to date`, `Failed`, and `Skipped`
 outcomes that add up to `Checked`. Pushed repositories are named; failures,
 skips, and local follow-up work are grouped by top-level project with a path,
@@ -258,6 +273,10 @@ Granular pull command.
 repos pull
 repos pull --rebase
 ```
+
+Parents are pulled before nested children so updated parent state is established
+first. This ordering does not replace `git submodule update` when a parent
+changes a submodule pointer.
 
 The final report mirrors `repos push`: exclusive outcomes, named pulled
 repositories, and one project-grouped section for actionable failures, skips,
@@ -308,6 +327,11 @@ Options:
 | `--dry-run` | Preview fixes |
 | `--repos <repo1,repo2>` | Target specific repositories |
 
+Fixes run children before parents and repeat safety checks immediately before
+mutation. Bulk history rewrites are refused when the selected repositories
+cross a parent/submodule dependency; rewrite and validate that dependency chain
+explicitly instead.
+
 ### `repos publish`
 
 Publish detected packages to registries.
@@ -318,6 +342,13 @@ repos publish --dry-run
 repos publish --tag
 repos publish my-app my-lib
 ```
+
+Real publishes require each release commit to be clean, fully pushed, and not
+behind its upstream. Local package dependencies declared in Cargo, npm, or
+Python manifests publish first; independent packages in a dependency wave stay
+concurrent. Duplicate registry identities and dependency cycles fail before any
+registry mutation. With `--tag`, an existing tag must already point to the
+release commit.
 
 Options:
 
@@ -389,8 +420,8 @@ Subcommands:
 |---|---|
 | `validate` | Validate nested repository setup |
 | `status` | Show nested drift |
-| `sync` | Sync a nested repository to a commit |
-| `update` | Fast-forward a nested repository to the latest remote commit; skip divergent local commits |
+| `sync` | Preflight every eligible copy, then sync them to one requested commit |
+| `update` | Resolve one remote target, then fast-forward eligible copies; skip dirty or divergent copies |
 
 ### `repos config`
 

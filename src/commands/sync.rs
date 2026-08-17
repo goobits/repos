@@ -6,9 +6,11 @@
 use anyhow::Result;
 
 use crate::core::{
-    create_processing_context, generate_sync_report, init_command, set_terminal_title,
-    set_terminal_title_and_flush, NO_REPOS_MESSAGE,
+    create_processing_context, generate_sync_report, init_command, print_final_report,
+    set_terminal_title, set_terminal_title_and_flush, RepositoryOrder, RepositoryTopology,
+    NO_REPOS_MESSAGE,
 };
+use crate::git::failure::{GitFailure, GitOperationPhase, GitOperationResult};
 use crate::git::Status;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -181,6 +183,13 @@ fn create_sync_progress(
     (repo_bars, footer, single_bar)
 }
 
+fn finish_sync_progress(footer: &indicatif::ProgressBar, concise: Option<&indicatif::ProgressBar>) {
+    if let Some(concise) = concise {
+        concise.finish();
+    }
+    footer.finish_and_clear();
+}
+
 fn record_semaphore_error(
     operation: &str,
     repo_name: &str,
@@ -314,7 +323,7 @@ pub async fn handle_sync_command(
     );
     drop(push_stats);
     drop(pull_stats);
-    println!("{report}\n");
+    print_final_report(&report);
     set_terminal_title_and_flush("✅ repos sync");
 
     let total_errors = pull_run.error_count + push_run.error_count;
@@ -455,14 +464,10 @@ async fn process_fetch_repositories(
     }
 
     while futures.next().await.is_some() {}
-    footer_pb.finish_and_clear();
+    finish_sync_progress(&footer_pb, single_pb.as_ref());
 
     let final_stats = acquire_stats_lock(&statistics);
-    println!(
-        "{}",
-        final_stats.generate_fetch_report(start_time.elapsed())
-    );
-    println!();
+    print_final_report(&final_stats.generate_fetch_report(start_time.elapsed()));
     let error_count = final_stats
         .error_repos
         .load(std::sync::atomic::Ordering::Relaxed);
@@ -503,10 +508,8 @@ pub async fn handle_push_command(
     run.ensure_success(FleetTransfer::Push.command())
 }
 
-/// Processes all repositories with pipelined fetch+push for optimal performance
-///
-/// Each repository flows through: fetch → immediately push (no waiting for all fetches)
-/// Fetch uses high concurrency (2x), push uses standard concurrency with rate limit protection
+/// Processes child-first dependency waves with a pipelined fetch+push inside
+/// each independent wave.
 async fn process_push_repositories(
     context: crate::core::ProcessingContext,
     auto_upstream: bool,
@@ -545,174 +548,179 @@ async fn process_push_repositories(
     let rate_limit_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let has_rate_limit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Create pipelined futures: each does fetch → immediately push
-    let mut pipeline_futures = FuturesUnordered::new();
-    for ((repo_name, repo_path), progress_bar) in
-        context.repositories.iter().zip(repo_progress_bars)
-    {
-        let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
-        let push_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
-        let stats_clone = std::sync::Arc::clone(&context.statistics);
-        let footer_clone = footer_pb.clone();
-        let single_pb_clone = single_pb.clone();
-        let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
-        let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
-        let verbose_clone = verbose;
-        let max_name_length_clone = max_name_length;
-        let start_time_clone = start_time;
-        let total_repos_clone = context.total_repos;
+    let topology = RepositoryTopology::new(&context.repositories);
+    for wave in topology.waves(RepositoryOrder::ChildrenFirst) {
+        let mut pipeline_futures = FuturesUnordered::new();
+        for index in wave {
+            let (repo_name, repo_path) = &context.repositories[index];
+            let progress_bar = repo_progress_bars[index].clone();
+            let gitlink_prerequisites =
+                topology.gitlink_prerequisites(index, &context.repositories);
+            let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
+            let push_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
+            let stats_clone = std::sync::Arc::clone(&context.statistics);
+            let footer_clone = footer_pb.clone();
+            let single_pb_clone = single_pb.clone();
+            let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
+            let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
+            let verbose_clone = verbose;
+            let max_name_length_clone = max_name_length;
+            let start_time_clone = start_time;
+            let total_repos_clone = context.total_repos;
 
-        let future = async move {
-            use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
+            pipeline_futures.push(async move {
+                use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
 
-            // Track start time for this repo
-            let repo_start_time = std::time::Instant::now();
-            let mut slow_repo_watchdog = spawn_slow_repo_watchdog(
-                single_pb_clone.as_ref(),
-                repo_name,
-                std::time::Duration::from_secs(SLOW_REPO_THRESHOLD_SECS),
-            );
+                let repo_start_time = std::time::Instant::now();
+                let mut slow_repo_watchdog = spawn_slow_repo_watchdog(
+                    single_pb_clone.as_ref(),
+                    repo_name,
+                    std::time::Duration::from_secs(SLOW_REPO_THRESHOLD_SECS),
+                );
 
-            // PHASE 1: Fetch with high concurrency
-            let _fetch_permit = match fetch_semaphore_clone.acquire().await {
-                Ok(permit) => permit,
-                Err(e) => {
-                    stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
-                    record_semaphore_error(
-                        "fetch",
-                        repo_name,
-                        repo_path,
-                        &e,
-                        &stats_clone,
-                        progress_bar.as_ref(),
-                        single_pb_clone.as_ref(),
-                    );
-                    return;
-                }
-            };
-            let fetch_result = fetch_and_analyze(repo_path, auto_upstream).await;
-            drop(_fetch_permit); // Fetch permit released here
-
-            // PHASE 2: Push with standard concurrency + rate limit protection
-            let _push_permit = match push_semaphore_clone.acquire().await {
-                Ok(permit) => permit,
-                Err(e) => {
-                    stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
-                    record_semaphore_error(
-                        "push",
-                        repo_name,
-                        repo_path,
-                        &e,
-                        &stats_clone,
-                        progress_bar.as_ref(),
-                        single_pb_clone.as_ref(),
-                    );
-                    return;
-                }
-            };
-
-            // Attempt push with retry on rate limit
-            let mut attempt = 0;
-            let max_attempts = 2;
-            let result = loop {
-                attempt += 1;
-                let mut result =
-                    push_if_needed_with_context(repo_path, &fetch_result, auto_upstream).await;
-
-                // Check for rate limit error
-                if result.message.contains("⚠️ RATE LIMIT") {
-                    has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Release);
-                    rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Release);
-
-                    if attempt < max_attempts {
-                        // Wait briefly and retry
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
+                let fetch_permit = match fetch_semaphore_clone.acquire().await {
+                    Ok(permit) => permit,
+                    Err(error) => {
+                        stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
+                        record_semaphore_error(
+                            "fetch",
+                            repo_name,
+                            repo_path,
+                            &error,
+                            &stats_clone,
+                            progress_bar.as_ref(),
+                            single_pb_clone.as_ref(),
+                        );
+                        return;
                     }
-                    // Max attempts reached, return with suggestion
-                    let suggestion = format!(
-                        "{} (try reducing concurrency with --jobs N or --sequential)",
-                        result.message.replace("⚠️ RATE LIMIT: ", "")
+                };
+                let fetch_result = fetch_and_analyze(repo_path, auto_upstream).await;
+                drop(fetch_permit);
+
+                let blocked_children = if fetch_result.will_push(auto_upstream) {
+                    crate::git::operations::unpublished_gitlinks(&gitlink_prerequisites).await
+                } else {
+                    Vec::new()
+                };
+
+                let result = if !blocked_children.is_empty() {
+                    let message = format!(
+                        "submodule commit is not reachable from fetched remote refs: {}",
+                        blocked_children.join(", ")
                     );
-                    result.message.clone_from(&suggestion);
-                    if let Some(failure) = &mut result.failure {
-                        failure.message = suggestion;
-                    }
-                    break result;
-                }
+                    GitOperationResult::failed(
+                        Status::Error,
+                        GitFailure::from_message(GitOperationPhase::Push, message, None),
+                        fetch_result.has_uncommitted,
+                    )
+                } else {
+                    let push_permit = match push_semaphore_clone.acquire().await {
+                        Ok(permit) => permit,
+                        Err(error) => {
+                            stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
+                            record_semaphore_error(
+                                "push",
+                                repo_name,
+                                repo_path,
+                                &error,
+                                &stats_clone,
+                                progress_bar.as_ref(),
+                                single_pb_clone.as_ref(),
+                            );
+                            return;
+                        }
+                    };
 
-                break result;
-            };
+                    let mut attempt = 0;
+                    let result = loop {
+                        attempt += 1;
+                        let mut result =
+                            push_if_needed_with_context(repo_path, &fetch_result, auto_upstream)
+                                .await;
+                        if result.message.contains("⚠️ RATE LIMIT") {
+                            has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Release);
+                            rate_limit_count_clone
+                                .fetch_add(1, std::sync::atomic::Ordering::Release);
+                            if attempt < 2 {
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                                continue;
+                            }
+                            let suggestion = format!(
+                                "{} (try reducing concurrency with --jobs N or --sequential)",
+                                result.message.replace("⚠️ RATE LIMIT: ", "")
+                            );
+                            result.message.clone_from(&suggestion);
+                            if let Some(failure) = &mut result.failure {
+                                failure.message = suggestion;
+                            }
+                        }
+                        break result;
+                    };
+                    drop(push_permit);
+                    result
+                };
 
-            stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
-
-            let status = result.status;
-            let message = &result.message;
-            let has_uncommitted_changes = result.has_uncommitted;
-
-            // Calculate elapsed time for this repo
-            let repo_elapsed = repo_start_time.elapsed();
-            let repo_elapsed_secs = repo_elapsed.as_secs_f32();
-
-            let display_message =
-                if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
+                stop_slow_repo_watchdog(&mut slow_repo_watchdog).await;
+                let status = result.status;
+                let message = &result.message;
+                let has_uncommitted_changes = result.has_uncommitted;
+                let repo_elapsed = repo_start_time.elapsed();
+                let display_message = if has_uncommitted_changes && matches!(status, Status::Synced)
+                {
                     format!("{message} (uncommitted changes)")
                 } else {
                     message.clone()
                 };
+                let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
+                    format!("{display_message} ({:.1}s)", repo_elapsed.as_secs_f32())
+                } else {
+                    display_message
+                };
 
-            // Add elapsed time warning if repo took longer than threshold
-            let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
-                format!("{display_message} ({repo_elapsed_secs:.1}s)")
-            } else {
-                display_message
-            };
-
-            if verbose_clone {
-                if let Some(progress_bar) = progress_bar.as_ref() {
-                    progress_bar.set_prefix(format!(
-                        "{} {:width$}",
-                        status.symbol(),
-                        repo_name,
-                        width = max_name_length_clone
-                    ));
-                    progress_bar.set_message(format!(
-                        "{:<10}   {}",
-                        status.text(),
-                        display_message
-                    ));
-                    progress_bar.finish();
+                if verbose_clone {
+                    if let Some(progress_bar) = progress_bar.as_ref() {
+                        progress_bar.set_prefix(format!(
+                            "{} {:width$}",
+                            status.symbol(),
+                            repo_name,
+                            width = max_name_length_clone
+                        ));
+                        progress_bar.set_message(format!(
+                            "{:<10}   {}",
+                            status.text(),
+                            display_message
+                        ));
+                        progress_bar.finish();
+                    }
+                } else if let Some(progress_bar) = single_pb_clone.as_ref() {
+                    progress_bar.set_message(format_live_repo_status(repo_name, status));
+                    progress_bar.inc(1);
                 }
-            } else if let Some(progress_bar) = single_pb_clone.as_ref() {
-                progress_bar.set_message(format_live_repo_status(repo_name, status));
-                progress_bar.inc(1);
-            }
 
-            let stats_guard = acquire_stats_lock(&stats_clone);
-            stats_guard.update_with_failure(
-                repo_name,
-                &repo_path.to_string_lossy(),
-                &status,
-                message,
-                has_uncommitted_changes,
-                result.failure.as_ref(),
-            );
+                let stats_guard = acquire_stats_lock(&stats_clone);
+                stats_guard.update_with_failure(
+                    repo_name,
+                    &repo_path.to_string_lossy(),
+                    &status,
+                    message,
+                    has_uncommitted_changes,
+                    result.failure.as_ref(),
+                );
+                if verbose_clone {
+                    footer_clone
+                        .set_message(stats_guard.generate_push_summary(start_time_clone.elapsed()));
+                }
+                drop(stats_guard);
+                if !verbose_clone {
+                    let stats_locked = stats_clone.lock().unwrap();
+                    footer_clone
+                        .set_message(stats_locked.generate_push_live_summary(total_repos_clone));
+                }
+            });
+        }
 
-            let duration = start_time_clone.elapsed();
-            if verbose_clone {
-                footer_clone.set_message(stats_guard.generate_push_summary(duration));
-            }
-            drop(stats_guard);
-            if !verbose_clone {
-                let stats_locked = stats_clone.lock().unwrap();
-                footer_clone
-                    .set_message(stats_locked.generate_push_live_summary(total_repos_clone));
-            }
-        };
-        pipeline_futures.push(future);
+        while pipeline_futures.next().await.is_some() {}
     }
-
-    while pipeline_futures.next().await.is_some() {}
 
     // Show rate limit warning if detected
     if has_rate_limit.load(std::sync::atomic::Ordering::Acquire) {
@@ -721,7 +729,7 @@ async fn process_push_repositories(
         eprintln!("💡 Try reducing concurrency: repos push --jobs 3");
     }
 
-    footer_pb.finish_and_clear();
+    finish_sync_progress(&footer_pb, single_pb.as_ref());
 
     let final_stats = acquire_stats_lock(&statistics);
     if render_report {
@@ -740,8 +748,7 @@ async fn process_push_repositories(
                 &drift_lines,
             )
         };
-        println!("{report}");
-        println!();
+        print_final_report(&report);
     }
 
     let error_count = final_stats
@@ -790,10 +797,8 @@ pub async fn handle_pull_command(
     run.ensure_success(FleetTransfer::Pull.command())
 }
 
-/// Processes all repositories with pipelined fetch+pull for optimal performance
-///
-/// Each repository flows through: fetch → immediately pull (no waiting for all fetches)
-/// Fetch uses high concurrency (2x), pull uses standard concurrency with rate limit protection
+/// Processes parent-first dependency waves with a pipelined fetch+pull inside
+/// each independent wave.
 async fn process_pull_repositories(
     context: crate::core::ProcessingContext,
     use_rebase: bool,
@@ -828,165 +833,169 @@ async fn process_pull_repositories(
     let rate_limit_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let has_rate_limit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Create pipelined futures: each does fetch → immediately pull
-    let mut pipeline_futures = FuturesUnordered::new();
-    for ((repo_name, repo_path), progress_bar) in
-        context.repositories.iter().zip(repo_progress_bars)
-    {
-        let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
-        let pull_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
-        let stats_clone = std::sync::Arc::clone(&context.statistics);
-        let footer_clone = footer_pb.clone();
-        let single_pb_clone = single_pb.clone();
-        let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
-        let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
-        let verbose_clone = verbose;
-        let max_name_length_clone = max_name_length;
-        let start_time_clone = start_time;
-        let total_repos_clone = context.total_repos;
+    // Parent repositories move first so their nested checkout requirements are
+    // established before child repositories are updated.
+    let topology = RepositoryTopology::new(&context.repositories);
+    for wave in topology.waves(RepositoryOrder::ParentsFirst) {
+        let mut pipeline_futures = FuturesUnordered::new();
+        for index in wave {
+            let (repo_name, repo_path) = &context.repositories[index];
+            let progress_bar = repo_progress_bars[index].clone();
+            let fetch_semaphore_clone = std::sync::Arc::clone(&fetch_semaphore);
+            let pull_semaphore_clone = std::sync::Arc::clone(&context.semaphore);
+            let stats_clone = std::sync::Arc::clone(&context.statistics);
+            let footer_clone = footer_pb.clone();
+            let single_pb_clone = single_pb.clone();
+            let rate_limit_count_clone = std::sync::Arc::clone(&rate_limit_count);
+            let has_rate_limit_clone = std::sync::Arc::clone(&has_rate_limit);
+            let verbose_clone = verbose;
+            let max_name_length_clone = max_name_length;
+            let start_time_clone = start_time;
+            let total_repos_clone = context.total_repos;
 
-        let future = async move {
-            use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
+            let future = async move {
+                use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
 
-            // Track start time for this repo
-            let repo_start_time = std::time::Instant::now();
+                // Track start time for this repo
+                let repo_start_time = std::time::Instant::now();
 
-            // PHASE 1: Fetch with high concurrency
-            let _fetch_permit = match fetch_semaphore_clone.acquire().await {
-                Ok(permit) => permit,
-                Err(e) => {
-                    record_semaphore_error(
-                        "fetch",
-                        repo_name,
-                        repo_path,
-                        &e,
-                        &stats_clone,
-                        progress_bar.as_ref(),
-                        single_pb_clone.as_ref(),
-                    );
-                    return;
-                }
-            };
-            let fetch_result = fetch_and_analyze_for_pull(repo_path).await;
-            drop(_fetch_permit); // Fetch permit released here
-
-            // PHASE 2: Pull with standard concurrency + rate limit protection
-            let _pull_permit = match pull_semaphore_clone.acquire().await {
-                Ok(permit) => permit,
-                Err(e) => {
-                    record_semaphore_error(
-                        "pull",
-                        repo_name,
-                        repo_path,
-                        &e,
-                        &stats_clone,
-                        progress_bar.as_ref(),
-                        single_pb_clone.as_ref(),
-                    );
-                    return;
-                }
-            };
-
-            // Attempt pull with retry on rate limit
-            let mut attempt = 0;
-            let max_attempts = 2;
-            let result = loop {
-                attempt += 1;
-                let mut result =
-                    pull_if_needed_with_context(repo_path, &fetch_result, use_rebase).await;
-
-                // Check for rate limit error
-                if result.message.contains("⚠️ RATE LIMIT") {
-                    has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Release);
-                    rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Release);
-
-                    if attempt < max_attempts {
-                        // Wait briefly and retry
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
+                // PHASE 1: Fetch with high concurrency
+                let _fetch_permit = match fetch_semaphore_clone.acquire().await {
+                    Ok(permit) => permit,
+                    Err(e) => {
+                        record_semaphore_error(
+                            "fetch",
+                            repo_name,
+                            repo_path,
+                            &e,
+                            &stats_clone,
+                            progress_bar.as_ref(),
+                            single_pb_clone.as_ref(),
+                        );
+                        return;
                     }
-                    // Max attempts reached, return with suggestion
-                    let suggestion = format!(
-                        "{} (try reducing concurrency with --jobs N or --sequential)",
-                        result.message.replace("⚠️ RATE LIMIT: ", "")
-                    );
-                    result.message.clone_from(&suggestion);
-                    if let Some(failure) = &mut result.failure {
-                        failure.message = suggestion;
+                };
+                let fetch_result = fetch_and_analyze_for_pull(repo_path).await;
+                drop(_fetch_permit); // Fetch permit released here
+
+                // PHASE 2: Pull with standard concurrency + rate limit protection
+                let _pull_permit = match pull_semaphore_clone.acquire().await {
+                    Ok(permit) => permit,
+                    Err(e) => {
+                        record_semaphore_error(
+                            "pull",
+                            repo_name,
+                            repo_path,
+                            &e,
+                            &stats_clone,
+                            progress_bar.as_ref(),
+                            single_pb_clone.as_ref(),
+                        );
+                        return;
                     }
-                    break result;
-                }
-
-                break result;
-            };
-
-            let status = result.status;
-            let message = &result.message;
-            let has_uncommitted_changes = result.has_uncommitted;
-
-            // Calculate elapsed time for this repo
-            let repo_elapsed = repo_start_time.elapsed();
-            let repo_elapsed_secs = repo_elapsed.as_secs_f32();
-
-            let display_message =
-                if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
-                    format!("{message} (uncommitted changes)")
-                } else {
-                    message.clone()
                 };
 
-            // Add elapsed time warning if repo took longer than threshold
-            let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
-                format!("{display_message} ({repo_elapsed_secs:.1}s)")
-            } else {
-                display_message
-            };
+                // Attempt pull with retry on rate limit
+                let mut attempt = 0;
+                let max_attempts = 2;
+                let result = loop {
+                    attempt += 1;
+                    let mut result =
+                        pull_if_needed_with_context(repo_path, &fetch_result, use_rebase).await;
 
-            if verbose_clone {
-                if let Some(progress_bar) = progress_bar.as_ref() {
-                    progress_bar.set_prefix(format!(
-                        "{} {:width$}",
-                        status.symbol(),
-                        repo_name,
-                        width = max_name_length_clone
-                    ));
-                    progress_bar.set_message(format!(
-                        "{:<10}   {}",
-                        status.text(),
-                        display_message
-                    ));
-                    progress_bar.finish();
+                    // Check for rate limit error
+                    if result.message.contains("⚠️ RATE LIMIT") {
+                        has_rate_limit_clone.store(true, std::sync::atomic::Ordering::Release);
+                        rate_limit_count_clone.fetch_add(1, std::sync::atomic::Ordering::Release);
+
+                        if attempt < max_attempts {
+                            // Wait briefly and retry
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
+                        // Max attempts reached, return with suggestion
+                        let suggestion = format!(
+                            "{} (try reducing concurrency with --jobs N or --sequential)",
+                            result.message.replace("⚠️ RATE LIMIT: ", "")
+                        );
+                        result.message.clone_from(&suggestion);
+                        if let Some(failure) = &mut result.failure {
+                            failure.message = suggestion;
+                        }
+                        break result;
+                    }
+
+                    break result;
+                };
+
+                let status = result.status;
+                let message = &result.message;
+                let has_uncommitted_changes = result.has_uncommitted;
+
+                // Calculate elapsed time for this repo
+                let repo_elapsed = repo_start_time.elapsed();
+                let repo_elapsed_secs = repo_elapsed.as_secs_f32();
+
+                let display_message =
+                    if has_uncommitted_changes && matches!(status, crate::git::Status::Synced) {
+                        format!("{message} (uncommitted changes)")
+                    } else {
+                        message.clone()
+                    };
+
+                // Add elapsed time warning if repo took longer than threshold
+                let display_message = if repo_elapsed.as_secs() >= SLOW_REPO_THRESHOLD_SECS {
+                    format!("{display_message} ({repo_elapsed_secs:.1}s)")
+                } else {
+                    display_message
+                };
+
+                if verbose_clone {
+                    if let Some(progress_bar) = progress_bar.as_ref() {
+                        progress_bar.set_prefix(format!(
+                            "{} {:width$}",
+                            status.symbol(),
+                            repo_name,
+                            width = max_name_length_clone
+                        ));
+                        progress_bar.set_message(format!(
+                            "{:<10}   {}",
+                            status.text(),
+                            display_message
+                        ));
+                        progress_bar.finish();
+                    }
+                } else if let Some(progress_bar) = single_pb_clone.as_ref() {
+                    progress_bar.set_message(format_live_repo_status(repo_name, status));
+                    progress_bar.inc(1);
                 }
-            } else if let Some(progress_bar) = single_pb_clone.as_ref() {
-                progress_bar.set_message(format_live_repo_status(repo_name, status));
-                progress_bar.inc(1);
-            }
 
-            let stats_guard = acquire_stats_lock(&stats_clone);
-            stats_guard.update_with_failure(
-                repo_name,
-                &repo_path.to_string_lossy(),
-                &status,
-                message,
-                has_uncommitted_changes,
-                result.failure.as_ref(),
-            );
+                let stats_guard = acquire_stats_lock(&stats_clone);
+                stats_guard.update_with_failure(
+                    repo_name,
+                    &repo_path.to_string_lossy(),
+                    &status,
+                    message,
+                    has_uncommitted_changes,
+                    result.failure.as_ref(),
+                );
 
-            let duration = start_time_clone.elapsed();
-            if verbose_clone {
-                footer_clone.set_message(stats_guard.generate_pull_summary(duration));
-            }
-            drop(stats_guard);
-            if !verbose_clone {
-                let stats_locked = stats_clone.lock().unwrap();
-                footer_clone
-                    .set_message(stats_locked.generate_pull_live_summary(total_repos_clone));
-            }
-        };
-        pipeline_futures.push(future);
+                let duration = start_time_clone.elapsed();
+                if verbose_clone {
+                    footer_clone.set_message(stats_guard.generate_pull_summary(duration));
+                }
+                drop(stats_guard);
+                if !verbose_clone {
+                    let stats_locked = stats_clone.lock().unwrap();
+                    footer_clone
+                        .set_message(stats_locked.generate_pull_live_summary(total_repos_clone));
+                }
+            };
+            pipeline_futures.push(future);
+        }
+
+        while pipeline_futures.next().await.is_some() {}
     }
-
-    while pipeline_futures.next().await.is_some() {}
 
     // Show rate limit warning if detected
     if has_rate_limit.load(std::sync::atomic::Ordering::Acquire) {
@@ -995,7 +1004,7 @@ async fn process_pull_repositories(
         eprintln!("💡 Try reducing concurrency: repos pull --jobs 3");
     }
 
-    footer_pb.finish_and_clear();
+    finish_sync_progress(&footer_pb, single_pb.as_ref());
 
     let final_stats = acquire_stats_lock(&statistics);
     if render_report {
@@ -1014,8 +1023,7 @@ async fn process_pull_repositories(
                 &drift_lines,
             )
         };
-        println!("{report}");
-        println!();
+        print_final_report(&report);
     }
 
     let error_count = final_stats

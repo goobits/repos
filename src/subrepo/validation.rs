@@ -4,7 +4,7 @@ use super::{
     get_commit_timestamp, get_current_commit, get_remote_url, has_uncommitted_changes,
     SubrepoInstance, ValidationReport,
 };
-use crate::core::config::SKIP_DIRECTORIES;
+use crate::core::config::{FLEET_IGNORE_FILENAME, SKIP_DIRECTORIES};
 use anyhow::Result;
 use ignore::WalkBuilder;
 use std::collections::HashMap;
@@ -70,6 +70,12 @@ fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<Su
 
     // Walk the parent looking for nested .git directories
     let walker = WalkBuilder::new(parent_path)
+        .parents(false)
+        .ignore(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .add_custom_ignore_filename(FLEET_IGNORE_FILENAME)
         .follow_links(false)
         .max_depth(Some(5)) // Don't go too deep
         .filter_entry(|entry| {
@@ -102,9 +108,11 @@ fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<Su
             continue;
         }
 
-        // Check if this directory has a .git
+        // Nested drift management is for independent embedded repositories.
+        // Submodules and linked worktrees use a .git file and are handled by
+        // fleet topology/Git itself instead.
         let git_path = path.join(".git");
-        if !git_path.exists() {
+        if !git_path.is_dir() {
             continue;
         }
 

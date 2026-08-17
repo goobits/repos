@@ -103,6 +103,9 @@ pub const SKIP_DIRECTORIES: &[&str] = &[
     "venv",
 ];
 
+/// Per-tree ignore file for repositories that must not join fleet operations.
+pub const FLEET_IGNORE_FILENAME: &str = ".reposignore";
+
 // Repository discovery configuration
 #[doc(hidden)] // Internal discovery limit
 pub const MAX_SCAN_DEPTH: usize = 10; // Maximum directory depth to scan

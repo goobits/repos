@@ -150,8 +150,10 @@ for nested repos with independent `.git` directories, not Git submodules. Use
 ### Can I use `repos` in a monorepo?
 
 Yes. `repos` works with any directory structure containing multiple Git
-repositories. It discovers all repos recursively and operates on them
-concurrently.
+repositories. It discovers repositories recursively even when their paths are
+ignored by a parent repository. Independent repositories run concurrently;
+nested parent/child operations run in dependency-safe waves. Add paths to a
+`.reposignore` file when they must not participate in fleet commands.
 
 ### How do I target specific repositories instead of all of them?
 

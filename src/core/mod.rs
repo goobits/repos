@@ -5,6 +5,7 @@ pub(crate) mod discovery;
 pub(crate) mod progress;
 pub(crate) mod report;
 pub(crate) mod stats;
+pub(crate) mod topology;
 
 // Test modules
 #[cfg(test)]

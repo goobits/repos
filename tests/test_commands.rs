@@ -12,7 +12,7 @@ mod common;
 use common::fixtures::TestRepo;
 use common::git::{
     add_bare_remote, clone_repo, create_test_commit, get_head_commit, is_git_available, run_git_ok,
-    IsolatedGitConfig,
+    setup_git_repo, IsolatedGitConfig,
 };
 
 use goobits_repos::commands::staging::{
@@ -156,6 +156,258 @@ async fn test_push_command_with_single_repo_no_changes() {
         result.is_ok(),
         "Push command should complete without panicking: {:?}",
         result
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_push_publishes_nested_gitlink_before_parent() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let parent = root.path().join("parent");
+    let child = parent.join("child");
+    fs::create_dir_all(&child).expect("Failed to create nested repositories");
+    setup_git_repo(&parent).expect("Failed to initialize parent repository");
+    setup_git_repo(&child).expect("Failed to initialize child repository");
+    create_test_commit(&parent, "README.md", "parent", "Initial parent")
+        .expect("Failed to create parent commit");
+    create_test_commit(&child, "README.md", "child", "Initial child")
+        .expect("Failed to create child commit");
+
+    let child_remote = add_bare_remote(&child, true).expect("Failed to create child remote");
+    let child_head = get_head_commit(&child).expect("Failed to resolve child HEAD");
+    run_git_ok(
+        &parent,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &child_head,
+            "child",
+        ],
+    );
+    run_git_ok(&parent, &["commit", "-m", "Track child"]);
+    let parent_remote = add_bare_remote(&parent, true).expect("Failed to create parent remote");
+
+    create_test_commit(&child, "next.txt", "next", "Advance child")
+        .expect("Failed to advance child");
+    let child_head = get_head_commit(&child).expect("Failed to resolve advanced child HEAD");
+    run_git_ok(
+        &parent,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &child_head,
+            "child",
+        ],
+    );
+    run_git_ok(&parent, &["commit", "-m", "Advance child pointer"]);
+
+    let marker = root.path().join("child-pushed");
+    let child_hook = child.join(".git/hooks/pre-push");
+    fs::write(
+        &child_hook,
+        format!("#!/bin/sh\nsleep 1\ntouch '{}'\n", marker.display()),
+    )
+    .expect("Failed to create child pre-push hook");
+    fs::set_permissions(&child_hook, fs::Permissions::from_mode(0o755))
+        .expect("Failed to make child hook executable");
+    let parent_hook = parent.join(".git/hooks/pre-push");
+    fs::write(
+        &parent_hook,
+        format!(
+            "#!/bin/sh\ntest -f '{}' || {{ echo 'child was not pushed first' >&2; exit 1; }}\n",
+            marker.display()
+        ),
+    )
+    .expect("Failed to create parent pre-push hook");
+    fs::set_permissions(&parent_hook, fs::Permissions::from_mode(0o755))
+        .expect("Failed to make parent hook executable");
+
+    let push = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["push", "--jobs", "8", "--no-drift-check"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos push");
+
+    assert!(
+        push.status.success(),
+        "dependency-aware push failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&push.stdout),
+        String::from_utf8_lossy(&push.stderr)
+    );
+    assert!(marker.exists(), "child push hook did not run");
+    let child_remote_head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(child_remote.path().join("remote.git"))
+        .output()
+        .expect("Failed to inspect child remote");
+    let parent_remote_head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(parent_remote.path().join("remote.git"))
+        .output()
+        .expect("Failed to inspect parent remote");
+    assert!(child_remote_head.status.success());
+    assert!(parent_remote_head.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&child_remote_head.stdout).trim(),
+        child_head
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&parent_remote_head.stdout).trim(),
+        get_head_commit(&parent).expect("Failed to resolve parent HEAD")
+    );
+}
+
+#[test]
+fn test_push_allows_detached_submodule_when_gitlink_commit_is_published() {
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let parent = root.path().join("parent");
+    let child = parent.join("child");
+    fs::create_dir_all(&child).expect("Failed to create nested repositories");
+    setup_git_repo(&parent).expect("Failed to initialize parent repository");
+    setup_git_repo(&child).expect("Failed to initialize child repository");
+    create_test_commit(&parent, "README.md", "parent", "Initial parent")
+        .expect("Failed to create parent commit");
+    create_test_commit(&child, "README.md", "child", "Initial child")
+        .expect("Failed to create child commit");
+    let _child_remote = add_bare_remote(&child, true).expect("Failed to create child remote");
+    let child_head = get_head_commit(&child).expect("Failed to resolve child HEAD");
+    run_git_ok(
+        &parent,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &child_head,
+            "child",
+        ],
+    );
+    run_git_ok(&parent, &["commit", "-m", "Track child"]);
+    let parent_remote = add_bare_remote(&parent, true).expect("Failed to create parent remote");
+
+    run_git_ok(&child, &["checkout", "--detach", "HEAD"]);
+    create_test_commit(&parent, "parent.txt", "update", "Advance parent")
+        .expect("Failed to advance parent");
+
+    let push = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["push", "--jobs", "8", "--no-drift-check"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos push");
+
+    assert!(
+        push.status.success(),
+        "published detached submodule should not block parent:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&push.stdout),
+        String::from_utf8_lossy(&push.stderr)
+    );
+    let parent_remote_head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(parent_remote.path().join("remote.git"))
+        .output()
+        .expect("Failed to inspect parent remote");
+    assert_eq!(
+        String::from_utf8_lossy(&parent_remote_head.stdout).trim(),
+        get_head_commit(&parent).expect("Failed to resolve parent HEAD")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_push_blocks_parent_when_gitlink_commit_is_not_published() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let parent = root.path().join("parent");
+    let child = parent.join("child");
+    fs::create_dir_all(&child).expect("Failed to create nested repositories");
+    setup_git_repo(&parent).expect("Failed to initialize parent repository");
+    setup_git_repo(&child).expect("Failed to initialize child repository");
+    create_test_commit(&parent, "README.md", "parent", "Initial parent")
+        .expect("Failed to create parent commit");
+    create_test_commit(&child, "README.md", "child", "Initial child")
+        .expect("Failed to create child commit");
+    let _child_remote = add_bare_remote(&child, true).expect("Failed to create child remote");
+    let child_head = get_head_commit(&child).expect("Failed to resolve child HEAD");
+    run_git_ok(
+        &parent,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &child_head,
+            "child",
+        ],
+    );
+    run_git_ok(&parent, &["commit", "-m", "Track child"]);
+    let parent_remote = add_bare_remote(&parent, true).expect("Failed to create parent remote");
+    let published_parent = get_head_commit(&parent).expect("Failed to resolve published parent");
+
+    create_test_commit(&child, "next.txt", "local only", "Local-only child")
+        .expect("Failed to advance child");
+    let child_head = get_head_commit(&child).expect("Failed to resolve advanced child HEAD");
+    run_git_ok(
+        &parent,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &child_head,
+            "child",
+        ],
+    );
+    run_git_ok(&parent, &["commit", "-m", "Point at local-only child"]);
+
+    let child_hook = child.join(".git/hooks/pre-push");
+    fs::write(
+        &child_hook,
+        "#!/bin/sh\necho 'intentional child push failure' >&2\nexit 1\n",
+    )
+    .expect("Failed to create child pre-push hook");
+    fs::set_permissions(&child_hook, fs::Permissions::from_mode(0o755))
+        .expect("Failed to make child hook executable");
+
+    let push = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["push", "--jobs", "8", "--no-drift-check"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos push");
+    assert!(!push.status.success(), "failed child must fail fleet push");
+    assert!(
+        String::from_utf8_lossy(&push.stdout).contains("not reachable from fetched remote refs"),
+        "parent blocker was not reported:\n{}",
+        String::from_utf8_lossy(&push.stdout)
+    );
+
+    let parent_remote_head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(parent_remote.path().join("remote.git"))
+        .output()
+        .expect("Failed to inspect parent remote");
+    assert_eq!(
+        String::from_utf8_lossy(&parent_remote_head.stdout).trim(),
+        published_parent,
+        "parent remote must not receive a gitlink to an unpublished child"
     );
 }
 
@@ -425,6 +677,15 @@ fn test_ssh_only_pull_blocks_https_before_credential_helper() {
     }
 
     assert_ssh_only_command_blocks_https_fetch(&["pull", "--sequential", "--no-drift-check"]);
+}
+
+#[test]
+fn test_ssh_only_status_blocks_https_before_credential_helper() {
+    if !is_git_available() {
+        return;
+    }
+
+    assert_ssh_only_command_blocks_https_fetch(&["status"]);
 }
 
 #[test]
@@ -768,6 +1029,67 @@ async fn test_push_if_needed_uses_upstream_remote_for_current_branch() {
 // STAGING COMMAND TESTS (commands/staging.rs)
 // ==============================================================================
 
+#[test]
+fn test_commit_refreshes_parent_gitlink_after_child_commit() {
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let parent = root.path().join("parent");
+    let child = parent.join("child");
+    fs::create_dir_all(&child).expect("Failed to create nested repositories");
+    setup_git_repo(&parent).expect("Failed to initialize parent repository");
+    setup_git_repo(&child).expect("Failed to initialize child repository");
+    create_test_commit(&parent, "README.md", "parent", "Initial parent")
+        .expect("Failed to create parent commit");
+    create_test_commit(&child, "README.md", "child", "Initial child")
+        .expect("Failed to create child commit");
+    let initial_child = get_head_commit(&child).expect("Failed to resolve child HEAD");
+    run_git_ok(
+        &parent,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &initial_child,
+            "child",
+        ],
+    );
+    run_git_ok(&parent, &["commit", "-m", "Track child"]);
+
+    fs::write(child.join("README.md"), "child update").expect("Failed to modify child");
+    run_git_ok(&child, &["add", "README.md"]);
+
+    let commit = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["commit", "Fleet commit"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos commit");
+    assert!(
+        commit.status.success(),
+        "dependency-aware commit failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&commit.stdout),
+        String::from_utf8_lossy(&commit.stderr)
+    );
+
+    let child_head = get_head_commit(&child).expect("Failed to resolve committed child HEAD");
+    assert_ne!(child_head, initial_child);
+    let tree = Command::new("git")
+        .args(["ls-tree", "HEAD", "--", "child"])
+        .current_dir(&parent)
+        .output()
+        .expect("Failed to inspect parent gitlink");
+    assert!(tree.status.success());
+    let tree = String::from_utf8_lossy(&tree.stdout);
+    let parent_gitlink = tree
+        .split_whitespace()
+        .nth(2)
+        .expect("Parent gitlink target missing");
+    assert_eq!(parent_gitlink, child_head);
+}
+
 #[tokio::test]
 async fn test_stage_command_with_simple_pattern() {
     let _lock = common::lock_test().await;
@@ -1109,6 +1431,44 @@ async fn test_staging_status_command_with_no_changes() {
         result.is_ok(),
         "Status command should succeed with no changes: {:?}",
         result
+    );
+}
+
+#[test]
+fn test_status_refreshes_remote_state_before_reporting() {
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    let original_head = get_head_commit(repo.path()).expect("Failed to resolve original HEAD");
+    let updater_root = TempDir::new().expect("Failed to create updater directory");
+    let updater = updater_root.path().join("updater");
+    clone_repo(&remote.path().join("remote.git"), &updater).expect("Failed to clone test remote");
+    create_test_commit(&updater, "remote.txt", "remote change", "Remote update")
+        .expect("Failed to create remote commit");
+    run_git_ok(&updater, &["push"]);
+
+    let status = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .arg("status")
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos status");
+    let stdout = String::from_utf8_lossy(&status.stdout);
+
+    assert!(
+        status.status.success(),
+        "Status command failed:\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert!(stdout.contains("Needs work      1"), "{stdout}");
+    assert!(stdout.contains("behind 1"), "{stdout}");
+    assert!(stdout.contains("next: run `repos pull`"), "{stdout}");
+    assert_eq!(
+        get_head_commit(repo.path()).expect("Failed to resolve HEAD after status"),
+        original_head,
+        "status may refresh refs but must not move the local branch"
     );
 }
 

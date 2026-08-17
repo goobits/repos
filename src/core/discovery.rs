@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::config::{
-    DEFAULT_REPO_NAME, ESTIMATED_REPO_COUNT, MAX_SCAN_DEPTH, SKIP_DIRECTORIES, UNKNOWN_REPO_NAME,
+    DEFAULT_REPO_NAME, ESTIMATED_REPO_COUNT, FLEET_IGNORE_FILENAME, MAX_SCAN_DEPTH,
+    SKIP_DIRECTORIES, UNKNOWN_REPO_NAME,
 };
 
 /// Check if a .git file (for submodules/worktrees) contains gitdir reference
@@ -39,11 +40,16 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 
     let repos_seen = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
 
-    // Build parallel walker with optimizations
+    // Repository inventory is defined by the filesystem, not by a containing
+    // repository's ignore rules. A nested repository is commonly ignored by
+    // its parent, but it still needs to participate in fleet operations.
     let walker = WalkBuilder::new(search_path)
-        // Discovery is rooted at the requested directory. Ignore files above
-        // that boundary must not hide repositories below it.
         .parents(false)
+        .ignore(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .add_custom_ignore_filename(FLEET_IGNORE_FILENAME)
         .follow_links(true) // Follow symlinks to find symlinked repos
         .max_depth(Some(MAX_SCAN_DEPTH)) // Limit depth to avoid deep recursion
         .threads(

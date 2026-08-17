@@ -1,0 +1,2 @@
+# Local repositories intentionally excluded from fleet operations.
+/infra/aw/

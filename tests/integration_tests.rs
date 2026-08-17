@@ -679,6 +679,23 @@ async fn test_create_and_push_tag() {
         "Should indicate existing tag was pushed: {}",
         message
     );
+
+    fs::write(&test_file, "new release content").expect("Failed to update test file");
+    std::process::Command::new("git")
+        .args(["commit", "-am", "Second release commit"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to create second commit");
+
+    let (success, message) = create_and_push_tag(repo_path, "v1.0.0").await;
+    assert!(
+        !success,
+        "an existing tag must not be moved to a new commit"
+    );
+    assert!(
+        message.contains("not release commit"),
+        "tag mismatch should be explicit: {message}"
+    );
 }
 
 // ============================================================================

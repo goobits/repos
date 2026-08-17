@@ -32,7 +32,7 @@ git config --global repos.transportPolicy ssh-only
 
 - **Humane Daily Workflow** - `status`, `save`, and `sync` map to developer intent
 - **Safe Defaults** - `save` stages tracked changes only; untracked files require opt-in
-- **Batch Operations** - Fetch, push, pull, commit, and stage across repositories concurrently
+- **Dependency-Aware Batches** - Nested repositories run in safe parent/child waves while independent repositories remain concurrent
 - **Git LFS Support** - Automatic detection and handling of Large File Storage in push/pull operations
 - **Nested Drift Detection** - Track and sync nested repos at different commits
 - **Package Publishing** - Publish to npm/Cargo/PyPI with visibility filtering
@@ -89,7 +89,11 @@ See [Commands Reference](docs/guides/commands.md) for complete flag documentatio
 - Use `repos save "message" --include-untracked` when you intentionally want new files.
 - Use `repos save "message" --dry-run` to preview the save plan.
 - `repos sync` pulls safe remote changes, pushes local commits, and skips dirty repositories instead of stashing or overwriting local work.
+- `repos status` refreshes upstream refs before reporting ahead/behind state but does not move local branches or worktrees.
 - `repos fetch` updates remote-tracking refs from every configured remote without changing local branches or worktrees.
+- Repository discovery includes nested repositories even when a parent `.gitignore` excludes their paths; dependency/build directories remain explicitly skipped.
+- Use `.reposignore` when a repository below the scan root must be excluded from fleet operations.
+- Commit, save, and push run nested children before parents. Pull runs parents before children. Parent pushes that record Git submodules require the exact gitlink commit to be reachable from the child remote.
 - `repos push --auto-upstream` replaces the old “force” wording for publishing new branches.
 - SSH-only policy blocks HTTP(S) before Git can consult a credential helper and reports the repository, effective remote, and exact SSH fix for common hosts.
 

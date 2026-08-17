@@ -303,6 +303,11 @@ impl FetchResult {
             failure: Some(failure),
         }
     }
+
+    pub(crate) fn will_push(&self, auto_upstream: bool) -> bool {
+        self.status == Status::Synced && self.ahead_count > 0
+            || self.status == Status::NoUpstream && auto_upstream
+    }
 }
 
 fn command_error(stderr: &str, fallback: &str) -> String {
@@ -518,6 +523,91 @@ pub(crate) async fn fetch_remote_updates(path: &Path) -> GitOperationResult {
             false,
         )
     }
+}
+
+/// Fetches configured remotes and verifies that a commit is reachable from a
+/// remote-tracking branch. Local tags are intentionally excluded because Git
+/// does not record whether a tag has actually been pushed.
+pub(crate) async fn remote_refs_contain_commit(path: &Path, commit: &str) -> Result<bool> {
+    let remotes = match run_git(path, GIT_REMOTE_ARGS).await {
+        Ok((true, remotes, _)) => remotes,
+        Ok((false, _, stderr)) => {
+            anyhow::bail!(command_error(&stderr, "remote inspection failed"))
+        }
+        Err(error) => return Err(error),
+    };
+    if remotes.trim().is_empty() {
+        anyhow::bail!(STATUS_NO_REMOTE);
+    }
+
+    let mut fetched_any = false;
+    let mut failures = Vec::new();
+    let contains = format!("--contains={commit}");
+    for remote in remotes.lines().filter(|remote| !remote.trim().is_empty()) {
+        match inspect_operation_remote(path, remote, RemoteDirection::Fetch).await {
+            Ok((_, Some(failure))) => {
+                failures.push(failure.message);
+                continue;
+            }
+            Ok((_, None)) => {}
+            Err(error) => {
+                failures.push(format!("{remote}: {error}"));
+                continue;
+            }
+        }
+
+        match run_git(path, &["fetch", "--quiet", remote]).await {
+            Ok((true, _, _)) => fetched_any = true,
+            Ok((false, _, stderr)) => {
+                failures.push(format!(
+                    "{remote}: {}",
+                    command_error(&stderr, "fetch failed")
+                ));
+                continue;
+            }
+            Err(error) => {
+                failures.push(format!("{remote}: {error}"));
+                continue;
+            }
+        }
+
+        let namespace = format!("refs/remotes/{remote}");
+        match run_git(
+            path,
+            &["for-each-ref", &contains, "--format=%(refname)", &namespace],
+        )
+        .await
+        {
+            Ok((true, refs, _)) if !refs.trim().is_empty() => return Ok(true),
+            Ok((true, _, _)) => {}
+            Ok((false, _, stderr)) => failures.push(format!(
+                "{remote}: {}",
+                command_error(&stderr, "remote reachability check failed")
+            )),
+            Err(error) => failures.push(format!("{remote}: {error}")),
+        }
+    }
+
+    if fetched_any {
+        Ok(false)
+    } else {
+        anyhow::bail!(failures.join("; "))
+    }
+}
+
+pub(crate) async fn unpublished_gitlinks(
+    prerequisites: &[crate::core::GitlinkPrerequisite],
+) -> Vec<String> {
+    let mut unpublished = Vec::new();
+    for prerequisite in prerequisites {
+        if !matches!(
+            remote_refs_contain_commit(&prerequisite.path, &prerequisite.target).await,
+            Ok(true)
+        ) {
+            unpublished.push(prerequisite.name.clone());
+        }
+    }
+    unpublished
 }
 
 /// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
@@ -1034,7 +1124,29 @@ pub async fn is_detached_head(path: &Path) -> Result<bool> {
 /// Creates a git tag and pushes it to the remote
 /// Returns (success, message)
 pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) {
-    let tag_result = run_git(path, &["tag", tag_name]).await;
+    let tag_ref = format!("refs/tags/{tag_name}^{{commit}}");
+    let existing_target = run_git(path, &["rev-parse", "--verify", &tag_ref]).await;
+    if let Ok((true, existing_target, _)) = &existing_target {
+        let head = match run_git(path, &["rev-parse", "HEAD"]).await {
+            Ok((true, head, _)) => head,
+            Ok((false, _, stderr)) => {
+                return (false, format!("failed to resolve release commit: {stderr}"))
+            }
+            Err(error) => return (false, format!("failed to resolve release commit: {error}")),
+        };
+        if existing_target != &head {
+            return (
+                false,
+                format!(
+                    "existing tag {tag_name} points to {}, not release commit {}",
+                    existing_target.chars().take(7).collect::<String>(),
+                    head.chars().take(7).collect::<String>()
+                ),
+            );
+        }
+    }
+
+    let tag_result = run_git(path, &["tag", "--", tag_name]).await;
 
     let (success, _, stderr) = match tag_result {
         Ok(result) => result,
@@ -1103,7 +1215,8 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
         }
     }
 
-    let push_result = run_git(path, &["push", &remote_name, tag_name]).await;
+    let tag_refspec = format!("refs/tags/{tag_name}:refs/tags/{tag_name}");
+    let push_result = run_git(path, &["push", &remote_name, &tag_refspec]).await;
 
     match push_result {
         Ok((true, _, _)) if existed => (true, format!("existing tag pushed {tag_name}")),

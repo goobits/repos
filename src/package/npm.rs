@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
@@ -30,6 +31,20 @@ impl PackageManager for Npm {
         get_package_info_internal(path).await
     }
 
+    async fn dependencies(&self, path: &Path) -> Vec<String> {
+        get_package_manifest(path)
+            .await
+            .map(|package| {
+                package
+                    .dependencies
+                    .into_keys()
+                    .chain(package.optional_dependencies.into_keys())
+                    .chain(package.peer_dependencies.into_keys())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String) {
         publish_internal(path, dry_run).await
     }
@@ -40,14 +55,24 @@ impl PackageManager for Npm {
 struct PackageJson {
     name: String,
     version: String,
+    #[serde(default)]
+    dependencies: HashMap<String, serde_json::Value>,
+    #[serde(default, rename = "optionalDependencies")]
+    optional_dependencies: HashMap<String, serde_json::Value>,
+    #[serde(default, rename = "peerDependencies")]
+    peer_dependencies: HashMap<String, serde_json::Value>,
+}
+
+async fn get_package_manifest(repo_path: &Path) -> Option<PackageJson> {
+    let content = tokio::fs::read_to_string(repo_path.join("package.json"))
+        .await
+        .ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 /// Gets package information from package.json
 async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
-    let package_json_path = repo_path.join("package.json");
-
-    let content = tokio::fs::read_to_string(&package_json_path).await.ok()?;
-    let package: PackageJson = serde_json::from_str(&content).ok()?;
+    let package = get_package_manifest(repo_path).await?;
 
     Some(PackageInfo {
         manager_name: "npm".to_string(),

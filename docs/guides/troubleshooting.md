@@ -62,7 +62,8 @@ Common issues and solutions for the repos tool.
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `No git repositories found` even though child folders are repos | An older `repos` release inherited a `.gitignore` from above the scan directory | Update `repos`; discovery is rooted at the current directory and ignores ancestor ignore files |
+| `No git repositories found` even though child folders are repos | An older `repos` release applied Git/tool ignore rules to fleet discovery | Update `repos`; current discovery inventories ignored repositories below the scan root |
+| A local nested checkout should not join fleet commands | `.gitignore` is not a fleet inventory boundary | Add its path to `.reposignore` at the scan root |
 | `push failed: no upstream branch` | Upstream branch not configured | Use `repos push --auto-upstream` |
 | `push rejected: non-fast-forward` | Remote has commits not in local | Use `repos sync` or resolve the branch manually |
 | `Could not read from remote repository` | The configured SSH key is missing or unauthorized | Test the configured URL with `git ls-remote <url>`, then install/authorize the correct key |

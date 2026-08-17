@@ -30,7 +30,9 @@ repos publish --tag             # 3. Publish + tag
 | `--public-only` | Only public repos (default) |
 | `--private-only` | Only private repos |
 
-**Safety:** By default, requires clean working directory and only publishes public repos.
+**Safety:** By default, only public repositories are selected. Real publishes
+require a clean working directory and a release commit that is fully pushed and
+not behind its configured upstream.
 
 ## Example Output
 
@@ -80,10 +82,12 @@ graph TD
 ```
 
 - Auto-detects package type (npm/Cargo/PyPI) per repo
-- Checks visibility via `gh` CLI (GitHub only; defaults to public otherwise)
+- Checks visibility via `gh` CLI (GitHub only; unknown visibility is treated as private)
 - Uses existing credentials (`~/.npmrc`, `~/.cargo/credentials.toml`, `~/.pypirc`)
-- Creates git tags after successful publish (if `--tag`)
-- Processes 8 packages concurrently (v2.1+, previously 3)
+- Reads local manifest dependencies and publishes dependency waves in order
+- Rejects duplicate package identities and dependency cycles before publishing
+- Creates or pushes matching git tags after a successful or already-published registry result (if `--tag`)
+- Processes up to 8 independent packages concurrently
 
 Learn more about [credential configuration](credentials_setup.md).
 

@@ -34,6 +34,14 @@ impl PackageManager for PyPI {
         get_package_info_internal(path).await
     }
 
+    async fn dependencies(&self, path: &Path) -> Vec<String> {
+        get_pyproject(path)
+            .await
+            .and_then(|project| project.project)
+            .map(|project| project.dependencies)
+            .unwrap_or_default()
+    }
+
     async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String) {
         publish_internal(path, dry_run).await
     }
@@ -49,6 +57,15 @@ struct PyProjectToml {
 struct PyProject {
     name: String,
     version: String,
+    #[serde(default)]
+    dependencies: Vec<String>,
+}
+
+async fn get_pyproject(repo_path: &Path) -> Option<PyProjectToml> {
+    let content = tokio::fs::read_to_string(repo_path.join("pyproject.toml"))
+        .await
+        .ok()?;
+    toml::from_str(&content).ok()
 }
 
 /// Gets package information from pyproject.toml or setup.py
@@ -56,16 +73,15 @@ async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
     // Try pyproject.toml first
     let pyproject_path = repo_path.join("pyproject.toml");
     if pyproject_path.exists() {
-        if let Ok(content) = tokio::fs::read_to_string(&pyproject_path).await {
-            if let Ok(pyproject) = toml::from_str::<PyProjectToml>(&content) {
-                if let Some(project) = pyproject.project {
-                    return Some(PackageInfo {
-                        manager_name: "python".to_string(),
-                        name: project.name,
-                        version: project.version,
-                    });
-                }
-            }
+        if let Some(project) = get_pyproject(repo_path)
+            .await
+            .and_then(|value| value.project)
+        {
+            return Some(PackageInfo {
+                manager_name: "python".to_string(),
+                name: project.name,
+                version: project.version,
+            });
         }
     }
 

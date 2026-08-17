@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -171,4 +172,13 @@ pub(crate) fn create_footer_progress_bar(multi_progress: &MultiProgress) -> Prog
         .expect("Failed to create footer progress style - this indicates an invalid template string in the progress bar configuration");
     footer_pb.set_style(footer_style);
     footer_pb
+}
+
+/// Prints a completed report after interactive progress without leaking a
+/// carriage return into redirected output.
+pub(crate) fn print_final_report(report: &str) {
+    if std::io::stdout().is_terminal() {
+        print!("\r");
+    }
+    println!("{report}\n");
 }

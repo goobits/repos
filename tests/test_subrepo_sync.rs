@@ -116,3 +116,68 @@ fn test_sync_subrepo_success() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_sync_preflights_every_copy_before_changing_any_checkout() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "lib.rs", "v1", "Initial")?;
+    let initial = get_head_commit(&remote_path)?;
+
+    let mut instances = Vec::new();
+    for name in ["app-a", "app-b"] {
+        let parent_path = root.join(name);
+        std::fs::create_dir(&parent_path)?;
+        setup_git_repo(&parent_path)?;
+        let subrepo_path = parent_path.join("shared");
+        clone_repo(&remote_path, &subrepo_path)?;
+        instances.push(SubrepoInstance {
+            parent_repo: name.to_string(),
+            parent_path,
+            subrepo_name: "upstream".to_string(),
+            subrepo_path,
+            relative_path: "shared".to_string(),
+            commit_hash: initial.clone(),
+            short_hash: initial[..7].to_string(),
+            remote_url: Some(remote_path.to_string_lossy().into_owned()),
+            has_uncommitted: false,
+            commit_timestamp: 0,
+        });
+    }
+
+    create_test_commit(
+        &instances[0].subrepo_path,
+        "local-only.rs",
+        "target",
+        "Local-only target",
+    )?;
+    let unavailable_target = get_head_commit(&instances[0].subrepo_path)?;
+    Command::new("git")
+        .args(["reset", "--hard", &initial])
+        .current_dir(&instances[0].subrepo_path)
+        .output()?;
+
+    let report = ValidationReport {
+        total_nested: 2,
+        by_remote: HashMap::from([(
+            remote_path.to_string_lossy().into_owned(),
+            instances.clone(),
+        )]),
+        no_remote: Vec::new(),
+    };
+
+    let result = sync_subrepo_with_report("upstream", &unavailable_target, false, false, &report);
+
+    assert!(result.is_err(), "unavailable target must fail the batch");
+    for instance in instances {
+        assert_eq!(
+            get_head_commit(&instance.subrepo_path)?,
+            initial,
+            "no checkout may move when another copy fails preflight"
+        );
+    }
+    Ok(())
+}

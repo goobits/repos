@@ -276,9 +276,13 @@ pub async fn handle_config_command(args: ConfigArgs) -> Result<()> {
     println!();
 
     // Create processing context
+    let concurrency = if matches!(&resolved_args.command, ConfigCommand::Interactive(_)) {
+        1
+    } else {
+        GIT_CONCURRENT_CAP
+    };
     let context =
-        match create_processing_context(std::sync::Arc::new(repos), start_time, GIT_CONCURRENT_CAP)
-        {
+        match create_processing_context(std::sync::Arc::new(repos), start_time, concurrency) {
             Ok(context) => context,
             Err(e) => {
                 set_terminal_title_and_flush("✅ repos");

@@ -5,6 +5,7 @@
 //! - Removing large files from Git history
 //! - Removing secrets from Git history
 
+use crate::core::{RepositoryOrder, RepositoryTopology};
 use anyhow::{anyhow, Result};
 use serde_json;
 use std::collections::{HashMap, HashSet};
@@ -138,6 +139,24 @@ pub async fn apply_fixes(
         violation_repos
     };
 
+    let topology_input = repos_to_fix
+        .iter()
+        .map(|(name, path, _)| (name.clone(), PathBuf::from(path)))
+        .collect::<Vec<_>>();
+    let topology = RepositoryTopology::new(&topology_input);
+    if (options.fix_large || options.fix_secrets) && topology.has_gitlink_dependencies() {
+        anyhow::bail!(
+            "bulk history rewrite is unsafe across parent/submodule dependencies; target and rewrite each dependency chain explicitly"
+        );
+    }
+    let mut repos_by_index = repos_to_fix.into_iter().map(Some).collect::<Vec<_>>();
+    let repos_to_fix = topology
+        .waves(RepositoryOrder::ChildrenFirst)
+        .into_iter()
+        .flatten()
+        .filter_map(|index| repos_by_index[index].take())
+        .collect::<Vec<_>>();
+
     if repos_to_fix.is_empty() {
         if options.target_repos.is_some() {
             eprintln!("\n❌ No violations found in specified repositories");
@@ -181,6 +200,16 @@ pub async fn apply_fixes(
         };
 
         eprintln!("Processing {repo_name}...");
+
+        // The fleet-wide check above gives an early all-or-nothing gate. Repeat
+        // it at the mutation boundary so a shared checkout cannot go stale.
+        if let Err(error) = check_repository_safety(&repo_path, &options).await {
+            let error = format!("safety recheck failed: {error}");
+            eprintln!("  ✗ {error}");
+            result.errors.push(error);
+            results.push(result);
+            continue;
+        }
 
         // Apply gitignore fixes
         if options.fix_gitignore {
