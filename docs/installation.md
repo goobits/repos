@@ -119,6 +119,10 @@ git pull
 ```
 
 The install script rebuilds and reinstalls automatically.
+Updates are staged and executed before atomically replacing the installed
+binary. This preserves the previous installation if validation fails and avoids
+macOS terminating an in-place executable replacement because of cached code
+signature state.
 
 ## Uninstalling
 
@@ -146,6 +150,13 @@ For install-script installations, remove the path reported by
 **Permission denied**
 - Inspect the active binary: `ls -l "$(command -v repos)"`
 - Use `sudo` only if installing to `/usr/local/bin`
+
+**`Killed: 9` immediately after an update on macOS**
+- Pull the latest installer and rerun `./install.sh`; current releases replace
+  the executable atomically instead of overwriting a previously run binary
+  in place.
+- If an older installer already damaged the destination, rerunning the current
+  installer repairs it without requiring manual code signing.
 
 **Missing dependencies on Linux**
 - Install build tools: `sudo apt install build-essential pkg-config libssl-dev`

@@ -106,6 +106,11 @@ if [ ! -f "$SOURCE_BINARY" ]; then
     exit 1
 fi
 
+if ! "$SOURCE_BINARY" --version >/dev/null; then
+    echo "❌ Built binary could not be executed: $SOURCE_BINARY" >&2
+    exit 1
+fi
+
 # Determine the best installation directory
 # Priority: /usr/local/bin (system-wide), ~/.local/bin, ~/bin (user-specific)
 if [ -n "${REPOS_INSTALL_DIR:-}" ]; then
@@ -123,15 +128,31 @@ else
     mkdir -p "$INSTALL_DIR"
 fi
 
-# Install the binary
+# Install through a fresh inode, then atomically replace the destination.
+# Overwriting an executable in place can leave macOS with a stale cached code
+# signature and cause the next launch to be terminated with SIGKILL.
 echo "📁 Installing to $INSTALL_DIR..."
-cp "$SOURCE_BINARY" "$INSTALL_DIR/$BINARY_NAME"
-chmod +x "$INSTALL_DIR/$BINARY_NAME"
+INSTALL_PATH="$INSTALL_DIR/$BINARY_NAME"
+STAGED_BINARY="$(mktemp "$INSTALL_DIR/.${BINARY_NAME}.install.XXXXXX")"
 
-if ! "$INSTALL_DIR/$BINARY_NAME" --version >/dev/null; then
-    echo "❌ Installed binary could not be executed: $INSTALL_DIR/$BINARY_NAME" >&2
+cleanup_staged_binary() {
+    if [ -n "${STAGED_BINARY:-}" ] && [ -f "$STAGED_BINARY" ]; then
+        rm -f "$STAGED_BINARY"
+    fi
+}
+trap cleanup_staged_binary EXIT
+
+cp "$SOURCE_BINARY" "$STAGED_BINARY"
+chmod +x "$STAGED_BINARY"
+
+if ! "$STAGED_BINARY" --version >/dev/null; then
+    echo "❌ Staged binary could not be executed; existing installation was preserved: $INSTALL_PATH" >&2
     exit 1
 fi
+
+mv -f "$STAGED_BINARY" "$INSTALL_PATH"
+STAGED_BINARY=""
+trap - EXIT
 
 # Function to create environment file for PATH management
 create_repos_env() {
@@ -194,5 +215,5 @@ else
 fi
 
 echo "✅ Installation complete!"
-echo "   Installed: $INSTALL_DIR/$BINARY_NAME"
+echo "   Installed: $INSTALL_PATH"
 echo "   Run 'repos' in any directory to manage your git repositories"

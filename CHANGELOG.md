@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
+- Source installation now validates a freshly staged executable and atomically replaces the installed binary, preventing macOS from killing in-place updates because of stale code-signature cache state while preserving the previous binary on validation failure.
 - Dirty worktree classification is retained when remote status refresh fails.
 - Existing release tags are never moved to a different commit; `--tag` can push a matching local tag after an already-published registry result.
 - Nested drift commands no longer conflate independent embedded repositories with Git submodules or linked worktrees.
