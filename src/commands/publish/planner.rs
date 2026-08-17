@@ -37,7 +37,7 @@ fn is_targeted(name: &str, targets: &[String]) -> bool {
 }
 
 fn visibility_selected(visibility: RepoVisibility, desired: Option<RepoVisibility>) -> bool {
-    desired.is_none_or(|desired| {
+    desired.map_or(true, |desired| {
         visibility == desired
             || visibility == RepoVisibility::Unknown && desired == RepoVisibility::Private
     })

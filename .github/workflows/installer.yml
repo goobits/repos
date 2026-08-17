@@ -1,0 +1,39 @@
+name: Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - install.sh
+      - Cargo.toml
+      - Cargo.lock
+      - tests/test_installer.rs
+      - .github/workflows/installer.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - install.sh
+      - Cargo.toml
+      - Cargo.lock
+      - tests/test_installer.rs
+      - .github/workflows/installer.yml
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: ${{ matrix.os }} source install
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Exercise initial install and update
+        run: cargo test --locked --test test_installer

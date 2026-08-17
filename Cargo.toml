@@ -2,6 +2,7 @@
 name = "goobits-repos"
 version = "4.0.0"
 edition = "2021"
+rust-version = "1.78"
 authors = ["goobits contributors"]
 description = "Fast Git repository management and synchronization tool"
 readme = "README.md"

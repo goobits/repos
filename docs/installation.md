@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Rust toolchain** (1.70+): `rustc` and `cargo`
+- **Rust toolchain** (1.78+): `rustc` and `cargo`
 - **Git** (2.0+)
 - **Platform**: Linux or macOS (Windows via WSL)
 
@@ -34,7 +34,8 @@ After running the script, you'll have:
 - Installation directory added to your PATH
 - Rust toolchain installed if it was missing
 
-The build cache stays outside the checkout. Automation can override locations:
+The build cache stays in a private user cache outside the checkout. Automation
+can override locations:
 
 ```bash
 CARGO_TARGET_DIR=/path/to/cache \
@@ -144,7 +145,7 @@ For install-script installations, remove the path reported by
 
 **Build errors**
 - Update Rust: `rustup update`
-- Check version: `rustc --version` (need 1.70+)
+- Check versions: `rustc --version && cargo --version` (need 1.78+)
 - Clean rebuild: `cargo clean && cargo build --release`
 
 **Permission denied**

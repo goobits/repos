@@ -1,11 +1,15 @@
 use goobits_repos::core::init_command;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
-static CWD_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+static CWD_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+fn cwd_lock() -> &'static tokio::sync::Mutex<()> {
+    CWD_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 struct CurrentDirGuard {
     original: PathBuf,
@@ -27,7 +31,7 @@ impl Drop for CurrentDirGuard {
 
 #[tokio::test] // Default is single threaded scheduler
 async fn test_blocking_discovery() {
-    let _cwd_lock = CWD_LOCK.lock().await;
+    let _cwd_lock = cwd_lock().lock().await;
 
     // Setup - Create many repos to make discovery slow
     let temp_dir = TempDir::new().unwrap();
@@ -100,7 +104,7 @@ fn test_blocking_discovery_measure() {
         .unwrap();
 
     rt.block_on(async {
-        let _cwd_lock = CWD_LOCK.lock().await;
+        let _cwd_lock = cwd_lock().lock().await;
 
         println!("Main thread: {:?}", std::thread::current().id());
         // Setup - Create many repos to make discovery slow

@@ -32,12 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
-- Source installation now validates a freshly staged executable and atomically replaces the installed binary, preventing macOS from killing in-place updates because of stale code-signature cache state while preserving the previous binary on validation failure.
+- Source installation now uses a private build cache, validates a mode-`0755` staged executable, atomically replaces and rechecks the installed binary, and restores the previous executable on failure. This prevents macOS stale code-signature kills without weakening system-wide permissions.
 - Dirty worktree classification is retained when remote status refresh fails.
 - Existing release tags are never moved to a different commit; `--tag` can push a matching local tag after an already-published registry result.
 - Nested drift commands no longer conflate independent embedded repositories with Git submodules or linked worktrees.
 
 ### Security
+- Installer-generated PATH configuration now quotes custom installation directories safely, and default build artifacts live in a private user cache instead of a predictable shared `/tmp` directory.
 - HTTP credentials, URL user information, and query strings are redacted from Git failure reports.
 - Secret and hygiene reports retain repository and file attribution, while `repos audit --json` emits one redirect-safe JSON document even with dry-run fixes.
 - Audit safety is rechecked immediately before each mutation, and bulk history rewrites across parent/submodule dependency sets are refused.

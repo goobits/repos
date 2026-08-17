@@ -6,35 +6,64 @@
 
 set -euo pipefail
 
+MINIMUM_RUST_VERSION="1.78"
+
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Change to script directory to ensure we're in the right place
 cd "$SCRIPT_DIR"
 
-# Function to add cargo to PATH in shell configuration files
-add_cargo_to_path() {
-    local shell_config=""
+version_is_at_least() {
+    local actual_version="$1"
+    local required_version="$2"
+    local actual_major actual_minor required_major required_minor
 
-    # Detect which shell configuration file to use
-    if [ -n "${ZSH_VERSION:-}" ]; then
-        shell_config="$HOME/.zshrc"
-    elif [ -n "${BASH_VERSION:-}" ]; then
-        if [ -f "$HOME/.bashrc" ]; then
-            shell_config="$HOME/.bashrc"
-        elif [ -f "$HOME/.bash_profile" ]; then
-            shell_config="$HOME/.bash_profile"
-        fi
+    IFS=. read -r actual_major actual_minor _ <<< "$actual_version"
+    IFS=. read -r required_major required_minor _ <<< "$required_version"
+    if ! [[ "$actual_major" =~ ^[0-9]+$ && "$actual_minor" =~ ^[0-9]+$ ]]; then
+        return 1
     fi
 
+    (( actual_major > required_major ||
+        (actual_major == required_major && actual_minor >= required_minor) ))
+}
+
+user_shell_config() {
+    case "${SHELL:-}" in
+        zsh | */zsh)
+            printf '%s\n' "$HOME/.zshrc"
+            ;;
+        bash | */bash)
+            if [ -f "$HOME/.bashrc" ]; then
+                printf '%s\n' "$HOME/.bashrc"
+            elif [ -f "$HOME/.bash_profile" ]; then
+                printf '%s\n' "$HOME/.bash_profile"
+            elif [ "$(uname -s)" = "Darwin" ]; then
+                printf '%s\n' "$HOME/.bash_profile"
+            else
+                printf '%s\n' "$HOME/.bashrc"
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Function to add cargo to PATH in shell configuration files
+add_cargo_to_path() {
+    local shell_config
+
     # Add cargo environment to shell config if not already present
-    if [ -n "$shell_config" ] && [ -f "$shell_config" ]; then
-        if ! grep -q '.cargo/env' "$shell_config"; then
-            echo "" >> "$shell_config"
-            echo "# Added by repos installer" >> "$shell_config"
-            echo "source \"\$HOME/.cargo/env\"" >> "$shell_config"
-            echo "📝 Added cargo to PATH in $shell_config"
-        fi
+    if ! shell_config="$(user_shell_config)"; then
+        echo "ℹ️  Add $HOME/.cargo/bin to PATH in your shell configuration."
+        return
+    fi
+    touch "$shell_config"
+    if ! grep -Fq '.cargo/env' "$shell_config"; then
+        printf '\n# Added by repos installer\n. "$HOME/.cargo/env"\n' >> "$shell_config"
+        echo "📝 Added cargo to PATH in $shell_config"
     fi
 }
 
@@ -71,16 +100,31 @@ if ! command -v cargo &> /dev/null; then
     fi
 fi
 
+CARGO_VERSION="$(cargo --version | awk '{print $2}')"
+RUSTC_VERSION="$(rustc --version | awk '{print $2}')"
+if ! version_is_at_least "$CARGO_VERSION" "$MINIMUM_RUST_VERSION" ||
+    ! version_is_at_least "$RUSTC_VERSION" "$MINIMUM_RUST_VERSION"; then
+    echo "❌ repos requires Cargo and Rust $MINIMUM_RUST_VERSION or newer." >&2
+    echo "   Found: cargo $CARGO_VERSION, rustc $RUSTC_VERSION" >&2
+    if command -v rustup &> /dev/null; then
+        echo "   Update with: rustup update stable" >&2
+    fi
+    exit 1
+fi
+
 # Keep build artifacts outside the source checkout. An explicit Cargo target
 # directory still wins, which makes the installer friendly to CI and wrappers.
 if [ -n "${CARGO_TARGET_DIR:-}" ]; then
     BUILD_DIR="$CARGO_TARGET_DIR"
 else
-    TEMP_ROOT="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}"
-    if [ ! -d "$TEMP_ROOT" ] || [ ! -w "$TEMP_ROOT" ]; then
-        TEMP_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}"
+    INSTALLER_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/goobits-repos"
+    if [ -L "$INSTALLER_CACHE_DIR" ]; then
+        echo "❌ Refusing symlinked installer cache: $INSTALLER_CACHE_DIR" >&2
+        exit 1
     fi
-    BUILD_DIR="${TEMP_ROOT%/}/goobits-repos-target"
+    mkdir -p "$INSTALLER_CACHE_DIR"
+    chmod 0700 "$INSTALLER_CACHE_DIR"
+    BUILD_DIR="$INSTALLER_CACHE_DIR/target"
 fi
 
 HOST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
@@ -95,6 +139,7 @@ case "$HOST_TARGET" in
 esac
 
 mkdir -p "$BUILD_DIR"
+BUILD_DIR="$(cd "$BUILD_DIR" && pwd -P)"
 export CARGO_TARGET_DIR="$BUILD_DIR"
 
 echo "📦 Building repos in $CARGO_TARGET_DIR..."
@@ -118,9 +163,9 @@ if [ -n "${REPOS_INSTALL_DIR:-}" ]; then
     mkdir -p "$INSTALL_DIR"
 elif [ -w "/usr/local/bin" ]; then
     INSTALL_DIR="/usr/local/bin"
-elif [ -d "$HOME/.local/bin" ]; then
+elif [ -d "$HOME/.local/bin" ] && [ -w "$HOME/.local/bin" ]; then
     INSTALL_DIR="$HOME/.local/bin"
-elif [ -d "$HOME/bin" ]; then
+elif [ -d "$HOME/bin" ] && [ -w "$HOME/bin" ]; then
     INSTALL_DIR="$HOME/bin"
 else
     # Create ~/.local/bin if it doesn't exist
@@ -128,52 +173,100 @@ else
     mkdir -p "$INSTALL_DIR"
 fi
 
+if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then
+    echo "❌ Installation directory is not writable: $INSTALL_DIR" >&2
+    exit 1
+fi
+INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"
+case "$INSTALL_DIR" in
+    *$'\n'* | *$'\r'*)
+        echo "❌ Installation directory cannot contain newlines." >&2
+        exit 1
+        ;;
+esac
+
 # Install through a fresh inode, then atomically replace the destination.
 # Overwriting an executable in place can leave macOS with a stale cached code
 # signature and cause the next launch to be terminated with SIGKILL.
 echo "📁 Installing to $INSTALL_DIR..."
 INSTALL_PATH="$INSTALL_DIR/$BINARY_NAME"
 STAGED_BINARY="$(mktemp "$INSTALL_DIR/.${BINARY_NAME}.install.XXXXXX")"
+BACKUP_BINARY=""
 
-cleanup_staged_binary() {
+cleanup_install_artifacts() {
     if [ -n "${STAGED_BINARY:-}" ] && [ -f "$STAGED_BINARY" ]; then
         rm -f "$STAGED_BINARY"
     fi
+    if [ -n "${BACKUP_BINARY:-}" ] && [ -f "$BACKUP_BINARY" ]; then
+        rm -f "$BACKUP_BINARY"
+    fi
 }
-trap cleanup_staged_binary EXIT
+trap cleanup_install_artifacts EXIT
 
 cp "$SOURCE_BINARY" "$STAGED_BINARY"
-chmod +x "$STAGED_BINARY"
+chmod 0755 "$STAGED_BINARY"
 
 if ! "$STAGED_BINARY" --version >/dev/null; then
     echo "❌ Staged binary could not be executed; existing installation was preserved: $INSTALL_PATH" >&2
     exit 1
 fi
 
+if [ -e "$INSTALL_PATH" ]; then
+    BACKUP_BINARY="$(mktemp "$INSTALL_DIR/.${BINARY_NAME}.backup.XXXXXX")"
+    cp -p "$INSTALL_PATH" "$BACKUP_BINARY"
+fi
+
 mv -f "$STAGED_BINARY" "$INSTALL_PATH"
 STAGED_BINARY=""
+
+if ! "$INSTALL_PATH" --version >/dev/null; then
+    if [ -n "$BACKUP_BINARY" ]; then
+        mv -f "$BACKUP_BINARY" "$INSTALL_PATH"
+        BACKUP_BINARY=""
+        echo "❌ Installed binary could not be executed; previous installation was restored: $INSTALL_PATH" >&2
+    else
+        rm -f "$INSTALL_PATH"
+        echo "❌ Installed binary could not be executed: $INSTALL_PATH" >&2
+    fi
+    exit 1
+fi
+
+if [ -n "$BACKUP_BINARY" ]; then
+    rm -f "$BACKUP_BINARY"
+    BACKUP_BINARY=""
+fi
 trap - EXIT
+
+quote_for_posix_shell() {
+    local value="$1"
+
+    printf "'"
+    printf '%s' "$value" | sed "s/'/'\\\\''/g"
+    printf "'"
+}
 
 # Function to create environment file for PATH management
 create_repos_env() {
     local env_file="$HOME/.repos-env"
+    local quoted_install_dir
 
-    cat > "$env_file" << 'EOF'
+    quoted_install_dir="$(quote_for_posix_shell "$INSTALL_DIR")"
+
+    cat > "$env_file" << EOF
 #!/bin/sh
 # repos shell setup
 # Check if repos bin directory is already in PATH to avoid duplicates
-case ":${PATH}:" in
-    *:"INSTALL_DIR_PLACEHOLDER":*)
+_repos_install_dir=$quoted_install_dir
+case ":\${PATH}:" in
+    *:"\${_repos_install_dir}":*)
         ;;
     *)
-        export PATH="INSTALL_DIR_PLACEHOLDER:$PATH"
+        export PATH="\${_repos_install_dir}:\${PATH}"
         ;;
 esac
+unset _repos_install_dir
 EOF
-
-    # Replace placeholder with actual install directory
-    sed -i.bak "s|INSTALL_DIR_PLACEHOLDER|$INSTALL_DIR|g" "$env_file"
-    rm -f "$env_file.bak"
+    chmod 0644 "$env_file"
 
     echo "📝 Created environment file: $env_file"
 }
@@ -183,14 +276,14 @@ add_to_shell_config() {
     local config_file="$1"
     local source_line=". \"\$HOME/.repos-env\""
 
-    if [ -f "$config_file" ]; then
-        # Check if already present
-        if ! grep -q "repos-env" "$config_file"; then
-            echo "" >> "$config_file"
-            echo "# Added by repos installer" >> "$config_file"
-            echo "$source_line" >> "$config_file"
-            echo "📝 Added to $config_file"
-        fi
+    if [ -e "$config_file" ] && [ ! -f "$config_file" ]; then
+        echo "❌ Shell configuration is not a regular file: $config_file" >&2
+        return 1
+    fi
+    touch "$config_file"
+    if ! grep -Fq "$source_line" "$config_file"; then
+        printf '\n# Added by repos installer\n%s\n' "$source_line" >> "$config_file"
+        echo "📝 Added to $config_file"
     fi
 }
 
@@ -204,12 +297,14 @@ elif [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     # Create the environment file
     create_repos_env
 
-    # Add to shell configuration files
-    add_to_shell_config "$HOME/.bashrc"
-    add_to_shell_config "$HOME/.zshrc"
-
-    echo "✅ PATH configuration complete!"
-    echo "   Restart your shell or run: source ~/.repos-env"
+    if shell_config="$(user_shell_config)"; then
+        add_to_shell_config "$shell_config"
+        echo "✅ PATH configuration complete!"
+        echo "   Restart your shell or run: source ~/.repos-env"
+    else
+        echo "ℹ️  Automatic PATH setup is unavailable for ${SHELL:-this shell}."
+        echo "   Add this directory to PATH using your shell configuration: $INSTALL_DIR"
+    fi
 else
     echo "✅ $INSTALL_DIR is already in PATH"
 fi
