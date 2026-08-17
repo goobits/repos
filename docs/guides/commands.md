@@ -27,9 +27,9 @@ package name, then by each copy's project path.
 Transfer and sync reports combine actionable details under `Needs Attention by
 Project`. Within each project, `!` marks failures, `·` marks skipped
 repositories, and `~` marks non-exclusive follow-up work. Nested drift remains
-its own package-oriented section. A compact `Final Totals` footer repeats the
-outcome counts after all details, so long reports end with the result of the run;
-`sync` also repeats its pulled and pushed repository and commit totals there.
+its own package-oriented section. The single compact `Summary` is the final
+section, so long reports end with the result of the run; `sync` includes its
+pulled and pushed repository and commit totals there.
 
 ## Overview
 

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
-- Transfer and sync reports now end with compact final totals, including pull/push transfer counts for `repos sync`, so long actionable reports leave the run result visible.
+- Transfer and sync reports now place their single compact summary at the bottom, including pull/push transfer counts for `repos sync`, so long actionable reports leave the run result visible without duplicating totals.
 - Repository-oriented report sections are now sorted by path, grouping nested packages under their top-level project; nested package drift is sorted alphabetically by package, then by each copy's project path.
 - Transfer and sync reports now combine failed, skipped, and local follow-up details into one project-grouped attention section with fixed-width `!`, `·`, and `~` markers. Final reports also begin after a single visual break from progress output.
 - `repos status` now refreshes upstream refs before comparing commits, treats ahead and behind branches as work to do, and reports exact next actions without moving local branches or worktrees.

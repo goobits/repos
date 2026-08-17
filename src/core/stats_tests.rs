@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transfer_report_ends_with_totals_after_long_details() {
+    fn test_transfer_report_ends_with_single_summary_after_long_details() {
         let stats = SyncStatistics::new();
         stats.update(
             "assets",
@@ -594,12 +594,12 @@ mod tests {
         let drift_index = report
             .rfind("▌ Nested Package Drift")
             .expect("nested drift should be present");
-        let totals_index = report
-            .rfind("▌ Final Totals")
-            .expect("final totals should be present");
-        assert!(totals_index > drift_index, "{report}");
+        let summary_index = report
+            .rfind("▌ Summary")
+            .expect("summary should be present");
+        assert!(summary_index > drift_index, "{report}");
         assert_eq!(report.matches("▌ Summary").count(), 1);
-        assert_eq!(report.matches("▌ Final Totals").count(), 1);
+        assert!(!report.contains("▌ Final Totals"));
         assert!(report.trim_end().ends_with("Checked      2"), "{report}");
     }
 

@@ -469,9 +469,6 @@ impl SyncStatistics {
         lines.push(format!("{BOLD_BLUE}repos {}{RESET}", transfer.command()));
         lines.push(format!("{GREEN}✓{RESET} Completed in {duration_secs:.1}s"));
         lines.push(String::new());
-        append_transfer_totals(&mut lines, "Summary", transfer, totals);
-        lines.push(String::new());
-
         lines.push(format!("{BOLD_PURPLE}▌ {transfer_label}{RESET}"));
         if transferred_details.is_empty() {
             lines.push(format!(
@@ -519,7 +516,7 @@ impl SyncStatistics {
         }
 
         lines.push(String::new());
-        append_transfer_totals(&mut lines, "Final Totals", transfer, totals);
+        append_transfer_summary(&mut lines, transfer, totals);
 
         lines.join("\n")
     }
@@ -555,17 +552,12 @@ impl SyncStatistics {
     }
 }
 
-fn append_transfer_totals(
-    lines: &mut Vec<String>,
-    heading: &str,
-    transfer: Transfer,
-    totals: TransferTotals,
-) {
+fn append_transfer_summary(lines: &mut Vec<String>, transfer: Transfer, totals: TransferTotals) {
     let transfer_label = transfer.label();
     let repository_label = pluralize(totals.transferred_repos, "repo", "repos");
     let unit_label = transfer.unit(totals.transferred_commits);
 
-    lines.push(format!("{BOLD_PURPLE}▌ {heading}{RESET}"));
+    lines.push(format!("{BOLD_PURPLE}▌ Summary{RESET}"));
     lines.push(format!(
         "  {GREEN}✓{RESET} {transfer_label:<13}{} {repository_label} / {} {unit_label}",
         totals.transferred_repos, totals.transferred_commits

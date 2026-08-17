@@ -428,30 +428,7 @@ pub(crate) fn generate_sync_report(
             "{GREEN}✓{RESET} Completed in {:.1}s",
             duration.as_secs_f64()
         ),
-        String::new(),
     ];
-    append_sync_totals(
-        &mut lines,
-        "Summary",
-        &counts,
-        follow_up_count,
-        total_repos,
-        None,
-    );
-    lines.push(String::new());
-    lines.push(format!("{BOLD_PURPLE}▌ Transfers{RESET}"));
-    lines.push(format!(
-        "  {GREEN}↓{RESET} {:<16}{pulled_repos} {} / {pulled_commits} {}",
-        "Pulled",
-        plural(pulled_repos, "repo", "repos"),
-        plural(pulled_commits, "commit", "commits")
-    ));
-    lines.push(format!(
-        "  {GREEN}↑{RESET} {:<16}{pushed_repos} {} / {pushed_commits} {}",
-        "Pushed",
-        plural(pushed_repos, "repo", "repos"),
-        plural(pushed_commits, "commit", "commits")
-    ));
 
     append_transfer_repositories(
         &mut lines,
@@ -488,26 +465,18 @@ pub(crate) fn generate_sync_report(
     }
 
     lines.push(String::new());
-    append_sync_totals(
-        &mut lines,
-        "Final Totals",
-        &counts,
-        follow_up_count,
-        total_repos,
-        Some(transfers),
-    );
+    append_sync_summary(&mut lines, &counts, follow_up_count, total_repos, transfers);
     lines.join("\n")
 }
 
-fn append_sync_totals(
+fn append_sync_summary(
     lines: &mut Vec<String>,
-    heading: &str,
     counts: &SyncCounts,
     follow_up_count: usize,
     total_repos: usize,
-    transfers: Option<SyncTransferTotals>,
+    transfers: SyncTransferTotals,
 ) {
-    lines.push(format!("{BOLD_PURPLE}▌ {heading}{RESET}"));
+    lines.push(format!("{BOLD_PURPLE}▌ Summary{RESET}"));
     lines.push(format!(
         "  {GREEN}✓{RESET} {:<16}{}",
         "Updated", counts.updated
@@ -531,24 +500,22 @@ fn append_sync_totals(
             "Follow-up"
         ));
     }
-    if let Some(transfers) = transfers {
-        lines.push(format!(
-            "  {GREEN}↓{RESET} {:<16}{} {} / {} {}",
-            "Pulled",
-            transfers.pulled_repos,
-            plural(transfers.pulled_repos, "repo", "repos"),
-            transfers.pulled_commits,
-            plural(transfers.pulled_commits, "commit", "commits")
-        ));
-        lines.push(format!(
-            "  {GREEN}↑{RESET} {:<16}{} {} / {} {}",
-            "Pushed",
-            transfers.pushed_repos,
-            plural(transfers.pushed_repos, "repo", "repos"),
-            transfers.pushed_commits,
-            plural(transfers.pushed_commits, "commit", "commits")
-        ));
-    }
+    lines.push(format!(
+        "  {GREEN}↓{RESET} {:<16}{} {} / {} {}",
+        "Pulled",
+        transfers.pulled_repos,
+        plural(transfers.pulled_repos, "repo", "repos"),
+        transfers.pulled_commits,
+        plural(transfers.pulled_commits, "commit", "commits")
+    ));
+    lines.push(format!(
+        "  {GREEN}↑{RESET} {:<16}{} {} / {} {}",
+        "Pushed",
+        transfers.pushed_repos,
+        plural(transfers.pushed_repos, "repo", "repos"),
+        transfers.pushed_commits,
+        plural(transfers.pushed_commits, "commit", "commits")
+    ));
     lines.push(format!("  {DIM}·{RESET} {:<16}{total_repos}", "Checked"));
 }
 
@@ -1039,10 +1006,12 @@ mod tests {
         let attention_index = report
             .rfind("▌ Needs Attention by Project")
             .expect("attention section should be present");
-        let totals_index = report
-            .rfind("▌ Final Totals")
-            .expect("final totals should be present");
-        assert!(totals_index > attention_index, "{report}");
+        let summary_index = report
+            .rfind("▌ Summary")
+            .expect("summary should be present");
+        assert!(summary_index > attention_index, "{report}");
+        assert_eq!(report.matches("▌ Summary").count(), 1);
+        assert!(!report.contains("▌ Final Totals"));
         assert!(report.contains("Pulled          1 repo / 2 commits"));
         assert!(report.contains("Pushed          1 repo / 1 commit"));
         assert!(report.trim_end().ends_with("Checked         5"), "{report}");
