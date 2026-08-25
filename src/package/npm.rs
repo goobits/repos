@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::{PackageInfo, PackageManager};
+use super::{PackageInfo, PackageManager, PackageManifest};
 
 const NPM_OPERATION_TIMEOUT_SECS: u64 = 300; // 5 minutes for npm operations
 
@@ -34,6 +34,8 @@ impl PackageManager for Npm {
     async fn dependencies(&self, path: &Path) -> Vec<String> {
         get_package_manifest(path)
             .await
+            .ok()
+            .flatten()
             .map(|package| {
                 package
                     .dependencies
@@ -43,6 +45,26 @@ impl PackageManager for Npm {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    async fn inspect_manifest(&self, path: &Path) -> anyhow::Result<Option<PackageManifest>> {
+        let Some(package) = get_package_manifest(path).await? else {
+            return Ok(None);
+        };
+        let dependencies = package
+            .dependencies
+            .into_keys()
+            .chain(package.optional_dependencies.into_keys())
+            .chain(package.peer_dependencies.into_keys())
+            .collect();
+        Ok(Some(PackageManifest {
+            info: PackageInfo {
+                manager_name: "npm".to_string(),
+                name: package.name,
+                version: package.version,
+            },
+            dependencies,
+        }))
     }
 
     async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String) {
@@ -63,16 +85,19 @@ struct PackageJson {
     peer_dependencies: HashMap<String, serde_json::Value>,
 }
 
-async fn get_package_manifest(repo_path: &Path) -> Option<PackageJson> {
-    let content = tokio::fs::read_to_string(repo_path.join("package.json"))
-        .await
-        .ok()?;
-    serde_json::from_str(&content).ok()
+async fn get_package_manifest(repo_path: &Path) -> anyhow::Result<Option<PackageJson>> {
+    let path = repo_path.join("package.json");
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(Some(serde_json::from_str(&content)?))
 }
 
 /// Gets package information from package.json
 async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
-    let package = get_package_manifest(repo_path).await?;
+    let package = get_package_manifest(repo_path).await.ok().flatten()?;
 
     Some(PackageInfo {
         manager_name: "npm".to_string(),

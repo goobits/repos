@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::{PackageInfo, PackageManager};
+use super::{PackageInfo, PackageManager, PackageManifest};
 
 const PYTHON_OPERATION_TIMEOUT_SECS: u64 = 300; // 5 minutes for python operations
 
@@ -37,9 +37,33 @@ impl PackageManager for PyPI {
     async fn dependencies(&self, path: &Path) -> Vec<String> {
         get_pyproject(path)
             .await
+            .ok()
+            .flatten()
             .and_then(|project| project.project)
             .map(|project| project.dependencies)
             .unwrap_or_default()
+    }
+
+    async fn inspect_manifest(&self, path: &Path) -> Result<Option<PackageManifest>> {
+        if let Some(manifest) = get_pyproject(path).await? {
+            let project = manifest
+                .project
+                .ok_or_else(|| anyhow::anyhow!("pyproject.toml has no [project] metadata"))?;
+            return Ok(Some(PackageManifest {
+                dependencies: project.dependencies,
+                info: PackageInfo {
+                    manager_name: "python".to_string(),
+                    name: project.name,
+                    version: project.version,
+                },
+            }));
+        }
+        if path.join("setup.py").is_file() {
+            anyhow::bail!(
+                "setup.py metadata cannot be inspected safely; add static pyproject.toml metadata"
+            );
+        }
+        Ok(None)
     }
 
     async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String) {
@@ -61,11 +85,14 @@ struct PyProject {
     dependencies: Vec<String>,
 }
 
-async fn get_pyproject(repo_path: &Path) -> Option<PyProjectToml> {
-    let content = tokio::fs::read_to_string(repo_path.join("pyproject.toml"))
-        .await
-        .ok()?;
-    toml::from_str(&content).ok()
+async fn get_pyproject(repo_path: &Path) -> Result<Option<PyProjectToml>> {
+    let path = repo_path.join("pyproject.toml");
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(Some(toml::from_str(&content)?))
 }
 
 /// Gets package information from pyproject.toml or setup.py
@@ -75,6 +102,8 @@ async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
     if pyproject_path.exists() {
         if let Some(project) = get_pyproject(repo_path)
             .await
+            .ok()
+            .flatten()
             .and_then(|value| value.project)
         {
             return Some(PackageInfo {

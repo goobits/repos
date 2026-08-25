@@ -215,6 +215,14 @@ pub(crate) fn context_from_url(
     }
 }
 
+pub(crate) fn is_github_remote_url(url: &str) -> bool {
+    context_from_url("origin", RemoteDirection::Fetch, url)
+        .identity
+        .as_deref()
+        .and_then(|identity| identity.split('/').next())
+        .is_some_and(|host| host.eq_ignore_ascii_case("github.com"))
+}
+
 pub(crate) fn policy_violation(
     contexts: &[RemoteContext],
 ) -> Result<Option<RemotePolicyViolation>> {
@@ -304,8 +312,8 @@ fn safe_ssh_identity(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        policy_violation_for, safe_http_details, safe_ssh_identity, RemoteContext, RemoteDirection,
-        RemoteTransport, TransportPolicy,
+        is_github_remote_url, policy_violation_for, safe_http_details, safe_ssh_identity,
+        RemoteContext, RemoteDirection, RemoteTransport, TransportPolicy,
     };
 
     fn context(transport: RemoteTransport) -> RemoteContext {
@@ -426,5 +434,17 @@ mod tests {
             safe_ssh_identity("git@github.com:goobits/repos.git").as_deref(),
             Some("github.com/goobits/repos.git")
         );
+    }
+
+    #[test]
+    fn github_detection_matches_the_host_instead_of_a_substring() {
+        assert!(is_github_remote_url("git@github.com:goobits/repos.git"));
+        assert!(is_github_remote_url("https://github.com/goobits/repos.git"));
+        assert!(!is_github_remote_url(
+            "https://notgithub.com/goobits/repos.git"
+        ));
+        assert!(!is_github_remote_url(
+            "https://example.com/github.com/repos.git"
+        ));
     }
 }

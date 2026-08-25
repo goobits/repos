@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::{PackageInfo, PackageManager};
+use super::{PackageInfo, PackageManager, PackageManifest};
 
 const CARGO_OPERATION_TIMEOUT_SECS: u64 = 600; // 10 minutes for cargo operations (can be slow)
 
@@ -34,6 +34,8 @@ impl PackageManager for Cargo {
     async fn dependencies(&self, path: &Path) -> Vec<String> {
         get_manifest(path)
             .await
+            .ok()
+            .flatten()
             .map(|manifest| {
                 manifest
                     .dependencies
@@ -43,6 +45,26 @@ impl PackageManager for Cargo {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    async fn inspect_manifest(&self, path: &Path) -> anyhow::Result<Option<PackageManifest>> {
+        let Some(manifest) = get_manifest(path).await? else {
+            return Ok(None);
+        };
+        let dependencies = manifest
+            .dependencies
+            .into_iter()
+            .chain(manifest.build_dependencies)
+            .map(|(name, value)| renamed_dependency(name, &value))
+            .collect();
+        Ok(Some(PackageManifest {
+            info: PackageInfo {
+                manager_name: "cargo".to_string(),
+                name: manifest.package.name,
+                version: manifest.package.version,
+            },
+            dependencies,
+        }))
     }
 
     async fn publish(&self, path: &Path, dry_run: bool) -> (bool, String) {
@@ -74,16 +96,19 @@ fn renamed_dependency(name: String, value: &toml::Value) -> String {
         .map_or(name, str::to_string)
 }
 
-async fn get_manifest(repo_path: &Path) -> Option<CargoToml> {
-    let content = tokio::fs::read_to_string(repo_path.join("Cargo.toml"))
-        .await
-        .ok()?;
-    toml::from_str(&content).ok()
+async fn get_manifest(repo_path: &Path) -> anyhow::Result<Option<CargoToml>> {
+    let path = repo_path.join("Cargo.toml");
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(Some(toml::from_str(&content)?))
 }
 
 /// Gets package information from Cargo.toml
 async fn get_package_info_internal(repo_path: &Path) -> Option<PackageInfo> {
-    let cargo = get_manifest(repo_path).await?;
+    let cargo = get_manifest(repo_path).await.ok().flatten()?;
 
     Some(PackageInfo {
         manager_name: "cargo".to_string(),

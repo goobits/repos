@@ -112,6 +112,8 @@ declared but uninitialized submodules remain visible outside checkout discovery.
 The standalone `repos fetch` command uses the common Git concurrency limit,
 updates every configured remote, and never changes a local branch or worktree.
 Secret scanning is limited to one repository and hygiene scanning to three.
+Publish discovery and manifest inspection use a separate eight-repository cap so
+large fleets do not create unbounded GitHub CLI or filesystem work.
 
 ## Safety Boundaries
 
@@ -120,7 +122,9 @@ Secret scanning is limited to one repository and hygiene scanning to three.
 - Pull uses fast-forward-only behavior unless the caller requests rebase.
 - Missing or inaccessible remotes are failures, not clean/synced results.
 - `repos doctor` probes every configured remote with `git ls-remote` and exits
-  nonzero when it finds blockers.
+  nonzero when it finds blockers. It batches raw configured URL inspection once
+  per repository, then checks effective fetch and push URLs separately so Git
+  rewrite rules and transport policy remain visible.
 - Audit scanners distinguish a clean scan from an inspection failure.
 - History-rewriting audit fixes require a clean repository and, when a remote
   exists, a reachable configured upstream that is not ahead of local `HEAD`.
@@ -157,7 +161,9 @@ commit, so divergent local commits stay checked out for manual review.
 `commands::publish::planner` discovers package managers, applies visibility and
 exact repository-name filters, and blocks unsafe dirty or uninspectable
 repositories. A real publish also requires the release commit to match its
-upstream after fetch. `executor` derives local registry dependencies from
+upstream after fetch. Each built-in adapter parses its static manifest once;
+malformed manifests and dynamic `setup.py` metadata fail closed. `executor`
+derives local registry dependencies from
 manifests, rejects duplicate identities/cycles before mutation, and publishes
 dependency waves in order. Tags are created or pushed only when they resolve to
 the planned release commit.

@@ -11,6 +11,7 @@ pub mod cargo;
 pub mod npm;
 pub mod pypi;
 
+use anyhow::Result;
 use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
@@ -36,6 +37,22 @@ pub trait PackageManager: Send + Sync {
     /// Returns registry package names that must be available before this package.
     async fn dependencies(&self, path: &Path) -> Vec<String>;
 
+    /// Reads and validates publish metadata. Built-in managers override this
+    /// to parse their manifest exactly once.
+    async fn inspect_manifest(&self, path: &Path) -> Result<Option<PackageManifest>> {
+        if !self.detect(path).await {
+            return Ok(None);
+        }
+        let info = self
+            .get_info(path)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("package manifest has no usable name or version"))?;
+        Ok(Some(PackageManifest {
+            info,
+            dependencies: self.dependencies(path).await,
+        }))
+    }
+
     /// Publishes the package to its respective registry.
     ///
     /// Returns `(success, message)`.
@@ -52,6 +69,12 @@ pub struct PackageInfo {
     pub name: String,
     /// The version of the package.
     pub version: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct PackageManifest {
+    pub info: PackageInfo,
+    pub dependencies: Vec<String>,
 }
 
 /// Returns a list of all supported package managers
@@ -159,5 +182,33 @@ mod tests {
 
         let manager = detect_manager(temp_dir.path()).await;
         assert!(manager.is_none());
+    }
+
+    #[tokio::test]
+    async fn malformed_manifests_are_reported_instead_of_silently_ignored() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory");
+        std::fs::write(temp_dir.path().join("package.json"), "{")
+            .expect("write malformed manifest");
+        let manager = detect_manager(temp_dir.path())
+            .await
+            .expect("npm manager detected");
+
+        assert!(manager.inspect_manifest(temp_dir.path()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn dynamic_setup_metadata_fails_closed() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory");
+        std::fs::write(temp_dir.path().join("setup.py"), "setup(name='dynamic')")
+            .expect("write setup.py");
+        let manager = detect_manager(temp_dir.path())
+            .await
+            .expect("python manager detected");
+
+        let error = manager
+            .inspect_manifest(temp_dir.path())
+            .await
+            .expect_err("dynamic setup.py must not invent metadata");
+        assert!(error.to_string().contains("cannot be inspected safely"));
     }
 }

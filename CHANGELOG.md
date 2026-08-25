@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
+- Publish planning now limits repository inspection fanout to eight, matches GitHub by its normalized remote host, and parses each package manifest once. Malformed/static-uninspectable manifests fail explicitly instead of producing placeholder metadata.
+- Doctor reads configured fetch/push URLs in one byte-safe Git config query per repository while retaining separate effective-URL policy checks. Config synchronization reads effective user name/email together and reports malformed or failed inspection.
 - Audit history scanning now streams one `rev-list` process through one `cat-file` process while retaining the exact largest-file results. TruffleHog JSON is parsed one finding at a time and raw secret output is no longer buffered for an entire repository.
 - Push/pull analysis now reads branch, worktree, upstream, and both ancestry counts from porcelain-v2 repository snapshots around fetch. Status, doctor, and save reuse those typed snapshots, and active pushes reuse the already selected remote.
 - Fleet topology now resolves nearest parents with an immutable path index, batches gitlink inspection once per relevant parent, and is reused across both phases of `repos sync` and its final nested report.

@@ -2,7 +2,7 @@ use crate::git::{
     fetch_and_analyze, get_repo_visibility, has_uncommitted_changes, RepoVisibility, Status,
 };
 use crate::package::{detect_manager, PackageManager};
-use futures::stream::{FuturesUnordered, StreamExt};
+use futures::stream::{self, StreamExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -31,6 +31,8 @@ pub struct PlannerOptions {
     pub allow_dirty: bool,
     pub dry_run: bool,
 }
+
+const PUBLISH_INSPECTION_CONCURRENCY: usize = 8;
 
 fn is_targeted(name: &str, targets: &[String]) -> bool {
     targets.iter().any(|target| name == target)
@@ -61,14 +63,15 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
 
     // Detect visibility and package type first so repositories excluded by the
     // command's filter never perform release-network preflights.
-    let detection_futures: FuturesUnordered<_> = filtered_repos
-        .into_iter()
+    let detection_results = stream::iter(filtered_repos)
         .map(|(name, path)| async move {
             let (visibility, manager) =
                 tokio::join!(get_repo_visibility(&path), detect_manager(&path));
             (name, path, visibility, manager)
         })
-        .collect();
+        .buffer_unordered(PUBLISH_INSPECTION_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
 
     let mut plan = PublishPlan {
         packages: Vec::new(),
@@ -79,7 +82,7 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
     };
     let mut candidates = Vec::new();
 
-    for (name, path, visibility, manager) in detection_futures.collect::<Vec<_>>().await {
+    for (name, path, visibility, manager) in detection_results {
         if visibility == RepoVisibility::Unknown {
             plan.unknown_count += 1;
         }
@@ -92,15 +95,13 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
         }
     }
 
-    let analysis_futures: FuturesUnordered<_> = candidates
-        .into_iter()
+    let analysis_results = stream::iter(candidates)
         .map(|(name, path, manager)| {
             let allow_dirty = options.allow_dirty;
             let dry_run = options.dry_run;
             async move {
-                let (info, dependencies, dirty_result, release_result) = tokio::join!(
-                    manager.get_info(&path),
-                    manager.dependencies(&path),
+                let (manifest_result, dirty_result, release_result) = tokio::join!(
+                    manager.inspect_manifest(&path),
                     async {
                         if !allow_dirty && !dry_run {
                             has_uncommitted_changes(&path).await
@@ -120,18 +121,31 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
                     name,
                     path,
                     manager,
-                    info,
-                    dependencies,
+                    manifest_result,
                     dirty_result,
                     release_result,
                 )
             }
         })
-        .collect();
+        .buffer_unordered(PUBLISH_INSPECTION_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
 
-    for (name, path, manager, info, dependencies, dirty_result, release_result) in
-        analysis_futures.collect::<Vec<_>>().await
-    {
+    for (name, path, manager, manifest_result, dirty_result, release_result) in analysis_results {
+        let manifest = match manifest_result {
+            Ok(Some(manifest)) => manifest,
+            Ok(None) => {
+                plan.inspection_errors.push((
+                    name,
+                    "package manifest is missing a usable name or version".to_string(),
+                ));
+                continue;
+            }
+            Err(error) => {
+                plan.inspection_errors.push((name, error.to_string()));
+                continue;
+            }
+        };
         let is_dirty = match dirty_result {
             Ok(is_dirty) => is_dirty,
             Err(error) => {
@@ -146,18 +160,11 @@ pub async fn plan_publish(repos: Vec<(String, PathBuf)>, options: PlannerOptions
             plan.inspection_errors.push((name, error.to_string()));
             continue;
         }
-        let Some(info) = info else {
-            plan.inspection_errors.push((
-                name,
-                "package manifest is missing a usable name or version".to_string(),
-            ));
-            continue;
-        };
         plan.packages.push(PackageToPublish {
             name,
-            package_name: info.name,
-            version: info.version,
-            dependencies,
+            package_name: manifest.info.name,
+            version: manifest.info.version,
+            dependencies: manifest.dependencies,
             path,
             manager,
         });

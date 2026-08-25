@@ -85,6 +85,7 @@ graph TD
 - Checks visibility via `gh` CLI (GitHub only; unknown visibility is treated as private)
 - Uses existing credentials (`~/.npmrc`, `~/.cargo/credentials.toml`, `~/.pypirc`)
 - Reads local manifest dependencies and publishes dependency waves in order
+- Parses each static manifest once; malformed manifests and dynamic-only `setup.py` metadata are reported as inspection failures
 - Rejects duplicate package identities and dependency cycles before publishing
 - Creates or pushes matching git tags after a successful or already-published registry result (if `--tag`)
 - Processes up to 8 independent packages concurrently

@@ -5,7 +5,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
-use super::operations::{get_git_config, set_git_config};
+use super::operations::set_git_config;
 use super::runner::run_git_raw;
 use super::status::Status;
 
@@ -68,9 +68,7 @@ pub struct ConfigArgs {
 
 /// Gets the current user config (name and email) from a repository
 pub async fn get_current_user_config(path: &Path) -> Result<(Option<String>, Option<String>)> {
-    let name = get_git_config(path, "user.name").await?;
-    let email = get_git_config(path, "user.email").await?;
-    Ok((name, email))
+    get_user_config(path, false).await
 }
 
 /// Gets the global user config (name and email)
@@ -78,32 +76,65 @@ pub async fn get_global_user_config() -> Result<(Option<String>, Option<String>)
     // Use a temporary directory for global config access
     let temp_dir = std::env::temp_dir();
 
-    let name = get_global_git_config(&temp_dir, "user.name").await?;
-    let email = get_global_git_config(&temp_dir, "user.email").await?;
-    Ok((name, email))
+    get_user_config(&temp_dir, true).await
 }
 
-async fn get_global_git_config(path: &Path, key: &str) -> Result<Option<String>> {
-    let output = run_git_raw(path, &["config", "--global", "--get", key]).await?;
+async fn get_user_config(path: &Path, global: bool) -> Result<(Option<String>, Option<String>)> {
+    let args = if global {
+        vec![
+            "config",
+            "--global",
+            "--null",
+            "--get-regexp",
+            r"^(user\.name|user\.email)$",
+        ]
+    } else {
+        vec![
+            "config",
+            "--null",
+            "--get-regexp",
+            r"^(user\.name|user\.email)$",
+        ]
+    };
+    let output = run_git_raw(path, &args).await?;
     if output.success() {
-        let value = output.stdout_text();
-        return Ok((!value.is_empty()).then_some(value));
+        return parse_user_config(&output.stdout);
     }
     if output.exit_code == Some(1) && output.stderr.is_empty() {
-        return Ok(None);
+        return Ok((None, None));
     }
     let stderr = output.stderr_text();
     anyhow::bail!(
         "{}",
         if stderr.is_empty() {
             format!(
-                "global git config failed with exit code {:?}",
+                "git config inspection failed with exit code {:?}",
                 output.exit_code
             )
         } else {
             stderr
         }
     )
+}
+
+fn parse_user_config(output: &[u8]) -> Result<(Option<String>, Option<String>)> {
+    let mut name = None;
+    let mut email = None;
+    for record in output.split(|byte| *byte == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        let record = std::str::from_utf8(record)?;
+        let (key, value) = record
+            .split_once('\n')
+            .ok_or_else(|| anyhow::anyhow!("git config returned a malformed user record"))?;
+        if key.eq_ignore_ascii_case("user.name") {
+            name = Some(value.to_string());
+        } else if key.eq_ignore_ascii_case("user.email") {
+            email = Some(value.to_string());
+        }
+    }
+    Ok((name, email))
 }
 
 /// Validates user config values according to basic requirements
@@ -265,4 +296,31 @@ pub fn is_valid_email(email: &str) -> bool {
 #[allow(dead_code)]
 pub fn is_valid_name(name: &str) -> bool {
     !name.trim().is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_user_config;
+
+    #[test]
+    fn user_config_records_are_parsed_in_one_batch() {
+        let config = parse_user_config(b"user.name\nMiko Meow\0user.email\nmiko@example.com\0")
+            .expect("valid config records");
+
+        assert_eq!(config.0.as_deref(), Some("Miko Meow"));
+        assert_eq!(config.1.as_deref(), Some("miko@example.com"));
+    }
+
+    #[test]
+    fn later_effective_values_win() {
+        let config = parse_user_config(b"user.name\nGlobal\0user.name\nLocal\0")
+            .expect("valid config records");
+
+        assert_eq!(config.0.as_deref(), Some("Local"));
+    }
+
+    #[test]
+    fn malformed_user_config_fails_closed() {
+        assert!(parse_user_config(b"user.name-without-value\0").is_err());
+    }
 }

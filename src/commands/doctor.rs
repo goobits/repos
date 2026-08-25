@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use futures::stream::{FuturesUnordered, StreamExt};
+use std::collections::HashMap;
 
 use crate::core::{
     acquire_semaphore_permit, clean_error_message, create_processing_context, init_command,
@@ -13,6 +14,7 @@ use crate::git::remote::{
     context_from_url, inspect_remote, policy_violation, RemoteContext, RemoteDirection,
     RemotePolicyViolation, RemoteTransport,
 };
+use crate::git::runner::run_git_raw;
 use crate::git::worktree::{inspect_repository_state, HeadState};
 use crate::utils::compare_repository_locations;
 
@@ -203,6 +205,23 @@ struct DirectionInspection {
     blocked: bool,
 }
 
+#[derive(Debug, Default)]
+struct ConfiguredRemoteUrls {
+    fetch: HashMap<String, Vec<String>>,
+    push: HashMap<String, Vec<String>>,
+}
+
+impl ConfiguredRemoteUrls {
+    fn urls(&self, remote: &str, direction: RemoteDirection) -> &[String] {
+        let urls = if direction == RemoteDirection::Push {
+            &self.push
+        } else {
+            &self.fetch
+        };
+        urls.get(remote).map_or(&[], Vec::as_slice)
+    }
+}
+
 /// Diagnose common blockers without mutating repositories.
 pub async fn handle_doctor_command() -> Result<()> {
     set_terminal_title("🩺 repos doctor");
@@ -350,8 +369,33 @@ async fn diagnose_repo(repository: &str, path: &std::path::Path) -> RepositoryDi
         }
     };
 
+    let configured_urls = if remotes.is_empty() {
+        None
+    } else {
+        match inspect_configured_remote_urls(path).await {
+            Ok(urls) => Some(urls),
+            Err(error) => {
+                diagnosis.blockers.push(DoctorFinding::new(
+                    format!(
+                        "configured remote URL inspection failed: {}",
+                        clean_error_message(&error.to_string())
+                    ),
+                    format!("git -C {} remote -v", shell_quote(&display_path)),
+                ));
+                None
+            }
+        }
+    };
+
     for remote in &remotes {
-        diagnose_remote(path, &display_path, remote, &mut diagnosis).await;
+        diagnose_remote(
+            path,
+            &display_path,
+            remote,
+            configured_urls.as_ref(),
+            &mut diagnosis,
+        )
+        .await;
     }
 
     if !remotes.is_empty() {
@@ -391,11 +435,16 @@ async fn diagnose_remote(
     path: &std::path::Path,
     display_path: &str,
     remote: &str,
+    configured_urls: Option<&ConfiguredRemoteUrls>,
     diagnosis: &mut RepositoryDiagnosis,
 ) {
-    let fetch_urls = configured_urls(path, remote, RemoteDirection::Fetch).await;
-    let push_urls = configured_urls(path, remote, RemoteDirection::Push).await;
-    let explicit_push = push_urls.as_ref().is_ok_and(|urls| !urls.is_empty());
+    let fetch_urls = configured_urls
+        .map(|urls| urls.urls(remote, RemoteDirection::Fetch))
+        .unwrap_or_default();
+    let push_urls = configured_urls
+        .map(|urls| urls.urls(remote, RemoteDirection::Push))
+        .unwrap_or_default();
+    let explicit_push = !push_urls.is_empty();
 
     let fetch = inspect_direction(
         path,
@@ -409,60 +458,44 @@ async fn diagnose_remote(
         inspect_direction(path, display_path, remote, RemoteDirection::Push, diagnosis).await;
 
     let mut fetch_advisory = false;
-    if let Ok(urls) = fetch_urls {
-        if !fetch.blocked {
-            if let Some(url) = urls
-                .iter()
-                .find(|url| RemoteTransport::from_url(url).is_http())
-            {
-                let context = context_from_url(remote, RemoteDirection::Fetch, url);
-                let scope = if explicit_push {
-                    "fetch"
-                } else {
-                    "fetch and inherited push"
-                };
-                diagnosis.advisories.push(http_advisory(
-                    display_path,
-                    context,
-                    scope,
-                    fetch
-                        .contexts
-                        .iter()
-                        .any(|context| context.transport.is_http()),
-                ));
-                fetch_advisory = true;
-            }
+    if !fetch.blocked {
+        if let Some(url) = fetch_urls
+            .iter()
+            .find(|url| RemoteTransport::from_url(url).is_http())
+        {
+            let context = context_from_url(remote, RemoteDirection::Fetch, url);
+            let scope = if explicit_push {
+                "fetch"
+            } else {
+                "fetch and inherited push"
+            };
+            diagnosis.advisories.push(http_advisory(
+                display_path,
+                context,
+                scope,
+                fetch
+                    .contexts
+                    .iter()
+                    .any(|context| context.transport.is_http()),
+            ));
+            fetch_advisory = true;
         }
-    } else {
-        diagnosis.blockers.push(config_inspection_failure(
-            display_path,
-            remote,
-            RemoteDirection::Fetch,
-        ));
     }
 
     let mut push_advisory = fetch_advisory && !explicit_push;
-    if let Ok(urls) = push_urls {
-        if !push.blocked {
-            if let Some(url) = urls
-                .iter()
-                .find(|url| RemoteTransport::from_url(url).is_http())
-            {
-                diagnosis.advisories.push(http_advisory(
-                    display_path,
-                    context_from_url(remote, RemoteDirection::Push, url),
-                    "push",
-                    false,
-                ));
-                push_advisory = true;
-            }
+    if !push.blocked {
+        if let Some(url) = push_urls
+            .iter()
+            .find(|url| RemoteTransport::from_url(url).is_http())
+        {
+            diagnosis.advisories.push(http_advisory(
+                display_path,
+                context_from_url(remote, RemoteDirection::Push, url),
+                "push",
+                false,
+            ));
+            push_advisory = true;
         }
-    } else {
-        diagnosis.blockers.push(config_inspection_failure(
-            display_path,
-            remote,
-            RemoteDirection::Push,
-        ));
     }
 
     let effective_fetch_http = fetch
@@ -574,36 +607,62 @@ async fn inspect_direction(
     }
 }
 
-async fn configured_urls(
-    path: &std::path::Path,
-    remote: &str,
-    direction: RemoteDirection,
-) -> std::result::Result<Vec<String>, ()> {
-    let suffix = if direction == RemoteDirection::Push {
-        "pushurl"
-    } else {
-        "url"
-    };
-    let key = format!("remote.{remote}.{suffix}");
-    match run_git(path, &["config", "--get-all", &key]).await {
-        Ok((true, urls, _)) => Ok(urls.lines().map(str::to_string).collect()),
-        Ok((false, _, stderr)) if stderr.trim().is_empty() => Ok(Vec::new()),
-        Ok((false, _, _)) | Err(_) => Err(()),
+async fn inspect_configured_remote_urls(path: &std::path::Path) -> Result<ConfiguredRemoteUrls> {
+    let output = run_git_raw(
+        path,
+        &[
+            "config",
+            "--null",
+            "--get-regexp",
+            r"^remote\..*\.(url|pushurl)$",
+        ],
+    )
+    .await?;
+    if !output.success() {
+        if output.exit_code == Some(1) && output.stderr.is_empty() {
+            return Ok(ConfiguredRemoteUrls::default());
+        }
+        let stderr = output.stderr_text();
+        anyhow::bail!(
+            "{}",
+            if stderr.is_empty() {
+                format!("git config failed with exit code {:?}", output.exit_code)
+            } else {
+                stderr
+            }
+        );
     }
+
+    parse_configured_remote_urls(&output.stdout)
 }
 
-fn config_inspection_failure(
-    display_path: &str,
-    remote: &str,
-    direction: RemoteDirection,
-) -> DoctorFinding {
-    DoctorFinding::new(
-        format!(
-            "{remote} configured {} URL inspection failed",
-            direction.label()
-        ),
-        remote_get_url_action(display_path, remote, direction),
-    )
+fn parse_configured_remote_urls(output: &[u8]) -> Result<ConfiguredRemoteUrls> {
+    let mut urls = ConfiguredRemoteUrls::default();
+    for record in output.split(|byte| *byte == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        let record = std::str::from_utf8(record)?;
+        let (key, value) = record
+            .split_once('\n')
+            .ok_or_else(|| anyhow::anyhow!("git config returned a malformed remote URL record"))?;
+        let Some(key) = key.strip_prefix("remote.") else {
+            continue;
+        };
+        let Some((remote, suffix)) = key.rsplit_once('.') else {
+            continue;
+        };
+        let target = match suffix {
+            "url" => &mut urls.fetch,
+            "pushurl" => &mut urls.push,
+            _ => continue,
+        };
+        target
+            .entry(remote.to_string())
+            .or_default()
+            .push(value.to_string());
+    }
+    Ok(urls)
 }
 
 fn remote_get_url_action(display_path: &str, remote: &str, direction: RemoteDirection) -> String {
@@ -749,5 +808,33 @@ mod tests {
         assert!(output.contains("▌ Advisories"));
         assert!(output.contains("path: ./alpha"));
         assert!(!output.contains("path: ./healthy"));
+    }
+
+    #[test]
+    fn configured_remote_urls_are_parsed_in_one_batch() {
+        let urls = parse_configured_remote_urls(
+            b"remote.origin.url\ngit@github.com:team/repo.git\0\
+              remote.origin.pushurl\ngit@github.com:team/write.git\0\
+              remote.backup.url\nhttps://github.com/team/repo.git\0",
+        )
+        .expect("valid config records");
+
+        assert_eq!(
+            urls.urls("origin", RemoteDirection::Fetch),
+            ["git@github.com:team/repo.git"]
+        );
+        assert_eq!(
+            urls.urls("origin", RemoteDirection::Push),
+            ["git@github.com:team/write.git"]
+        );
+        assert_eq!(
+            urls.urls("backup", RemoteDirection::Fetch),
+            ["https://github.com/team/repo.git"]
+        );
+    }
+
+    #[test]
+    fn malformed_configured_remote_urls_fail_closed() {
+        assert!(parse_configured_remote_urls(b"remote.origin.url-without-value\0").is_err());
     }
 }

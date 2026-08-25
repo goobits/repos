@@ -1537,8 +1537,7 @@ async fn get_repo_visibility_uncached(path: &Path) -> RepoVisibility {
         _ => return RepoVisibility::Unknown,
     };
 
-    // Check if it's a GitHub URL
-    if !remote_url.contains("github.com") {
+    if !super::remote::is_github_remote_url(&remote_url) {
         return RepoVisibility::Unknown;
     }
 
