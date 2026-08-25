@@ -85,7 +85,6 @@ pub const TIMEOUT_SECONDS_DISPLAY: u64 = 180;
 
 // Processing limits and chunk sizes
 #[doc(hidden)] // Internal processing detail
-pub const GIT_OBJECTS_CHUNK_SIZE: usize = 100;
 #[doc(hidden)] // Internal display limit
 pub const LARGE_FILES_DISPLAY_LIMIT: usize = 10;
 

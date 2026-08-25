@@ -2,9 +2,11 @@
 
 use super::report::{HygieneStatus, HygieneViolation, ViolationType};
 use super::rules::{LARGE_FILE_THRESHOLD, UNIVERSAL_BAD_PATTERNS};
-use crate::core::config::{GIT_OBJECTS_CHUNK_SIZE, LARGE_FILES_DISPLAY_LIMIT};
+use crate::core::config::LARGE_FILES_DISPLAY_LIMIT;
 use anyhow::Result;
 use std::path::Path;
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 /// Checks for gitignore violations using git ls-files
@@ -93,71 +95,101 @@ async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolati
 
 /// Checks for large files in git history
 async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
-    let output = Command::new("git")
+    let mut rev_list = Command::new("git")
         .args(["rev-list", "--objects", "--all"])
         .current_dir(repo_path)
-        .output()
-        .await?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let mut rev_list_stdout = rev_list
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("git history listing stdout was unavailable"))?;
+    let mut rev_list_stderr = rev_list
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("git history listing stderr was unavailable"))?;
 
-    if !output.status.success() {
+    let mut cat_file = Command::new("git")
+        .args(["cat-file", "--batch-check=%(objectsize) %(rest)"])
+        .current_dir(repo_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let cat_file_stdout = cat_file
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("git object inspection stdout was unavailable"))?;
+    let mut cat_file_stdin = cat_file
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("git object inspection stdin was unavailable"))?;
+    let mut cat_file_stderr = cat_file
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("git object inspection stderr was unavailable"))?;
+
+    let rev_stderr_task = tokio::spawn(async move {
+        let mut stderr = Vec::new();
+        rev_list_stderr
+            .read_to_end(&mut stderr)
+            .await
+            .map(|_| stderr)
+    });
+    let object_pipe_task = tokio::spawn(async move {
+        tokio::io::copy(&mut rev_list_stdout, &mut cat_file_stdin).await?;
+        cat_file_stdin.shutdown().await
+    });
+    let cat_stderr_task = tokio::spawn(async move {
+        let mut stderr = Vec::new();
+        cat_file_stderr
+            .read_to_end(&mut stderr)
+            .await
+            .map(|_| stderr)
+    });
+
+    let mut violations = Vec::new();
+    let mut lines = BufReader::new(cat_file_stdout).lines();
+    while let Some(line) = lines.next_line().await? {
+        let Some((size, file_path)) = line.split_once(' ') else {
+            continue;
+        };
+        let Ok(size) = size.parse::<u64>() else {
+            continue;
+        };
+        if size > LARGE_FILE_THRESHOLD && !file_path.is_empty() {
+            violations.push(HygieneViolation {
+                file_path: file_path.to_string(),
+                violation_type: ViolationType::LargeFile,
+                size_bytes: Some(size),
+            });
+            violations.sort_by_key(|violation| {
+                std::cmp::Reverse(violation.size_bytes.unwrap_or_default())
+            });
+            violations.truncate(LARGE_FILES_DISPLAY_LIMIT);
+        }
+    }
+
+    let cat_status = cat_file.wait().await?;
+    let rev_status = rev_list.wait().await?;
+    object_pipe_task.await??;
+    let rev_stderr = rev_stderr_task.await??;
+    let cat_stderr = cat_stderr_task.await??;
+    if !rev_status.success() {
         anyhow::bail!(
             "git history listing failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            String::from_utf8_lossy(&rev_stderr).trim()
         );
     }
-
-    let objects_output = String::from_utf8_lossy(&output.stdout);
-    let mut violations = Vec::new();
-
-    // Process in batches to avoid command line length limits
-    let objects: Vec<&str> = objects_output.lines().collect();
-    for chunk in objects.chunks(GIT_OBJECTS_CHUNK_SIZE) {
-        let batch_input = chunk.join("\n");
-
-        let cat_file_output = Command::new("git")
-            .args(["cat-file", "--batch-check=%(objectsize) %(rest)"])
-            .current_dir(repo_path)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-
-        let mut child = cat_file_output;
-        if let Some(stdin) = child.stdin.as_mut() {
-            use tokio::io::AsyncWriteExt;
-            stdin.write_all(batch_input.as_bytes()).await?;
-            stdin.shutdown().await?;
-        }
-
-        let output = child.wait_with_output().await?;
-        if !output.status.success() {
-            anyhow::bail!(
-                "git object inspection failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        for line in stdout.lines() {
-            let Some((size, file_path)) = line.split_once(' ') else {
-                continue;
-            };
-            let Ok(size) = size.parse::<u64>() else {
-                continue;
-            };
-            if size > LARGE_FILE_THRESHOLD && !file_path.is_empty() {
-                violations.push(HygieneViolation {
-                    file_path: file_path.to_string(),
-                    violation_type: ViolationType::LargeFile,
-                    size_bytes: Some(size),
-                });
-            }
-        }
+    if !cat_status.success() {
+        anyhow::bail!(
+            "git object inspection failed: {}",
+            String::from_utf8_lossy(&cat_stderr).trim()
+        );
     }
-
-    // Sort by size (largest first) and limit to top 10
-    violations.sort_by_key(|violation| std::cmp::Reverse(violation.size_bytes.unwrap_or(0)));
-    violations.truncate(LARGE_FILES_DISPLAY_LIMIT);
 
     Ok(violations)
 }

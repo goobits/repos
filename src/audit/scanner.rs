@@ -10,8 +10,10 @@ use anyhow::{anyhow, Result};
 use serde_json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 use super::hygiene::{process_hygiene_repositories, HygieneStatistics};
@@ -457,53 +459,72 @@ async fn scan_repository_secrets(
         args.push("--results=unknown");
     }
 
-    let output = Command::new("trufflehog")
+    let mut child = Command::new("trufflehog")
         .args(&args)
         .current_dir(repo_path)
-        .output()
-        .await?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("TruffleHog stdout was unavailable"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("TruffleHog stderr was unavailable"))?;
+    let stderr_task = tokio::spawn(async move {
+        let mut output = Vec::new();
+        stderr.read_to_end(&mut output).await.map(|_| output)
+    });
 
-    if !output.status.success() {
+    let mut findings = Vec::new();
+    let mut lines = BufReader::new(stdout).split(b'\n');
+    while let Some(line) = lines.next_segment().await? {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        match parse_truffle_finding(&line) {
+            Ok(finding) => findings.push(finding),
+            Err(error) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = stderr_task.await;
+                return Err(error);
+            }
+        }
+    }
+
+    let status = child.wait().await?;
+    let stderr = stderr_task.await??;
+    if !status.success() {
         return Err(anyhow!(
             "TruffleHog failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            String::from_utf8_lossy(&stderr).trim()
         ));
     }
 
-    parse_truffle_findings(&output.stdout)
+    Ok(findings)
 }
 
-fn parse_truffle_findings(output: &[u8]) -> Result<Vec<SecretFinding>> {
-    let stdout = String::from_utf8_lossy(output);
-    let mut findings = Vec::new();
-
-    for line in stdout.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let json = serde_json::from_str::<serde_json::Value>(line)
-            .map_err(|e| anyhow!("invalid TruffleHog JSON output: {e}"))?;
-        let detector_name = json["DetectorName"]
-            .as_str()
-            .unwrap_or("Unknown")
-            .to_string();
-
-        let verified = json["Verified"].as_bool().unwrap_or(false);
-
-        let file_path = json["SourceMetadata"]["Data"]["Git"]["file"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
-
-        findings.push(SecretFinding {
-            detector_name,
-            verified,
-            file_path,
-        });
-    }
-
-    Ok(findings)
+fn parse_truffle_finding(line: &[u8]) -> Result<SecretFinding> {
+    let json = serde_json::from_slice::<serde_json::Value>(line)
+        .map_err(|error| anyhow!("invalid TruffleHog JSON output: {error}"))?;
+    let detector_name = json["DetectorName"]
+        .as_str()
+        .unwrap_or("Unknown")
+        .to_string();
+    let verified = json["Verified"].as_bool().unwrap_or(false);
+    let file_path = json["SourceMetadata"]["Data"]["Git"]["file"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+    Ok(SecretFinding {
+        detector_name,
+        verified,
+        file_path,
+    })
 }
 
 /// Check if `TruffleHog` is installed and accessible
@@ -675,11 +696,11 @@ async fn install_trufflehog_direct() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_truffle_findings;
+    use super::parse_truffle_finding;
 
     #[test]
     fn rejects_malformed_trufflehog_output() {
-        let result = parse_truffle_findings(b"not-json\n");
+        let result = parse_truffle_finding(b"not-json");
         assert!(result.is_err());
     }
 }

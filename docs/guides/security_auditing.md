@@ -2,6 +2,10 @@
 
 Comprehensive security scanning and repository hygiene checking with automated fixes.
 
+History objects and secret-scanner JSON are processed as bounded streams. The
+large-file check still examines every reachable object and retains the exact
+largest results; streaming changes memory use, not audit coverage.
+
 ## Table of Contents
 
 - [Overview](#overview)
