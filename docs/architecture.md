@@ -15,26 +15,33 @@ src/
 │   ├── sync/               Focused fetch, push, pull, and progress pipelines
 │   ├── save.rs             Stage, commit, and push workflow
 │   ├── staging.rs          Stage, unstage, commit, and status commands
-│   ├── staging/status.rs   Fleet status analysis and rendering
+│   ├── staging/            Single-repo mutations plus status inspection/rendering
 │   ├── config.rs           Git identity synchronization
 │   ├── doctor.rs           Read-only repository diagnostics
+│   ├── doctor/             Batched config inspection and doctor reporting
 │   ├── audit.rs            Audit command orchestration
 │   └── publish/            Publish planning and execution
 ├── core/                   Discovery, progress, concurrency, and statistics
 │   ├── report/sync.rs      Combined pull/push reporting
-│   └── stats/              Transfer reporting and safe text formatting
+│   └── stats/              Transfer state, reporting, and safe text formatting
 ├── git/                    Git command execution and result classification
-│   └── operations/         Pull, remote, LFS, visibility, and worktree operations
+│   └── operations/         Fetch/push/pull, remote, LFS, visibility, and worktree operations
 ├── audit/                  Secret and repository-hygiene scanners and fixes
-│   └── fixes/history.rs    History rewrite safety and secret removal
+│   ├── scanner/            Secret reports and checksum-verified tool installation
+│   └── fixes/              Gitignore updates, history safety, and secret removal
 ├── package/                Cargo, npm, and PyPI package adapters
 ├── subrepo/                Nested repository validation, drift, and sync
-│   └── status/             Concise formatting and detailed status rendering
+│   ├── status/             Concise formatting and detailed status rendering
+│   └── sync/               Git primitives and nested mutation reports
 └── utils/                  Filesystem and terminal helpers
 ```
 
 `src/main.rs` imports the library crate. It does not redeclare the library
 modules, so each module and unit test is compiled once.
+
+Production responsibilities are kept below 500 lines per source module. Larger
+physical files only exceed that boundary when they contain an inline
+`#[cfg(test)]` section, which is excluded from the production module size.
 
 ## Command Flow
 

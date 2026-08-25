@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Exact per-checkout nested inspection now runs through a bounded eight-worker pool and restores deterministic fleet order before reporting.
 - Automatic Git concurrency now scales as `min(CPU cores + 2, 32)` to bound subprocess/network pressure on large hosts; explicit `--jobs` remains an override and fetch multipliers use saturating arithmetic.
-- Oversized command, Git, audit, and reporting modules were decomposed into focused status, pull, remote, LFS, visibility, worktree, history-safety, formatting, and sync-report components. No production source module exceeds 800 lines.
+- Oversized command, Git, audit, nested-sync, and reporting modules were decomposed into focused orchestration, mutation, inspection, installation, and rendering components. No production responsibility exceeds 500 lines; larger physical files contain inline test modules only.
 - Transfer operations now carry exact commit/ref quantities into statistics instead of deriving totals from display text. The already thread-safe statistics collector is shared directly, removing the fleet-wide outer mutex from top-level commands.
 - Publish planning now limits repository inspection fanout to eight, matches GitHub by its normalized remote host, and parses each package manifest once. Malformed/static-uninspectable manifests fail explicitly instead of producing placeholder metadata.
 - Doctor reads configured fetch/push URLs in one byte-safe Git config query per repository while retaining separate effective-URL policy checks. Config synchronization reads effective user name/email together and reports malformed or failed inspection.

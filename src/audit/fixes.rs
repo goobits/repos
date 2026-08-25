@@ -5,20 +5,21 @@
 //! - Removing large files from Git history
 //! - Removing secrets from Git history
 
+mod gitignore;
 mod history;
 
+use gitignore::fix_gitignore_violations;
 use history::{check_filter_repo_installed, check_repository_safety, fix_secrets_in_history};
 
 use crate::core::{RepositoryOrder, RepositoryTopology};
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::process::Command;
 
-fn ensure_command_success(output: &std::process::Output, operation: &str) -> Result<()> {
+pub(super) fn ensure_command_success(output: &std::process::Output, operation: &str) -> Result<()> {
     if output.status.success() {
         Ok(())
     } else {
@@ -368,173 +369,6 @@ async fn confirm_fixes(options: &FixOptions) -> Result<bool> {
     io::stdin().read_line(&mut input)?;
 
     Ok(input.trim().to_lowercase() == "yes")
-}
-
-/// Fix .gitignore violations for a repository
-async fn fix_gitignore_violations(
-    repo_path: &str,
-    violations: &[HygieneViolation],
-    options: &FixOptions,
-) -> Result<String> {
-    let gitignore_violations: Vec<_> = violations
-        .iter()
-        .filter(|v| {
-            matches!(
-                v.violation_type,
-                ViolationType::GitignoreViolation | ViolationType::UniversalBadPattern
-            )
-        })
-        .collect();
-
-    if gitignore_violations.is_empty() {
-        return Ok(String::new());
-    }
-
-    if options.dry_run {
-        return Ok(format!(
-            "[DRY RUN] Would add {} entries to .gitignore",
-            gitignore_violations.len()
-        ));
-    }
-
-    // Group patterns intelligently
-    let patterns = group_gitignore_patterns(&gitignore_violations);
-
-    // Read existing .gitignore
-    let gitignore_path = Path::new(repo_path).join(".gitignore");
-    let existing_content = fs::read_to_string(&gitignore_path).unwrap_or_default();
-    let existing_patterns: HashSet<_> = existing_content
-        .lines()
-        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-        .collect();
-
-    // Add new patterns
-    let mut new_patterns = Vec::new();
-    for pattern in patterns {
-        if !existing_patterns.contains(pattern.as_str()) {
-            new_patterns.push(pattern);
-        }
-    }
-
-    if new_patterns.is_empty() {
-        return Ok("All patterns already in .gitignore".to_string());
-    }
-
-    // Append to .gitignore
-    let mut gitignore_content = existing_content;
-    if !gitignore_content.ends_with('\n') && !gitignore_content.is_empty() {
-        gitignore_content.push('\n');
-    }
-
-    gitignore_content.push_str("\n# Added by repos audit --fix-gitignore\n");
-    for pattern in &new_patterns {
-        gitignore_content.push_str(pattern);
-        gitignore_content.push('\n');
-    }
-
-    fs::write(&gitignore_path, gitignore_content)?;
-
-    // Untrack files if requested
-    let mut untracked_count = 0;
-    if options.untrack_files {
-        for violation in gitignore_violations {
-            let result = Command::new("git")
-                .args(["rm", "--cached", "-r", &violation.file_path])
-                .current_dir(repo_path)
-                .output()
-                .await?;
-
-            ensure_command_success(&result, "git rm --cached")?;
-            untracked_count += 1;
-        }
-    }
-
-    // Create commit
-    let add_output = Command::new("git")
-        .args(["add", ".gitignore"])
-        .current_dir(repo_path)
-        .output()
-        .await?;
-    ensure_command_success(&add_output, "staging .gitignore")?;
-
-    let commit_message = if untracked_count > 0 {
-        format!(
-            "chore: Update .gitignore and untrack {} ignored files\n\nAdded {} patterns to .gitignore",
-            untracked_count,
-            new_patterns.len()
-        )
-    } else {
-        format!(
-            "chore: Update .gitignore\n\nAdded {} patterns to .gitignore",
-            new_patterns.len()
-        )
-    };
-
-    let commit_output = Command::new("git")
-        .args(["commit", "-m", &commit_message])
-        .current_dir(repo_path)
-        .output()
-        .await?;
-    ensure_command_success(&commit_output, "committing .gitignore fixes")?;
-
-    Ok(format!(
-        "Added {} patterns to .gitignore{}",
-        new_patterns.len(),
-        if untracked_count > 0 {
-            format!(", untracked {untracked_count} files")
-        } else {
-            String::new()
-        }
-    ))
-}
-
-/// Group gitignore patterns intelligently
-fn group_gitignore_patterns(violations: &[&HygieneViolation]) -> Vec<String> {
-    let mut patterns = HashMap::new();
-
-    for violation in violations {
-        let path = &violation.file_path;
-
-        // Extract common patterns
-        if path.contains("node_modules/") {
-            patterns.insert("node_modules/", true);
-        } else if path.contains("target/debug/") {
-            patterns.insert("target/debug/", true);
-        } else if path.contains("target/release/") {
-            patterns.insert("target/release/", true);
-        } else if path.contains("dist/") {
-            patterns.insert("dist/", true);
-        } else if path.contains("build/") {
-            patterns.insert("build/", true);
-        } else if path.contains("__pycache__/") {
-            patterns.insert("__pycache__/", true);
-        } else if path.contains(".venv/") {
-            patterns.insert(".venv/", true);
-        } else if path.ends_with(".log") {
-            patterns.insert("*.log", true);
-        } else if path.ends_with(".tmp") {
-            patterns.insert("*.tmp", true);
-        } else if path.ends_with(".cache") {
-            patterns.insert("*.cache", true);
-        } else if path == ".DS_Store" {
-            patterns.insert(".DS_Store", true);
-        } else if path == "Thumbs.db" {
-            patterns.insert("Thumbs.db", true);
-        } else if path == ".env" {
-            patterns.insert(".env", true);
-        } else if path.ends_with(".key") || path.ends_with(".pem") {
-            patterns.insert("*.key", true);
-            patterns.insert("*.pem", true);
-        } else {
-            // For specific files, add the exact path
-            patterns.insert(path.as_str(), false);
-        }
-    }
-
-    let mut result: Vec<String> = patterns.keys().map(|&k| k.to_string()).collect();
-
-    result.sort();
-    result
 }
 
 /// Fix large files in Git history using git filter-repo
