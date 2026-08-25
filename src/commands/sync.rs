@@ -29,7 +29,7 @@ const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[2m";
 
 pub(super) struct TransferRun {
-    pub(super) statistics: std::sync::Arc<std::sync::Mutex<crate::core::SyncStatistics>>,
+    pub(super) statistics: std::sync::Arc<crate::core::SyncStatistics>,
     pub(super) error_count: u64,
 }
 
@@ -204,19 +204,15 @@ pub async fn handle_sync_command(
     } else {
         format_nested_drift_work_items_with_topology(&repositories, &topology)
     };
-    let pull_stats = crate::core::acquire_stats_lock(&pull_run.statistics);
-    let push_stats = crate::core::acquire_stats_lock(&push_run.statistics);
     let report = generate_sync_report(
-        &pull_stats,
-        &push_stats,
+        &pull_run.statistics,
+        &push_run.statistics,
         start_time.elapsed(),
         repositories.len(),
         show_changes,
         drift_count,
         &drift_lines,
     );
-    drop(push_stats);
-    drop(pull_stats);
     print_final_report(&report);
     set_terminal_title_and_flush("✅ repos sync");
 

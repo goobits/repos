@@ -31,15 +31,11 @@ async fn process_fetch_repositories(
     context: crate::core::ProcessingContext,
     verbose: bool,
 ) -> TransferRun {
-    use crate::core::acquire_stats_lock;
     use crate::git::operations::fetch_remote_updates;
     use futures::stream::{FuturesUnordered, StreamExt};
 
     let statistics = std::sync::Arc::clone(&context.statistics);
-    let footer_message = statistics
-        .lock()
-        .unwrap()
-        .generate_fetch_live_summary(context.total_repos);
+    let footer_message = statistics.generate_fetch_live_summary(context.total_repos);
     let (repository_bars, footer, concise) = create_sync_progress(
         &context,
         verbose,
@@ -112,26 +108,13 @@ async fn process_fetch_repositories(
                 progress_bar.inc(1);
             }
 
-            let stats = acquire_stats_lock(&statistics);
-            stats.update_with_failure(
-                repository,
-                &path.to_string_lossy(),
-                &result.status,
-                &result.message,
-                false,
-                result.failure.as_ref(),
-            );
+            let stats = statistics.as_ref();
+            stats.update_operation(repository, &path.to_string_lossy(), &result);
             if verbose {
                 footer.set_message(stats.generate_fetch_summary(start_time.elapsed()));
             }
-            drop(stats);
             if !verbose {
-                footer.set_message(
-                    statistics
-                        .lock()
-                        .unwrap()
-                        .generate_fetch_live_summary(total_repositories),
-                );
+                footer.set_message(statistics.generate_fetch_live_summary(total_repositories));
             }
         });
     }
@@ -139,12 +122,11 @@ async fn process_fetch_repositories(
     while futures.next().await.is_some() {}
     finish_sync_progress(&footer, concise.as_ref());
 
-    let final_stats = acquire_stats_lock(&statistics);
+    let final_stats = statistics.as_ref();
     print_final_report(&final_stats.generate_fetch_report(start_time.elapsed()));
     let error_count = final_stats
         .error_repos
         .load(std::sync::atomic::Ordering::Relaxed);
-    drop(final_stats);
 
     TransferRun {
         statistics,

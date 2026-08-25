@@ -49,7 +49,6 @@ pub(super) async fn process_pull_repositories(
     render_report: bool,
     topology: Option<std::sync::Arc<TopologySnapshot>>,
 ) -> TransferRun {
-    use crate::core::acquire_stats_lock;
     use crate::core::config::FETCH_CONCURRENT_CAP;
     use crate::git::fetch_and_analyze_for_pull;
     use futures::stream::{FuturesUnordered, StreamExt};
@@ -59,8 +58,6 @@ pub(super) async fn process_pull_repositories(
     let statistics = std::sync::Arc::clone(&context.statistics);
     let footer_message = context
         .statistics
-        .lock()
-        .unwrap()
         .generate_pull_live_summary(context.total_repos);
     let (repository_bars, footer, concise) =
         create_sync_progress(&context, verbose, "🔽 Processing...", footer_message);
@@ -164,7 +161,7 @@ pub(super) async fn process_pull_repositories(
     } else {
         (0, Vec::new())
     };
-    let final_stats = acquire_stats_lock(&statistics);
+    let final_stats = statistics.as_ref();
     if render_report {
         let report = if drift_count == 0 && drift_lines.is_empty() {
             final_stats.generate_pull_report(context.start_time.elapsed(), show_changes)
@@ -181,7 +178,6 @@ pub(super) async fn process_pull_repositories(
     let error_count = final_stats
         .error_repos
         .load(std::sync::atomic::Ordering::Relaxed);
-    drop(final_stats);
     TransferRun {
         statistics,
         error_count,

@@ -5,7 +5,7 @@ use super::report::RepositoryOutcome;
 use crate::core::config::{
     ERROR_MESSAGE_MAX_LENGTH, ERROR_MESSAGE_TRUNCATE_LENGTH, TIMEOUT_SECONDS_DISPLAY,
 };
-use crate::git::failure::GitFailure;
+use crate::git::failure::{GitFailure, GitOperationResult};
 use crate::git::Status;
 use crate::utils::compare_repository_locations;
 use std::collections::HashMap;
@@ -156,6 +156,25 @@ impl SyncStatistics {
         message: &str,
         has_uncommitted: bool,
     ) {
+        self.update_with_transfer_count(
+            repo_name,
+            repo_path,
+            status,
+            message,
+            has_uncommitted,
+            None,
+        );
+    }
+
+    fn update_with_transfer_count(
+        &self,
+        repo_name: &str,
+        repo_path: &str,
+        status: &Status,
+        message: &str,
+        has_uncommitted: bool,
+        transfer_count: Option<u64>,
+    ) {
         if let Ok(mut outcomes) = self.operation_outcomes.lock() {
             outcomes.push(RepositoryOutcome {
                 repository: repo_name.to_string(),
@@ -172,7 +191,9 @@ impl SyncStatistics {
             Status::Pushed => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
                 self.pushed_repos.fetch_add(1, Ordering::Relaxed);
-                let commits = parse_commit_count(message).unwrap_or(0);
+                let commits = transfer_count
+                    .or_else(|| parse_commit_count(message))
+                    .unwrap_or(0);
                 if commits > 0 {
                     self.total_commits_pushed
                         .fetch_add(commits, Ordering::Relaxed);
@@ -186,7 +207,9 @@ impl SyncStatistics {
             Status::Pulled => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
                 self.pulled_repos.fetch_add(1, Ordering::Relaxed);
-                let commits = parse_commit_count(message).unwrap_or(0);
+                let commits = transfer_count
+                    .or_else(|| parse_commit_count(message))
+                    .unwrap_or(0);
                 if commits > 0 {
                     self.total_commits_pulled
                         .fetch_add(commits, Ordering::Relaxed);
@@ -200,7 +223,9 @@ impl SyncStatistics {
             Status::Fetched => {
                 self.synced_repos.fetch_add(1, Ordering::Relaxed);
                 self.fetched_repos.fetch_add(1, Ordering::Relaxed);
-                let refs = parse_commit_count(message).unwrap_or(0);
+                let refs = transfer_count
+                    .or_else(|| parse_commit_count(message))
+                    .unwrap_or(0);
                 if refs > 0 {
                     self.total_refs_fetched.fetch_add(refs, Ordering::Relaxed);
                 }
@@ -266,19 +291,24 @@ impl SyncStatistics {
         }
     }
 
-    /// Updates statistics and retains structured Git context for actionable reports.
-    pub(crate) fn update_with_failure(
+    /// Updates transfer statistics from typed operation data and retains
+    /// structured Git context for actionable reports.
+    pub(crate) fn update_operation(
         &self,
         repo_name: &str,
         repo_path: &str,
-        status: &Status,
-        message: &str,
-        has_uncommitted: bool,
-        failure: Option<&GitFailure>,
+        result: &GitOperationResult,
     ) {
-        self.update(repo_name, repo_path, status, message, has_uncommitted);
+        self.update_with_transfer_count(
+            repo_name,
+            repo_path,
+            &result.status,
+            &result.message,
+            result.has_uncommitted,
+            Some(result.transferred),
+        );
 
-        if let Some(failure) = failure {
+        if let Some(failure) = &result.failure {
             if let Ok(mut failures) = self.git_failures.lock() {
                 failures.insert(
                     (repo_name.to_string(), repo_path.to_string()),

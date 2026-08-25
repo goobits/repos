@@ -45,7 +45,7 @@ pub use crate::utils::{set_terminal_title, set_terminal_title_and_flush};
 
 // Internal helpers for command modules
 pub(crate) use super::progress::{
-    acquire_semaphore_permit, acquire_stats_lock, create_footer_progress_bar, create_progress_bar,
+    acquire_semaphore_permit, create_footer_progress_bar, create_progress_bar,
     create_separator_progress_bar, print_final_report,
 };
 pub(crate) use super::stats::{clean_error_message, format_relative_repo_path, truncate_text};

@@ -88,13 +88,13 @@ pub(super) fn record_semaphore_error(
     repository: &str,
     path: &std::path::Path,
     error: &tokio::sync::AcquireError,
-    statistics: &std::sync::Arc<std::sync::Mutex<crate::core::SyncStatistics>>,
+    statistics: &std::sync::Arc<crate::core::SyncStatistics>,
     repository_bar: Option<&indicatif::ProgressBar>,
     single_bar: Option<&indicatif::ProgressBar>,
 ) {
     eprintln!("Error: Failed to acquire {operation} permit for {repository}: {error}");
     let message = format!("semaphore error: {error}");
-    crate::core::acquire_stats_lock(statistics).update(
+    statistics.update(
         repository,
         &path.to_string_lossy(),
         &Status::Error,
@@ -145,7 +145,7 @@ pub(super) struct TransferResultContext<'a> {
     pub max_name_length: usize,
     pub repository_bar: Option<&'a indicatif::ProgressBar>,
     pub concise_bar: Option<&'a indicatif::ProgressBar>,
-    pub statistics: &'a std::sync::Arc<std::sync::Mutex<crate::core::SyncStatistics>>,
+    pub statistics: &'a std::sync::Arc<crate::core::SyncStatistics>,
     pub footer: &'a indicatif::ProgressBar,
     pub start_time: std::time::Instant,
     pub total_repositories: usize,
@@ -157,7 +157,6 @@ pub(super) fn record_transfer_result(
     elapsed: std::time::Duration,
     direction: TransferDirection,
 ) {
-    use crate::core::acquire_stats_lock;
     use crate::core::config::SLOW_REPO_THRESHOLD_SECS;
 
     let status = result.status;
@@ -189,15 +188,8 @@ pub(super) fn record_transfer_result(
         progress_bar.inc(1);
     }
 
-    let statistics = acquire_stats_lock(context.statistics);
-    statistics.update_with_failure(
-        context.repository,
-        &context.path.to_string_lossy(),
-        &status,
-        message,
-        result.has_uncommitted,
-        result.failure.as_ref(),
-    );
+    let statistics = context.statistics.as_ref();
+    statistics.update_operation(context.repository, &context.path.to_string_lossy(), &result);
     if context.verbose {
         let summary = match direction {
             TransferDirection::Push => {
@@ -209,16 +201,14 @@ pub(super) fn record_transfer_result(
         };
         context.footer.set_message(summary);
     }
-    drop(statistics);
     if !context.verbose {
-        let statistics = context.statistics.lock().unwrap();
         let summary = match direction {
-            TransferDirection::Push => {
-                statistics.generate_push_live_summary(context.total_repositories)
-            }
-            TransferDirection::Pull => {
-                statistics.generate_pull_live_summary(context.total_repositories)
-            }
+            TransferDirection::Push => context
+                .statistics
+                .generate_push_live_summary(context.total_repositories),
+            TransferDirection::Pull => context
+                .statistics
+                .generate_pull_live_summary(context.total_repositories),
         };
         context.footer.set_message(summary);
     }

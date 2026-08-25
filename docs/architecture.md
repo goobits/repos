@@ -96,6 +96,11 @@ fetch permit -> inspect state -> release fetch permit
 write permit -> push or pull -> record result -> release write permit
 ```
 
+Operation results carry structured transfer quantities alongside human-readable
+messages. Summaries consume those values directly. Atomic counters and focused
+collection locks make the statistics collector safe to share without a global
+outer mutex.
+
 Fetches may use up to twice the configured Git concurrency, capped at 24.
 Pipelines are grouped into topology waves. Commit, save, and push execute the
 deepest nested repositories first; pull executes parents first. Independent

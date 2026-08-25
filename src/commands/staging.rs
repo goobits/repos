@@ -344,7 +344,7 @@ async fn process_staging_repositories(
     pattern: String,
     is_staging: bool,
 ) -> Result<()> {
-    use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
+    use crate::core::{acquire_semaphore_permit, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
     let mut futures = FuturesUnordered::new();
@@ -414,9 +414,8 @@ async fn process_staging_repositories(
             progress_bar.finish();
 
             // Update statistics based on operation result
-            let stats_guard = acquire_stats_lock(&stats_clone);
             let repo_path_str = repo_path.to_string_lossy();
-            stats_guard.update(
+            stats_clone.update(
                 repo_name,
                 &repo_path_str,
                 &status,
@@ -425,7 +424,7 @@ async fn process_staging_repositories(
             );
 
             // Update the footer summary after each repository completes
-            let summary = stats_guard.generate_batch_live_summary(operation, total_repos);
+            let summary = stats_clone.generate_batch_live_summary(operation, total_repos);
             footer_clone.set_message(summary);
         };
 
@@ -438,7 +437,7 @@ async fn process_staging_repositories(
     // Finish the footer progress bar
     footer_pb.finish();
 
-    let final_stats = acquire_stats_lock(&context.statistics);
+    let final_stats = context.statistics.as_ref();
     println!(
         "\n{}\n",
         final_stats.generate_batch_report(operation, start_time.elapsed())
@@ -447,7 +446,6 @@ async fn process_staging_repositories(
     let error_count = final_stats
         .error_repos
         .load(std::sync::atomic::Ordering::Relaxed);
-    drop(final_stats);
     if error_count > 0 {
         anyhow::bail!("{error_count} repositories failed staging operations");
     }
@@ -887,7 +885,7 @@ async fn process_commit_repositories(
     message: String,
     include_empty: bool,
 ) -> Result<()> {
-    use crate::core::{acquire_semaphore_permit, acquire_stats_lock, create_progress_bar};
+    use crate::core::{acquire_semaphore_permit, create_progress_bar};
     use futures::stream::{FuturesUnordered, StreamExt};
 
     let operation = BatchOperation::Commit;
@@ -962,9 +960,8 @@ async fn process_commit_repositories(
                 progress_bar.finish();
 
                 // Update statistics based on operation result
-                let stats_guard = acquire_stats_lock(&stats_clone);
                 let repo_path_str = repo_path.to_string_lossy();
-                stats_guard.update(
+                stats_clone.update(
                     repo_name,
                     &repo_path_str,
                     &status,
@@ -973,7 +970,7 @@ async fn process_commit_repositories(
                 );
 
                 // Update the footer summary after each repository completes
-                let summary = stats_guard.generate_batch_live_summary(operation, total_repos);
+                let summary = stats_clone.generate_batch_live_summary(operation, total_repos);
                 footer_clone.set_message(summary);
                 (index, status)
             };
@@ -989,7 +986,7 @@ async fn process_commit_repositories(
     // Finish the footer progress bar
     footer_pb.finish();
 
-    let final_stats = acquire_stats_lock(&context.statistics);
+    let final_stats = context.statistics.as_ref();
     println!(
         "\n{}\n",
         final_stats.generate_batch_report(operation, start_time.elapsed())
@@ -998,7 +995,6 @@ async fn process_commit_repositories(
     let error_count = final_stats
         .error_repos
         .load(std::sync::atomic::Ordering::Relaxed);
-    drop(final_stats);
     if error_count > 0 {
         anyhow::bail!("{error_count} repositories failed to commit");
     }

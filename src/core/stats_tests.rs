@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use crate::core::{clean_error_message, SyncStatistics};
+    use crate::git::failure::GitOperationResult;
     use crate::git::Status;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
@@ -230,6 +231,29 @@ mod tests {
 
         stats.update("repo2", "/p2", &Status::Pushed, "10 commits pushed", false);
         assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 15);
+    }
+
+    #[test]
+    fn typed_transfer_count_wins_over_display_text() {
+        let stats = SyncStatistics::new();
+        let result = GitOperationResult::new(
+            Status::Pushed,
+            "999 misleading display commits pushed".to_string(),
+            false,
+        )
+        .with_transferred(4);
+
+        stats.update_operation("repo1", "/p1", &result);
+
+        assert_eq!(stats.total_commits_pushed.load(Ordering::Relaxed), 4);
+        assert_eq!(
+            stats
+                .pushed_repo_details
+                .lock()
+                .expect("pushed details")
+                .as_slice(),
+            &[("repo1".to_string(), "/p1".to_string(), 4)]
+        );
     }
 
     #[test]

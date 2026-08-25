@@ -24,7 +24,7 @@ pub struct ProcessingContext {
     /// Styled progress bar configuration
     pub progress_style: ProgressStyle,
     /// Thread-safe statistics tracking for operation results
-    pub statistics: Arc<Mutex<SyncStatistics>>,
+    pub statistics: Arc<SyncStatistics>,
     /// Semaphore for controlling concurrent operations
     pub semaphore: Arc<tokio::sync::Semaphore>,
     /// Maximum configured concurrency level
@@ -72,7 +72,7 @@ pub fn create_processing_context(
         .unwrap_or(0);
     let multi_progress = MultiProgress::new();
     let progress_style = create_progress_style()?;
-    let statistics = Arc::new(Mutex::new(SyncStatistics::new()));
+    let statistics = Arc::new(SyncStatistics::new());
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrent_limit));
 
     Ok(ProcessingContext {
@@ -148,10 +148,6 @@ pub async fn acquire_semaphore_permit(
         .acquire()
         .await
         .expect("Failed to acquire semaphore permit")
-}
-
-pub(crate) fn acquire_stats_lock<T>(stats: &'_ Arc<Mutex<T>>) -> std::sync::MutexGuard<'_, T> {
-    stats.lock().expect("Failed to acquire statistics lock")
 }
 
 /// Creates a separator progress bar for visual spacing between sections

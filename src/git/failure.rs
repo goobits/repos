@@ -177,6 +177,9 @@ pub(crate) struct GitOperationResult {
     pub(crate) status: Status,
     pub(crate) message: String,
     pub(crate) has_uncommitted: bool,
+    /// Exact commits or refs transferred by this operation. The status defines
+    /// the unit (`Fetched` means refs; `Pushed`/`Pulled` mean commits).
+    pub(crate) transferred: u64,
     pub(crate) failure: Option<GitFailure>,
 }
 
@@ -186,8 +189,14 @@ impl GitOperationResult {
             status,
             message,
             has_uncommitted,
+            transferred: 0,
             failure: None,
         }
+    }
+
+    pub(crate) fn with_transferred(mut self, transferred: u64) -> Self {
+        self.transferred = transferred;
+        self
     }
 
     pub(crate) fn failed(status: Status, failure: GitFailure, has_uncommitted: bool) -> Self {
@@ -195,6 +204,7 @@ impl GitOperationResult {
             status,
             message: failure.message.clone(),
             has_uncommitted,
+            transferred: 0,
             failure: Some(failure),
         }
     }

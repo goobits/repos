@@ -77,7 +77,7 @@ async fn process_save_repositories(
     auto_upstream: bool,
     dry_run: bool,
 ) -> Result<()> {
-    use crate::core::{acquire_stats_lock, create_progress_bar};
+    use crate::core::create_progress_bar;
 
     let operation = BatchOperation::Save { dry_run };
 
@@ -138,15 +138,14 @@ async fn process_save_repositories(
                 progress_bar.set_message(format!("{:<12}   {}", status.text(), message));
                 progress_bar.finish();
 
-                let stats_guard = acquire_stats_lock(&stats);
-                stats_guard.update(
+                stats.update(
                     repo_name,
                     &repo_path.to_string_lossy(),
                     &status,
                     &message,
                     has_uncommitted,
                 );
-                footer.set_message(stats_guard.generate_batch_live_summary(operation, total_repos));
+                footer.set_message(stats.generate_batch_live_summary(operation, total_repos));
             };
 
             futures.push(future);
@@ -157,7 +156,7 @@ async fn process_save_repositories(
 
     footer_pb.finish();
 
-    let final_stats = acquire_stats_lock(&context.statistics);
+    let final_stats = context.statistics.as_ref();
     println!(
         "\n{}\n",
         final_stats.generate_batch_report(operation, start_time.elapsed())
@@ -166,7 +165,6 @@ async fn process_save_repositories(
     let error_count = final_stats
         .error_repos
         .load(std::sync::atomic::Ordering::Relaxed);
-    drop(final_stats);
     if error_count > 0 {
         anyhow::bail!("{error_count} repositories failed to save");
     }

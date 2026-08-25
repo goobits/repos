@@ -412,6 +412,7 @@ pub(crate) async fn fetch_remote_updates(path: &Path) -> GitOperationResult {
             format!("{updated_refs} remote {label} updated"),
             false,
         )
+        .with_transferred(updated_refs)
     }
 }
 
@@ -834,6 +835,22 @@ pub(crate) async fn push_if_needed_with_context(
     // Handle no upstream case
     if !fetch_result.upstream_exists {
         if auto_upstream {
+            let transferred =
+                match count_new_upstream_commits(path, &remote_name, &target_branch).await {
+                    Ok(count) => count,
+                    Err(error) => {
+                        let failure = GitFailure::from_message(
+                            GitOperationPhase::Push,
+                            format!("new-upstream commit inspection failed: {error}"),
+                            push_context,
+                        );
+                        return GitOperationResult::failed(
+                            Status::Error,
+                            failure,
+                            fetch_result.has_uncommitted,
+                        );
+                    }
+                };
             let push_args = vec!["push", "-u", &remote_name, &fetch_result.current_branch];
             match run_git(path, &push_args).await {
                 Ok((true, _, _)) => {
@@ -846,7 +863,8 @@ pub(crate) async fn push_if_needed_with_context(
                         Status::Pushed,
                         msg,
                         fetch_result.has_uncommitted,
-                    );
+                    )
+                    .with_transferred(transferred);
                 }
                 Ok((false, _, stderr)) => {
                     let error_message = clean_error_message(&stderr);
@@ -915,6 +933,7 @@ pub(crate) async fn push_if_needed_with_context(
                 format!("{} {} pushed", fetch_result.ahead_count, commits_word)
             };
             GitOperationResult::new(Status::Pushed, msg, fetch_result.has_uncommitted)
+                .with_transferred(fetch_result.ahead_count.into())
         }
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
@@ -938,6 +957,29 @@ pub(crate) async fn push_if_needed_with_context(
                 GitFailure::from_message(GitOperationPhase::Push, final_message, push_context);
             GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted)
         }
+    }
+}
+
+async fn count_new_upstream_commits(path: &Path, remote: &str, branch: &str) -> Result<u64> {
+    let remote_ref = format!("refs/remotes/{remote}/{branch}");
+    let reference_exists =
+        match run_git(path, &["show-ref", "--verify", "--quiet", &remote_ref]).await? {
+            (true, _, _) => true,
+            (false, _, stderr) if stderr.is_empty() => false,
+            (false, _, stderr) => {
+                anyhow::bail!(command_error(&stderr, "remote branch inspection failed"))
+            }
+        };
+    let revision = if reference_exists {
+        format!("{remote_ref}..HEAD")
+    } else {
+        "HEAD".to_string()
+    };
+    match run_git(path, &["rev-list", "--count", &revision]).await? {
+        (true, count, _) => count
+            .parse()
+            .map_err(|_| anyhow::anyhow!("git returned an invalid commit count")),
+        (false, _, stderr) => anyhow::bail!(command_error(&stderr, "commit inspection failed")),
     }
 }
 
@@ -1449,6 +1491,7 @@ pub(crate) async fn pull_if_needed_with_context(
                 ),
                 fetch_result.has_uncommitted,
             )
+            .with_transferred(fetch_result.behind_count.into())
         }
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
