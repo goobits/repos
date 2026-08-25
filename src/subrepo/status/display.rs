@@ -5,6 +5,7 @@ use super::detail::{
 };
 use super::style::{BOLD_BLUE, BOLD_PURPLE, DIM, GREEN, RESET, YELLOW};
 use super::{instance_location, NestedStatusReport, SubrepoInstance, SubrepoStatus};
+use crate::subrepo::NestedCheckoutKind;
 
 /// Display shared subrepo status through the compatibility API.
 pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
@@ -32,16 +33,13 @@ fn display_status_inventory(
 ) {
     println!(
         "\n{}",
-        generate_status_summary(statuses, no_remote.len(), total_nested, fleet_repositories)
+        generate_status_summary(statuses, no_remote, total_nested, fleet_repositories)
     );
 
     if total_nested == 0 {
         println!("\n{BOLD_PURPLE}▌ Result{RESET}");
         if fleet_repositories.is_some() {
-            println!("  {DIM}No independent nested repositories found.{RESET}");
-            println!(
-                "  {DIM}Git submodules and linked worktrees are intentionally outside nested drift management.{RESET}\n"
-            );
+            println!("  {DIM}No nested repositories found.{RESET}\n");
         } else {
             println!("  {DIM}No shared nested repository statuses supplied.{RESET}");
             println!(
@@ -82,7 +80,7 @@ fn display_status_inventory(
             unique.len(),
             no_remote.len()
         );
-        println!("   Use --all to show every discovered independent nested repository");
+        println!("   Use --all to show every discovered nested repository");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
 
@@ -124,10 +122,11 @@ fn display_missing_remote_section(instances: &[SubrepoInstance]) {
 
 pub(super) fn generate_status_summary(
     statuses: &[SubrepoStatus],
-    missing_remote: usize,
+    no_remote: &[SubrepoInstance],
     total_nested: usize,
     fleet_repositories: Option<usize>,
 ) -> String {
+    let missing_remote = no_remote.len();
     let shared = statuses
         .iter()
         .filter(|status| status.instances.len() > 1)
@@ -159,16 +158,39 @@ pub(super) fn generate_status_summary(
         ));
     }
     if let Some(fleet_repositories) = fleet_repositories {
+        let checkout_count = |kind| {
+            statuses
+                .iter()
+                .flat_map(|status| status.instances.iter())
+                .chain(no_remote.iter())
+                .filter(|instance| instance.checkout_kind == kind)
+                .count()
+        };
         lines.push(format!(
             "  {DIM}·{RESET} {:<18}{total_nested}",
             "Nested copies"
+        ));
+        lines.push(format!(
+            "  {DIM}·{RESET} {:<18}{}",
+            "Independent",
+            checkout_count(NestedCheckoutKind::Independent)
+        ));
+        lines.push(format!(
+            "  {DIM}·{RESET} {:<18}{}",
+            "Submodules",
+            checkout_count(NestedCheckoutKind::Submodule)
+        ));
+        lines.push(format!(
+            "  {DIM}·{RESET} {:<18}{}",
+            "Linked worktrees",
+            checkout_count(NestedCheckoutKind::LinkedWorktree)
         ));
         lines.push(format!(
             "  {DIM}·{RESET} {:<18}{fleet_repositories}",
             "Fleet repos"
         ));
         lines.push(format!(
-            "  {DIM}Scope: independent nested repositories; Git submodules and linked worktrees excluded{RESET}"
+            "  {DIM}Scope: every discovered nested checkout{RESET}"
         ));
     } else {
         lines.push(format!(

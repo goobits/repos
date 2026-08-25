@@ -3,7 +3,7 @@ use super::{
     analyze_nested_status_for_repositories, format_drift_failure, format_drift_section,
     format_drift_work_items_with_inventory, NestedStatusReport, SubrepoStatus,
 };
-use crate::subrepo::SubrepoInstance;
+use crate::subrepo::{NestedCheckoutKind, SubrepoInstance};
 use std::path::PathBuf;
 
 fn instance(
@@ -25,6 +25,7 @@ fn instance(
         remote_url: Some("github.com/team/shared".to_string()),
         has_uncommitted: dirty,
         commit_timestamp: timestamp,
+        checkout_kind: NestedCheckoutKind::Independent,
     }
 }
 
@@ -49,7 +50,7 @@ fn nested_status_contract_counts_groups_and_names_each_drifted_copy() {
     );
     let statuses = vec![drifted, synced];
 
-    let summary = generate_status_summary(&statuses, 0, 5, Some(5));
+    let summary = generate_status_summary(&statuses, &[], 5, Some(5));
     assert!(summary.contains("repos nested status"));
     assert!(summary.contains("Synced groups     1"));
     assert!(summary.contains("Drifted groups    1"));
@@ -123,14 +124,15 @@ fn complete_inventory_distinguishes_groups_copies_and_non_comparable_repositorie
         fleet_repositories: 8,
     };
 
-    let summary = generate_status_summary(&report.groups, report.no_remote.len(), 4, Some(8));
+    let summary = generate_status_summary(&report.groups, &report.no_remote, 4, Some(8));
     assert!(summary.contains("Drifted groups    1"));
     assert!(summary.contains("Shared groups     1"));
     assert!(summary.contains("Unique groups     1"));
     assert!(summary.contains("Missing origin    1"));
     assert!(summary.contains("Nested copies     4"));
     assert!(summary.contains("Fleet repos       8"));
-    assert!(summary.contains("Git submodules and linked worktrees excluded"));
+    assert!(summary.contains("Scope: every discovered nested checkout"));
+    assert!(summary.contains("Independent       4"));
 
     let (count, lines) = format_drift_work_items_with_inventory(&report);
     let drift = lines.join("\n");
@@ -146,6 +148,49 @@ fn failed_automatic_drift_check_is_visible() {
     let output = format_drift_failure(&anyhow::anyhow!("nested scan failed")).join("\n");
     assert!(output.contains("Drift check incomplete: nested scan failed"));
     assert!(output.contains("repos nested validate"));
+}
+
+#[test]
+fn successful_automatic_drift_check_is_visible_even_without_drift() {
+    let mut first = instance("alpha", "shared", "aaaaaaaa", "aaaaaaa", false, 1);
+    first.checkout_kind = NestedCheckoutKind::Submodule;
+    let mut second = instance("beta", "shared", "aaaaaaaa", "aaaaaaa", false, 1);
+    second.checkout_kind = NestedCheckoutKind::Submodule;
+    let report = NestedStatusReport {
+        groups: vec![SubrepoStatus::new(
+            "shared".to_string(),
+            "github.com/team/shared".to_string(),
+            vec![first, second],
+        )],
+        no_remote: Vec::new(),
+        total_nested: 2,
+        fleet_repositories: 4,
+    };
+
+    let (count, lines) = format_drift_work_items_with_inventory(&report);
+    let output = lines.join("\n");
+
+    assert_eq!(count, 0);
+    assert!(output.contains("Nested Package Drift"));
+    assert!(output.contains("No commit drift across 1 shared nested package group"));
+    assert!(output.contains("0 independent, 2 submodule, 0 linked-worktree copies"));
+    assert!(!output.contains("Run `repos nested status`"));
+}
+
+#[test]
+fn successful_automatic_check_reports_an_empty_nested_inventory() {
+    let report = NestedStatusReport {
+        groups: Vec::new(),
+        no_remote: Vec::new(),
+        total_nested: 0,
+        fleet_repositories: 7,
+    };
+
+    let (count, lines) = format_drift_work_items_with_inventory(&report);
+    let output = lines.join("\n");
+
+    assert_eq!(count, 0);
+    assert!(output.contains("No nested checkouts discovered in 7 fleet repositories"));
 }
 
 #[test]
@@ -175,7 +220,7 @@ fn legacy_status_summary_does_not_invent_complete_fleet_coverage() {
         ],
     )];
 
-    let summary = generate_status_summary(&statuses, 0, 2, None);
+    let summary = generate_status_summary(&statuses, &[], 2, None);
     assert!(summary.contains("Shared copies     2"));
     assert!(summary.contains("complete fleet coverage unavailable"));
     assert!(!summary.contains("Fleet repos"));

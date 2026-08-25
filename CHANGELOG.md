@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
-- Nested status now derives parent/child relationships from the same fleet inventory as transfer commands, assigns each independent checkout to its nearest parent exactly once, and makes `--all` include synced, unique, and missing-origin repositories. Summaries distinguish shared groups from physical copies and state that Git submodules/worktrees are outside drift management.
+- Nested status now derives parent/child relationships from the same fleet inventory as transfer commands, assigns each checkout to its nearest parent exactly once, and makes `--all` include synced, unique, and missing-origin repositories. Summaries distinguish shared groups, physical copies, independent repositories, Git submodules, and linked worktrees.
 - Transfer and sync reports now place their single compact summary at the bottom, including pull/push transfer counts for `repos sync`, so long actionable reports leave the run result visible without duplicating totals.
 - Repository-oriented report sections are now sorted by path, grouping nested packages under their top-level project; nested package drift is sorted alphabetically by package, then by each copy's project path.
 - Transfer and sync reports now combine failed, skipped, and local follow-up details into one project-grouped attention section with fixed-width `!`, `·`, and `~` markers. Final reports also begin after a single visual break from progress output.
@@ -34,11 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Repository discovery now canonicalizes physical checkouts before naming them, so symlink aliases cannot make fleet operations or nested drift reports process the same repository twice.
+- Nested inventory no longer drops registered submodules or linked worktrees; checkout type is reported as metadata instead of narrowing drift coverage. Successful automatic drift checks remain visible even when no group is drifted.
 - Automatic push, pull, and sync reports now surface an incomplete nested drift check instead of silently rendering it as no drift, and concise drift output reports its shared-group/copy coverage.
 - Source installation now uses a private build cache, validates a mode-`0755` staged executable, atomically replaces and rechecks the installed binary, and restores the previous executable on failure. This prevents macOS stale code-signature kills without weakening system-wide permissions.
 - Dirty worktree classification is retained when remote status refresh fails.
 - Existing release tags are never moved to a different commit; `--tag` can push a matching local tag after an already-published registry result.
-- Nested drift commands no longer conflate independent embedded repositories with Git submodules or linked worktrees.
+- Nested drift commands classify independent embedded repositories, Git submodules, and linked worktrees without conflating or excluding them.
 
 ### Security
 - Installer-generated PATH configuration now quotes custom installation directories safely, and default build artifacts live in a private user cache instead of a predictable shared `/tmp` directory.

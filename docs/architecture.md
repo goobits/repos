@@ -129,13 +129,13 @@ Secret scanning is limited to one repository and hygiene scanning to three.
 
 ## Nested Repositories
 
-Nested drift repositories are ordinary Git repositories with their own `.git`
-directory inside parent repositories, not Git submodules or linked worktrees.
-Fleet commands still discover submodule checkouts, but only use their indexed
-gitlinks for ordering and publication safety. Nested validation derives nearest
-parent relationships from that same fleet inventory so a physical checkout is
-counted once and `.reposignore` has identical scope. Validation groups
-independent nested repositories by a normalized remote identity.
+Nested drift inventory includes every Git repository discovered below another
+fleet repository. Each checkout is classified as an independent repository, a
+registered Git submodule, or a linked worktree. Submodule gitlinks still drive
+dependency ordering and publication safety. Nested validation derives nearest
+parent relationships from the same fleet inventory so a physical checkout is
+counted once and `.reposignore` has identical scope. Validation groups nested
+repositories by a normalized remote identity.
 Equivalent GitHub HTTPS and SSH URLs share a group; case is preserved for paths
 on hosts where repository paths may be case-sensitive.
 

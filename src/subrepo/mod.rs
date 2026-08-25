@@ -17,6 +17,28 @@ pub mod status;
 pub mod sync;
 pub mod validation;
 
+/// How a nested repository checkout is connected to its nearest fleet parent.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum NestedCheckoutKind {
+    /// An embedded repository with its own Git directory and no parent gitlink.
+    Independent,
+    /// A repository recorded by the nearest parent's index as a Git submodule.
+    Submodule,
+    /// A `.git`-file checkout that is not recorded as a parent gitlink.
+    LinkedWorktree,
+}
+
+impl NestedCheckoutKind {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Independent => "independent",
+            Self::Submodule => "submodule",
+            Self::LinkedWorktree => "worktree",
+        }
+    }
+}
+
 /// Represents a single instance of a nested repository.
 #[derive(Debug, Clone)]
 pub struct SubrepoInstance {
@@ -41,6 +63,8 @@ pub struct SubrepoInstance {
     pub has_uncommitted: bool,
     /// Unix timestamp of the current commit.
     pub commit_timestamp: i64,
+    /// Checkout relationship to the nearest discovered fleet parent.
+    pub checkout_kind: NestedCheckoutKind,
 }
 
 /// Summary of discovered subrepos grouped by remote URL
@@ -64,6 +88,16 @@ impl ValidationReport {
     pub fn unique_remotes(&self) -> usize {
         self.by_remote.len()
     }
+
+    #[must_use]
+    pub fn checkout_count(&self, kind: NestedCheckoutKind) -> usize {
+        self.by_remote
+            .values()
+            .flatten()
+            .chain(self.no_remote.iter())
+            .filter(|instance| instance.checkout_kind == kind)
+            .count()
+    }
 }
 
 /// Convert path to string with proper error handling
@@ -86,19 +120,26 @@ fn get_current_commit(path: &Path) -> Result<String> {
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
-/// Get remote URL for a git repository
-fn get_remote_url(path: &Path) -> Result<String> {
+/// Get the normalized origin URL, distinguishing a missing origin from an
+/// inspection failure.
+fn get_remote_url(path: &Path) -> Result<Option<String>> {
     let output = Command::new("git")
         .args(["-C", path_to_str(path)?, "remote", "get-url", "origin"])
         .output()
         .context("Failed to run git remote")?;
 
+    if output.status.code() == Some(2) {
+        return Ok(None);
+    }
     if !output.status.success() {
-        anyhow::bail!("No remote 'origin' found");
+        anyhow::bail!(
+            "git remote inspection failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
 
     let url = String::from_utf8(output.stdout)?.trim().to_string();
-    Ok(normalize_remote_url(&url))
+    Ok(Some(normalize_remote_url(&url)))
 }
 
 /// Normalize remote URLs to group equivalent URLs together
@@ -165,24 +206,24 @@ fn has_uncommitted_changes(path: &Path) -> Result<bool> {
     Ok(!output.stdout.is_empty())
 }
 
-/// Get commit timestamp (Unix epoch seconds)
-pub(crate) fn get_commit_timestamp(path: &Path, commit_hash: &str) -> i64 {
-    let path_str = match path_to_str(path) {
-        Ok(s) => s,
-        Err(_) => return 0, // Return epoch 0 for invalid paths
-    };
-
+/// Get commit timestamp (Unix epoch seconds).
+fn get_commit_timestamp(path: &Path, commit_hash: &str) -> Result<i64> {
+    let path_str = path_to_str(path)?;
     let output = Command::new("git")
         .args(["-C", path_str, "show", "-s", "--format=%ct", commit_hash])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0),
-        _ => 0,
+        .output()
+        .context("Failed to inspect nested repository commit timestamp")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git show failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
+
+    String::from_utf8(output.stdout)?
+        .trim()
+        .parse()
+        .context("Invalid nested repository commit timestamp")
 }
 
 #[cfg(test)]

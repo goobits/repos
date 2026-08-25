@@ -80,6 +80,7 @@ fn test_sync_subrepo_success() -> Result<()> {
         remote_url: Some(remote_url.clone()),
         has_uncommitted: false,
         commit_timestamp: 0,
+        checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
     };
 
     let instance_b = SubrepoInstance {
@@ -93,6 +94,7 @@ fn test_sync_subrepo_success() -> Result<()> {
         remote_url: Some(remote_url.clone()),
         has_uncommitted: false,
         commit_timestamp: 0,
+        checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
     };
 
     let mut by_remote = HashMap::new();
@@ -145,6 +147,7 @@ fn test_sync_preflights_every_copy_before_changing_any_checkout() -> Result<()> 
             remote_url: Some(remote_path.to_string_lossy().into_owned()),
             has_uncommitted: false,
             commit_timestamp: 0,
+            checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
         });
     }
 

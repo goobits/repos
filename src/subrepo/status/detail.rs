@@ -73,12 +73,13 @@ pub(super) fn display_drift_status(status: &SubrepoStatus) {
                 "  (different commit)"
             };
             println!(
-                "  {} {}  {:width$}  {}{}",
+                "  {} {}  {:width$}  {}{}  {}",
                 prefix,
                 instance.short_hash,
                 instance_location(instance),
                 worktree,
                 commit,
+                instance.checkout_kind.label(),
                 width = 30
             );
         }
@@ -179,13 +180,18 @@ pub(super) fn display_synced_status(status: &SubrepoStatus) {
                 "✅ clean"
             };
             println!(
-                "    {:width$}  {}",
+                "    {:width$}  {}  {}",
                 instance_location(instance),
                 worktree,
+                instance.checkout_kind.label(),
                 width = 30
             );
         } else {
-            println!("    • {}", instance_location(instance));
+            println!(
+                "    • {}  {}",
+                instance_location(instance),
+                instance.checkout_kind.label()
+            );
         }
     }
     println!();
@@ -211,10 +217,11 @@ pub(super) fn display_unique_status(status: &SubrepoStatus) {
     println!("{}", status.name);
     println!("  Remote: {}", status.remote_url);
     println!(
-        "  {} @ {}  {}",
+        "  {} @ {}  {}  {}",
         instance_location(instance),
         instance.short_hash,
-        state
+        state,
+        instance.checkout_kind.label()
     );
     println!("  ℹ️  One discovered copy; cross-copy drift is not applicable\n");
 }
@@ -226,10 +233,11 @@ pub(super) fn display_missing_remote(instance: &SubrepoInstance) {
         ""
     };
     println!(
-        "{} @ {}  no origin{}",
+        "{} @ {}  no origin{}  {}",
         instance_location(instance),
         instance.short_hash,
-        state
+        state,
+        instance.checkout_kind.label()
     );
     println!("  ↳ next: add an origin remote or exclude this repository\n");
 }

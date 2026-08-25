@@ -251,7 +251,7 @@ enum NestedCommand {
 
     /// Show nested repository sync status (drift detection)
     Status {
-        /// Show synced, unique, and missing-origin independent nested repositories
+        /// Show every synced, unique, and missing-origin nested checkout
         #[arg(long)]
         all: bool,
     },

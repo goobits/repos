@@ -60,10 +60,10 @@ Example drift summary:
 ▌ Nested Package Drift
 ! 1 of 1 shared nested package group is at different commits
 · Compared 2 shared copies across 12 fleet repositories; 0 unique and 0 missing-origin copies are not drift-comparable
-· Scope excludes Git submodules and linked worktrees
+· Scope: 0 independent, 2 submodule, 0 linked-worktree copies
   pkg:auth            2 copies  → repos nested sync auth --to 105ce4e
-    ✓ target app                            105ce4e
-    → sync   website                        2f13c23
+    ✓ target app                            105ce4e  submodule
+    → sync   website                        2f13c23  submodule
 ↳ Run `repos nested status` for per-copy details.
 ```
 
@@ -145,9 +145,10 @@ specifically want the granular Git-shaped pull command.
 
 ### Does `repos` work with Git submodules?
 
-`repos` treats submodules as separate repositories. The `nested` commands are
-for nested repos with independent `.git` directories, not Git submodules. Use
-`git submodule` commands for submodule management.
+`repos` treats initialized submodules as separate fleet repositories and includes
+them in nested drift comparisons. It labels submodules separately and still uses
+their parent gitlinks for safe commit/push ordering. Git's own submodule commands
+remain appropriate for initialization and configuration.
 
 ### Can I use `repos` in a monorepo?
 

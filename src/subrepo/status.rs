@@ -11,7 +11,7 @@ mod style;
 #[cfg(test)]
 mod tests;
 
-use super::SubrepoInstance;
+use super::{NestedCheckoutKind, SubrepoInstance};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -33,7 +33,7 @@ pub struct SubrepoStatus {
     pub has_drift: bool,
 }
 
-/// Complete status inventory for independent nested repositories.
+/// Complete status inventory for nested repositories of every checkout kind.
 #[derive(Debug)]
 pub struct NestedStatusReport {
     pub groups: Vec<SubrepoStatus>,
@@ -79,6 +79,16 @@ impl NestedStatusReport {
         self.shared_groups()
             .map(|status| status.instances.len())
             .sum()
+    }
+
+    #[must_use]
+    pub fn checkout_count(&self, kind: NestedCheckoutKind) -> usize {
+        self.groups
+            .iter()
+            .flat_map(|status| status.instances.iter())
+            .chain(self.no_remote.iter())
+            .filter(|instance| instance.checkout_kind == kind)
+            .count()
     }
 }
 

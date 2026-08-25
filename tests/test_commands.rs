@@ -29,7 +29,7 @@ use std::process::Command;
 use tempfile::TempDir;
 
 #[tokio::test]
-async fn test_nested_status_all_reports_complete_independent_inventory() {
+async fn test_nested_status_all_reports_every_checkout_kind() {
     let _lock = common::lock_test().await;
     if !is_git_available() {
         return;
@@ -50,6 +50,12 @@ async fn test_nested_status_all_reports_complete_independent_inventory() {
     setup_git_repo(&unique_remote).expect("Failed to initialize unique remote");
     create_test_commit(&unique_remote, "unique.txt", "v1", "initial")
         .expect("Failed to create unique commit");
+
+    let submodule_remote = root.path().join("submodule-remote");
+    fs::create_dir(&submodule_remote).expect("Failed to create submodule remote");
+    setup_git_repo(&submodule_remote).expect("Failed to initialize submodule remote");
+    create_test_commit(&submodule_remote, "module.txt", "v1", "initial")
+        .expect("Failed to create submodule commit");
 
     let parent_a = root.path().join("parent-a");
     let parent_b = root.path().join("parent-b");
@@ -75,6 +81,26 @@ async fn test_nested_status_all_reports_complete_independent_inventory() {
     create_test_commit(&orphan, "orphan.txt", "v1", "initial")
         .expect("Failed to create missing-origin commit");
 
+    for parent in [&parent_a, &parent_b] {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                submodule_remote.to_str().expect("UTF-8 submodule path"),
+                "modules/shared-submodule",
+            ])
+            .current_dir(parent)
+            .output()
+            .expect("Failed to add submodule");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     let output = Command::new(env!("CARGO_BIN_EXE_repos"))
         .args(["nested", "status", "--all"])
         .current_dir(root.path())
@@ -85,15 +111,26 @@ async fn test_nested_status_all_reports_complete_independent_inventory() {
 
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(stdout.contains("Drifted groups    1"), "{stdout}");
-    assert!(stdout.contains("Shared groups     1"), "{stdout}");
+    assert!(stdout.contains("Synced groups     1"), "{stdout}");
+    assert!(stdout.contains("Shared groups     2"), "{stdout}");
     assert!(stdout.contains("Unique groups     1"), "{stdout}");
     assert!(stdout.contains("Missing origin    1"), "{stdout}");
-    assert!(stdout.contains("Nested copies     4"), "{stdout}");
-    assert!(stdout.contains("Fleet repos       8"), "{stdout}");
+    assert!(stdout.contains("Nested copies     6"), "{stdout}");
+    assert!(stdout.contains("Independent       4"), "{stdout}");
+    assert!(stdout.contains("Submodules        2"), "{stdout}");
+    assert!(stdout.contains("Fleet repos       11"), "{stdout}");
     assert!(stdout.contains("parent-a/shared"), "{stdout}");
     assert!(stdout.contains("parent-b/shared"), "{stdout}");
     assert!(stdout.contains("parent-a/unique"), "{stdout}");
     assert!(stdout.contains("parent-b/orphan"), "{stdout}");
+    assert!(
+        stdout.contains("parent-a/modules/shared-submodule"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("parent-b/modules/shared-submodule"),
+        "{stdout}"
+    );
 }
 
 // ==============================================================================

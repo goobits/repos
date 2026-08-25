@@ -49,6 +49,7 @@ fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
         remote_url: Some(remote_path.to_str().unwrap().to_string()),
         has_uncommitted: true, // Mark as dirty
         commit_timestamp: 0,
+        checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
     };
     let mut by_remote = HashMap::new();
     by_remote.insert(remote_path.to_str().unwrap().to_string(), vec![instance]);
@@ -114,6 +115,7 @@ fn test_update_skips_diverged_local_commits() -> Result<()> {
         remote_url: Some(remote_path.to_str().unwrap().to_string()),
         has_uncommitted: false,
         commit_timestamp: 0,
+        checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
     };
     let mut by_remote = HashMap::new();
     by_remote.insert(remote_path.to_str().unwrap().to_string(), vec![instance]);
@@ -166,6 +168,7 @@ fn test_update_allows_fast_forward_commit() -> Result<()> {
         remote_url: Some(remote_path.to_string_lossy().into_owned()),
         has_uncommitted: false,
         commit_timestamp: 0,
+        checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
     };
     let report = ValidationReport {
         total_nested: 1,
@@ -209,6 +212,7 @@ fn test_update_uses_one_immutable_target_for_every_copy() -> Result<()> {
             remote_url: Some(remote_path.to_string_lossy().into_owned()),
             has_uncommitted: false,
             commit_timestamp: 0,
+            checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
         });
     }
 
@@ -289,6 +293,7 @@ fn test_sync_force_discards_tracked_changes() -> Result<()> {
         remote_url: Some(remote_path.to_str().unwrap().to_string()),
         has_uncommitted: true,
         commit_timestamp: 0,
+        checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
     };
     let mut by_remote = HashMap::new();
     by_remote.insert(remote_path.to_str().unwrap().to_string(), vec![instance]);
@@ -359,6 +364,7 @@ fn test_multiple_subrepos_batch_sync() -> Result<()> {
             remote_url: Some(remote_path.to_str().unwrap().to_string()),
             has_uncommitted: false,
             commit_timestamp: 0,
+            checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
         });
     }
 

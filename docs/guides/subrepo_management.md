@@ -1,9 +1,8 @@
 # Nested Repository Management
 
-`repos nested` manages nested Git repositories: directories inside a parent repo
-that contain their own `.git` directory.
-
-Nested repositories are not Git submodules. Use `git submodule` for submodules.
+`repos nested` reports and manages Git repositories discovered below another
+fleet repository. The inventory includes independent embedded repositories,
+registered Git submodules, and linked worktrees, with each checkout type labeled.
 
 ## Commands
 
@@ -46,16 +45,14 @@ summarizes the rest of the inventory. Use `--all` to enumerate fully synced
 shared groups, unique remote-backed repositories, and repositories without an
 `origin`.
 
-The summary distinguishes the full fleet repository count, independent nested
-copies, and shared/unique groups. Drift comparison applies
-only to independent nested repositories with two or more copies of the same
-normalized `origin`. Git submodules and linked worktrees are explicitly outside
-this command's scope; use Git's submodule/worktree commands for those checkouts.
+The summary distinguishes the full fleet repository count, checkout types,
+nested copies, and shared/unique groups. Drift comparison applies to every
+nested checkout with two or more copies of the same normalized `origin`.
 
-When automatic drift checks after `repos sync`, `repos push`, and `repos pull`
-find drift, their drift sections report shared-group/copy coverage. If inspection
-fails, the report says the check is incomplete instead of implying that no drift
-exists.
+Automatic drift checks after `repos sync`, `repos push`, and `repos pull` always
+report shared-group/copy coverage, including a positive zero-drift result. If
+inspection fails, the report says the check is incomplete instead of implying
+that no drift exists.
 
 ## Sync
 
@@ -70,6 +67,10 @@ Default behavior:
 - Syncs clean nested repositories to the requested commit.
 - Skips nested repositories with uncommitted changes.
 - Does not discard local changes.
+
+For a submodule, moving the nested checkout also changes the parent repository's
+gitlink; commit that parent change before pushing it. Linked worktrees retain
+Git's normal worktree checkout constraints.
 
 Use `--stash` to stash local changes before syncing.
 

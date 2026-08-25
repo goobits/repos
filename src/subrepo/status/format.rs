@@ -6,7 +6,7 @@ use super::{
     SubrepoStatus,
 };
 use crate::core::{clean_error_message, truncate_text};
-use crate::subrepo::SubrepoInstance;
+use crate::subrepo::{NestedCheckoutKind, SubrepoInstance};
 
 /// Display concise drift summary for use in `repos push`.
 pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
@@ -59,10 +59,7 @@ fn format_drift_summary_lines(
         .filter(|status| status.has_drift)
         .collect::<Vec<_>>();
     drifted.sort_by(|left, right| compare_package_statuses(left, right));
-
-    if drifted.is_empty() {
-        return Vec::new();
-    }
+    let has_drift = !drifted.is_empty();
 
     let mut lines = vec![format!("{BOLD_PURPLE}▌ Nested Package Drift{RESET}")];
     if let Some(inventory) = inventory {
@@ -72,11 +69,26 @@ fn format_drift_summary_lines(
         } else {
             "groups"
         };
-        let verb = if drifted.len() == 1 { "is" } else { "are" };
-        lines.push(format!(
-            "{YELLOW}!{RESET} {} of {shared_groups} shared nested package {group_label} {verb} at different commits",
-            drifted.len()
-        ));
+        if inventory.total_nested == 0 {
+            lines.push(format!(
+                "{GREEN}✓{RESET} No nested checkouts discovered in {} fleet repositories",
+                inventory.fleet_repositories
+            ));
+        } else if shared_groups == 0 {
+            lines.push(format!(
+                "{GREEN}✓{RESET} No shared nested package groups to compare"
+            ));
+        } else if drifted.is_empty() {
+            lines.push(format!(
+                "{GREEN}✓{RESET} No commit drift across {shared_groups} shared nested package {group_label}"
+            ));
+        } else {
+            let verb = if drifted.len() == 1 { "is" } else { "are" };
+            lines.push(format!(
+                "{YELLOW}!{RESET} {} of {shared_groups} shared nested package {group_label} {verb} at different commits",
+                drifted.len()
+            ));
+        }
         lines.push(format!(
             "{DIM}· Compared {} shared copies across {} fleet repositories; {} unique and {} missing-origin copies are not drift-comparable{RESET}",
             inventory.shared_copy_count(),
@@ -85,9 +97,15 @@ fn format_drift_summary_lines(
             inventory.no_remote.len()
         ));
         lines.push(format!(
-            "{DIM}· Scope excludes Git submodules and linked worktrees{RESET}"
+            "{DIM}· Scope: {} independent, {} submodule, {} linked-worktree copies{RESET}",
+            inventory.checkout_count(NestedCheckoutKind::Independent),
+            inventory.checkout_count(NestedCheckoutKind::Submodule),
+            inventory.checkout_count(NestedCheckoutKind::LinkedWorktree),
         ));
     } else {
+        if drifted.is_empty() {
+            return Vec::new();
+        }
         let group_label = if drifted.len() == 1 {
             "group is"
         } else {
@@ -102,9 +120,11 @@ fn format_drift_summary_lines(
     for status in drifted {
         format_drift_summary_item(status, &mut lines);
     }
-    lines.push(format!(
-        "{DIM}↳ Run `repos nested status` for per-copy details.{RESET}"
-    ));
+    if has_drift {
+        lines.push(format!(
+            "{DIM}↳ Run `repos nested status` for per-copy details.{RESET}"
+        ));
+    }
     lines
 }
 
@@ -138,6 +158,7 @@ fn format_drift_summary_item(status: &SubrepoStatus, lines: &mut Vec<String>) {
             state: DriftState::from_instance(instance, &target.commit_hash),
             location: instance_location(instance),
             short_hash: instance.short_hash.clone(),
+            checkout_kind: instance.checkout_kind,
         })
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| {
@@ -149,10 +170,11 @@ fn format_drift_summary_item(status: &SubrepoStatus, lines: &mut Vec<String>) {
     for row in rows {
         let state_cell = format!("{:<8}", row.state.label());
         lines.push(format!(
-            "    {} {:30} {}",
+            "    {} {:30} {}  {}",
             paint(row.state.color(), &state_cell),
             truncate_text(&row.location, 30),
-            row.short_hash
+            row.short_hash,
+            row.checkout_kind.label(),
         ));
     }
 }
@@ -161,6 +183,7 @@ struct DriftRow {
     state: DriftState,
     location: String,
     short_hash: String,
+    checkout_kind: NestedCheckoutKind,
 }
 
 #[derive(Clone, Copy)]

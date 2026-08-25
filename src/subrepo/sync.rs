@@ -732,6 +732,7 @@ mod tests {
             remote_url: Some(remote.to_string()),
             has_uncommitted: false,
             commit_timestamp: 0,
+            checkout_kind: crate::subrepo::NestedCheckoutKind::Independent,
         }
     }
 

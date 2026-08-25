@@ -2,7 +2,7 @@
 
 use super::{
     get_commit_timestamp, get_current_commit, get_remote_url, has_uncommitted_changes,
-    SubrepoInstance, ValidationReport,
+    NestedCheckoutKind, SubrepoInstance, ValidationReport,
 };
 use crate::core::topology::{gitlink_target, normalize_path};
 use anyhow::{Context, Result};
@@ -43,7 +43,7 @@ pub(crate) fn validate_discovered_repositories(
 
     if show_scan {
         println!(
-            "🔍 Inspecting {} fleet repositories for independent nested checkouts...\n",
+            "🔍 Inspecting {} fleet repositories for nested checkouts...\n",
             repositories.len()
         );
     }
@@ -57,13 +57,6 @@ pub(crate) fn validate_discovered_repositories(
             continue;
         };
 
-        // The nested commands manage independent embedded repositories. Git
-        // submodules and linked worktrees expose a .git file and remain under
-        // Git's gitlink/worktree workflows instead.
-        if !child_path.join(".git").is_dir() {
-            continue;
-        }
-
         let (parent_name, parent_path) = &repositories[parent_index];
         let relative_path = relative_repository_path(
             child_path,
@@ -71,21 +64,26 @@ pub(crate) fn validate_discovered_repositories(
             &normalized[child_index],
             &normalized[parent_index],
         );
-        if gitlink_target(
+        let checkout_kind = if gitlink_target(
             parent_path,
             &normalized[parent_index],
             &normalized[child_index],
         )
         .is_some()
         {
-            continue;
-        }
+            NestedCheckoutKind::Submodule
+        } else if child_path.join(".git").is_file() {
+            NestedCheckoutKind::LinkedWorktree
+        } else {
+            NestedCheckoutKind::Independent
+        };
 
         all_nested.push(inspect_nested_repository(
             parent_name,
             parent_path,
             child_path,
             relative_path,
+            checkout_kind,
         )?);
     }
 
@@ -139,6 +137,7 @@ fn inspect_nested_repository(
     parent_path: &Path,
     subrepo_path: &Path,
     relative_path: String,
+    checkout_kind: NestedCheckoutKind,
 ) -> Result<SubrepoInstance> {
     let subrepo_name = subrepo_path
         .file_name()
@@ -151,14 +150,24 @@ fn inspect_nested_repository(
         )
     })?;
     let short_hash = commit_hash.chars().take(7).collect();
-    let remote_url = get_remote_url(subrepo_path).ok();
+    let remote_url = get_remote_url(subrepo_path).with_context(|| {
+        format!(
+            "failed to inspect origin for nested repository {}",
+            subrepo_path.display()
+        )
+    })?;
     let has_uncommitted = has_uncommitted_changes(subrepo_path).with_context(|| {
         format!(
             "failed to inspect worktree for nested repository {}",
             subrepo_path.display()
         )
     })?;
-    let commit_timestamp = get_commit_timestamp(subrepo_path, &commit_hash);
+    let commit_timestamp = get_commit_timestamp(subrepo_path, &commit_hash).with_context(|| {
+        format!(
+            "failed to inspect commit timestamp for nested repository {}",
+            subrepo_path.display()
+        )
+    })?;
 
     Ok(SubrepoInstance {
         parent_repo: parent_name.to_string(),
@@ -171,6 +180,7 @@ fn inspect_nested_repository(
         remote_url,
         has_uncommitted,
         commit_timestamp,
+        checkout_kind,
     })
 }
 
@@ -199,6 +209,21 @@ fn generate_validation_report(report: &ValidationReport) -> String {
     lines.push(format!(
         "  {DIM}·{RESET} {:<18}{}",
         "Nested copies", report.total_nested
+    ));
+    lines.push(format!(
+        "  {DIM}·{RESET} {:<18}{}",
+        "Independent",
+        report.checkout_count(NestedCheckoutKind::Independent)
+    ));
+    lines.push(format!(
+        "  {DIM}·{RESET} {:<18}{}",
+        "Submodules",
+        report.checkout_count(NestedCheckoutKind::Submodule)
+    ));
+    lines.push(format!(
+        "  {DIM}·{RESET} {:<18}{}",
+        "Linked worktrees",
+        report.checkout_count(NestedCheckoutKind::LinkedWorktree)
     ));
 
     if report.total_nested == 0 {
@@ -234,9 +259,10 @@ fn generate_validation_report(report: &ValidationReport) -> String {
                     "clean"
                 };
                 lines.push(format!(
-                    "    · {} @ {} ({state})",
+                    "    · {} @ {} ({state}, {})",
                     nested_location(instance),
-                    instance.short_hash
+                    instance.short_hash,
+                    instance.checkout_kind.label()
                 ));
             }
         }
@@ -253,9 +279,10 @@ fn generate_validation_report(report: &ValidationReport) -> String {
         lines.push(format!("{BOLD_PURPLE}▌ Missing Remote{RESET}"));
         for instance in missing {
             lines.push(format!(
-                "  {YELLOW}!{RESET} {} @ {}",
+                "  {YELLOW}!{RESET} {} @ {} ({})",
                 nested_location(instance),
-                instance.short_hash
+                instance.short_hash,
+                instance.checkout_kind.label()
             ));
             lines.push(format!(
                 "    {DIM}↳ next: add an origin remote or exclude this nested repository{RESET}"
@@ -292,7 +319,7 @@ fn nested_location(instance: &SubrepoInstance) -> String {
 #[cfg(test)]
 mod tests {
     use super::{generate_validation_report, validate_discovered_repositories};
-    use crate::subrepo::{SubrepoInstance, ValidationReport};
+    use crate::subrepo::{NestedCheckoutKind, SubrepoInstance, ValidationReport};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::process::Command;
@@ -310,6 +337,7 @@ mod tests {
             remote_url: Some("github.com/team/shared".to_string()),
             has_uncommitted: dirty,
             commit_timestamp: 0,
+            checkout_kind: NestedCheckoutKind::Independent,
         }
     }
 
@@ -407,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn inventory_excludes_registered_git_submodules_even_with_embedded_git_directory() {
+    fn inventory_classifies_registered_git_submodules_even_with_embedded_git_directory() {
         let temp_dir = TempDir::new().unwrap();
         let parent = temp_dir.path().join("parent");
         let submodule = parent.join("submodule");
@@ -430,6 +458,78 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(report.total_nested, 0);
+        assert_eq!(report.total_nested, 1);
+        assert_eq!(report.no_remote.len(), 1);
+        assert_eq!(
+            report.no_remote[0].checkout_kind,
+            NestedCheckoutKind::Submodule
+        );
+    }
+
+    #[test]
+    fn inventory_includes_standard_gitfile_submodules() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source");
+        let parent = temp_dir.path().join("parent");
+        initialize_repository(&source);
+        initialize_repository(&parent);
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "modules/shared",
+            ])
+            .current_dir(&parent)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        let submodule = parent.join("modules/shared");
+        assert!(submodule.join(".git").is_file());
+
+        let report = validate_discovered_repositories(
+            &[
+                ("parent".to_string(), parent),
+                ("shared".to_string(), submodule),
+            ],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(report.total_nested, 1);
+        assert_eq!(report.checkout_count(NestedCheckoutKind::Submodule), 1);
+    }
+
+    #[test]
+    fn inventory_includes_linked_worktrees_without_calling_them_submodules() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent = temp_dir.path().join("parent");
+        initialize_repository(&parent);
+        let worktree = parent.join("worktrees/preview");
+        assert!(Command::new("git")
+            .args(["worktree", "add", "--detach"])
+            .arg(&worktree)
+            .current_dir(&parent)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        assert!(worktree.join(".git").is_file());
+
+        let report = validate_discovered_repositories(
+            &[
+                ("parent".to_string(), parent),
+                ("preview".to_string(), worktree),
+            ],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(report.total_nested, 1);
+        assert_eq!(report.checkout_count(NestedCheckoutKind::LinkedWorktree), 1);
+        assert_eq!(report.checkout_count(NestedCheckoutKind::Submodule), 0);
     }
 }
