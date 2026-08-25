@@ -30,10 +30,9 @@ pub const GIT_CONCURRENT_CAP: usize = 32;
 /// Priority order:
 /// 1. --sequential flag → 1
 /// 2. --jobs N flag → N
-/// 3. Smart default → `CPU_CORES` + 2 (scales with hardware)
+/// 3. Smart default → `min(CPU_CORES + 2, GIT_CONCURRENT_CAP)`
 ///
-/// Note: Removed the previous hard cap of 12 to allow scaling on high-core systems.
-/// Users experiencing rate limits can use --jobs N to limit concurrency.
+/// An explicit `--jobs` remains an intentional override of the automatic cap.
 pub fn get_git_concurrency(jobs: Option<usize>, sequential: bool) -> usize {
     // Check for sequential mode
     if sequential {
@@ -45,12 +44,12 @@ pub fn get_git_concurrency(jobs: Option<usize>, sequential: bool) -> usize {
         return n.max(1); // Ensure at least 1
     }
 
-    // Smart default: CPU cores + 2, no artificial cap
-    // This allows the tool to scale naturally with available hardware
+    // Smart default: scale with the host without creating unbounded process and
+    // network fanout on very large machines.
     let cpu_count = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
-    cpu_count + 2
+    cpu_count.saturating_add(2).min(GIT_CONCURRENT_CAP)
 }
 
 // Audit concurrency configuration
@@ -138,16 +137,18 @@ mod tests {
 
     #[test]
     fn test_get_git_concurrency_default_scales_with_cpu() {
-        // Default should be CPU cores + 2
+        // Default should be CPU cores + 2 under the automatic hard cap.
         let concurrency = get_git_concurrency(None, false);
         let expected = std::thread::available_parallelism()
             .map(std::num::NonZeroUsize::get)
             .unwrap_or(1)
-            + 2;
+            .saturating_add(2)
+            .min(GIT_CONCURRENT_CAP);
         assert_eq!(concurrency, expected);
 
-        // Should be at least 3 on any system (1 core + 2)
+        // Should be at least 3 on any system (1 core + 2).
         assert!(concurrency >= 3);
+        assert!(concurrency <= GIT_CONCURRENT_CAP);
     }
 
     // Note: Constant validation tests removed - constants are compile-time validated.

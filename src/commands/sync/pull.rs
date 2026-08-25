@@ -53,7 +53,10 @@ pub(super) async fn process_pull_repositories(
     use crate::git::fetch_and_analyze_for_pull;
     use futures::stream::{FuturesUnordered, StreamExt};
 
-    let fetch_concurrency = (context.max_concurrency * 2).min(FETCH_CONCURRENT_CAP);
+    let fetch_concurrency = context
+        .max_concurrency
+        .saturating_mul(2)
+        .min(FETCH_CONCURRENT_CAP);
     let fetch_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(fetch_concurrency));
     let statistics = std::sync::Arc::clone(&context.statistics);
     let footer_message = context

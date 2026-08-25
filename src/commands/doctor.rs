@@ -1,8 +1,13 @@
 //! Repository health diagnostics.
 
+mod config;
+
+#[cfg(test)]
+use config::parse_configured_remote_urls;
+use config::{inspect_configured_remote_urls, ConfiguredRemoteUrls};
+
 use anyhow::Result;
 use futures::stream::{FuturesUnordered, StreamExt};
-use std::collections::HashMap;
 
 use crate::core::{
     acquire_semaphore_permit, clean_error_message, create_processing_context, init_command,
@@ -14,7 +19,6 @@ use crate::git::remote::{
     context_from_url, inspect_remote, policy_violation, RemoteContext, RemoteDirection,
     RemotePolicyViolation, RemoteTransport,
 };
-use crate::git::runner::run_git_raw;
 use crate::git::worktree::{inspect_repository_state, HeadState};
 use crate::utils::compare_repository_locations;
 
@@ -203,23 +207,6 @@ impl DoctorReport {
 struct DirectionInspection {
     contexts: Vec<RemoteContext>,
     blocked: bool,
-}
-
-#[derive(Debug, Default)]
-struct ConfiguredRemoteUrls {
-    fetch: HashMap<String, Vec<String>>,
-    push: HashMap<String, Vec<String>>,
-}
-
-impl ConfiguredRemoteUrls {
-    fn urls(&self, remote: &str, direction: RemoteDirection) -> &[String] {
-        let urls = if direction == RemoteDirection::Push {
-            &self.push
-        } else {
-            &self.fetch
-        };
-        urls.get(remote).map_or(&[], Vec::as_slice)
-    }
 }
 
 /// Diagnose common blockers without mutating repositories.
@@ -605,64 +592,6 @@ async fn inspect_direction(
             }
         }
     }
-}
-
-async fn inspect_configured_remote_urls(path: &std::path::Path) -> Result<ConfiguredRemoteUrls> {
-    let output = run_git_raw(
-        path,
-        &[
-            "config",
-            "--null",
-            "--get-regexp",
-            r"^remote\..*\.(url|pushurl)$",
-        ],
-    )
-    .await?;
-    if !output.success() {
-        if output.exit_code == Some(1) && output.stderr.is_empty() {
-            return Ok(ConfiguredRemoteUrls::default());
-        }
-        let stderr = output.stderr_text();
-        anyhow::bail!(
-            "{}",
-            if stderr.is_empty() {
-                format!("git config failed with exit code {:?}", output.exit_code)
-            } else {
-                stderr
-            }
-        );
-    }
-
-    parse_configured_remote_urls(&output.stdout)
-}
-
-fn parse_configured_remote_urls(output: &[u8]) -> Result<ConfiguredRemoteUrls> {
-    let mut urls = ConfiguredRemoteUrls::default();
-    for record in output.split(|byte| *byte == 0) {
-        if record.is_empty() {
-            continue;
-        }
-        let record = std::str::from_utf8(record)?;
-        let (key, value) = record
-            .split_once('\n')
-            .ok_or_else(|| anyhow::anyhow!("git config returned a malformed remote URL record"))?;
-        let Some(key) = key.strip_prefix("remote.") else {
-            continue;
-        };
-        let Some((remote, suffix)) = key.rsplit_once('.') else {
-            continue;
-        };
-        let target = match suffix {
-            "url" => &mut urls.fetch,
-            "pushurl" => &mut urls.push,
-            _ => continue,
-        };
-        target
-            .entry(remote.to_string())
-            .or_default()
-            .push(value.to_string());
-    }
-    Ok(urls)
 }
 
 fn remote_get_url_action(display_path: &str, remote: &str, direction: RemoteDirection) -> String {

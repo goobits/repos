@@ -15,13 +15,18 @@ src/
 │   ├── sync/               Focused fetch, push, pull, and progress pipelines
 │   ├── save.rs             Stage, commit, and push workflow
 │   ├── staging.rs          Stage, unstage, commit, and status commands
+│   ├── staging/status.rs   Fleet status analysis and rendering
 │   ├── config.rs           Git identity synchronization
 │   ├── doctor.rs           Read-only repository diagnostics
 │   ├── audit.rs            Audit command orchestration
 │   └── publish/            Publish planning and execution
 ├── core/                   Discovery, progress, concurrency, and statistics
+│   ├── report/sync.rs      Combined pull/push reporting
+│   └── stats/              Transfer reporting and safe text formatting
 ├── git/                    Git command execution and result classification
+│   └── operations/         Pull, remote, LFS, visibility, and worktree operations
 ├── audit/                  Secret and repository-hygiene scanners and fixes
+│   └── fixes/history.rs    History rewrite safety and secret removal
 ├── package/                Cargo, npm, and PyPI package adapters
 ├── subrepo/                Nested repository validation, drift, and sync
 │   └── status/             Concise formatting and detailed status rendering
@@ -86,8 +91,8 @@ the requested operation could not be completed.
 
 ## Concurrency
 
-The default Git concurrency is the host's available parallelism plus two.
-`--jobs` sets an explicit limit and `--sequential` sets it to one.
+The default Git concurrency is the host's available parallelism plus two, capped
+at 32. `--jobs` is an explicit override and `--sequential` sets it to one.
 
 Push and pull use a pipelined model per repository:
 

@@ -6,9 +6,9 @@ parallelism.
 ## Concurrency Control
 
 By default, `repos` uses the host's available parallelism plus two concurrent
-Git operations.
+Git operations, capped at 32.
 
-- Use `--jobs N` to set an explicit concurrency limit.
+- Use `--jobs N` to set an explicit override, including values above the automatic cap.
 - Higher isn't always better: excessive concurrency can lead to local disk I/O bottlenecks or remote rate limiting.
 
 ## SSD vs HDD
