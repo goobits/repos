@@ -40,7 +40,7 @@ Quick reference for `repos` commands, flags, and concepts.
 
 **`--include-untracked`** - Include untracked files in `repos save`.
 
-**`--all`** - Include all non-ignored changes for `repos save`, or show all nested repos for `repos nested status`.
+**`--all`** - Include all non-ignored changes for `repos save`, or enumerate every discovered independent nested repository for `repos nested status`, including synced, unique, and missing-origin entries.
 
 **`--no-drift-check`** - Skip nested drift checks in `sync`, `push`, or `pull`.
 

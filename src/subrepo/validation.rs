@@ -4,11 +4,10 @@ use super::{
     get_commit_timestamp, get_current_commit, get_remote_url, has_uncommitted_changes,
     SubrepoInstance, ValidationReport,
 };
-use crate::core::config::{FLEET_IGNORE_FILENAME, SKIP_DIRECTORIES};
-use anyhow::Result;
-use ignore::WalkBuilder;
+use crate::core::topology::{gitlink_target, normalize_path};
+use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const RESET: &str = "\x1b[0m";
 const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
@@ -19,28 +18,75 @@ const DIM: &str = "\x1b[2m";
 
 /// Discover all nested repositories and generate a validation report
 pub fn validate_subrepos() -> Result<ValidationReport> {
-    validate_subrepos_with_output(true)
+    Ok(validate_subrepos_inventory(true)?.0)
 }
 
 /// Discover all nested repositories without printing scan progress.
 pub fn validate_subrepos_quiet() -> Result<ValidationReport> {
-    validate_subrepos_with_output(false)
+    Ok(validate_subrepos_inventory(false)?.0)
 }
 
-fn validate_subrepos_with_output(show_scan: bool) -> Result<ValidationReport> {
-    let parent_repos = crate::core::discovery::find_repos();
+pub(crate) fn validate_subrepos_inventory(show_scan: bool) -> Result<(ValidationReport, usize)> {
+    let repositories = crate::core::discovery::find_repos();
+    let fleet_repositories = repositories.len();
+    Ok((
+        validate_discovered_repositories(&repositories, show_scan)?,
+        fleet_repositories,
+    ))
+}
+
+pub(crate) fn validate_discovered_repositories(
+    repositories: &[(String, PathBuf)],
+    show_scan: bool,
+) -> Result<ValidationReport> {
     let mut all_nested = Vec::new();
 
     if show_scan {
         println!(
-            "🔍 Scanning {} parent repositories for nested repos...\n",
-            parent_repos.len()
+            "🔍 Inspecting {} fleet repositories for independent nested checkouts...\n",
+            repositories.len()
         );
     }
 
-    for (parent_name, parent_path) in parent_repos {
-        let nested = find_nested_in_parent(&parent_name, &parent_path)?;
-        all_nested.extend(nested);
+    let normalized = repositories
+        .iter()
+        .map(|(_, path)| normalize_path(path))
+        .collect::<Vec<_>>();
+    for (child_index, (_, child_path)) in repositories.iter().enumerate() {
+        let Some(parent_index) = nearest_parent_index(child_index, &normalized) else {
+            continue;
+        };
+
+        // The nested commands manage independent embedded repositories. Git
+        // submodules and linked worktrees expose a .git file and remain under
+        // Git's gitlink/worktree workflows instead.
+        if !child_path.join(".git").is_dir() {
+            continue;
+        }
+
+        let (parent_name, parent_path) = &repositories[parent_index];
+        let relative_path = relative_repository_path(
+            child_path,
+            parent_path,
+            &normalized[child_index],
+            &normalized[parent_index],
+        );
+        if gitlink_target(
+            parent_path,
+            &normalized[parent_index],
+            &normalized[child_index],
+        )
+        .is_some()
+        {
+            continue;
+        }
+
+        all_nested.push(inspect_nested_repository(
+            parent_name,
+            parent_path,
+            child_path,
+            relative_path,
+        )?);
     }
 
     // Group by remote URL
@@ -64,97 +110,68 @@ fn validate_subrepos_with_output(show_scan: bool) -> Result<ValidationReport> {
     })
 }
 
-/// Find nested repositories within a parent repository
-fn find_nested_in_parent(parent_name: &str, parent_path: &Path) -> Result<Vec<SubrepoInstance>> {
-    let mut nested = Vec::new();
-
-    // Walk the parent looking for nested .git directories
-    let walker = WalkBuilder::new(parent_path)
-        .parents(false)
-        .ignore(false)
-        .git_ignore(false)
-        .git_global(false)
-        .git_exclude(false)
-        .add_custom_ignore_filename(FLEET_IGNORE_FILENAME)
-        .follow_links(false)
-        .max_depth(Some(5)) // Don't go too deep
-        .filter_entry(|entry| {
-            let file_name = entry.file_name().to_str().unwrap_or("");
-
-            // Skip build/dependency directories
-            if SKIP_DIRECTORIES.contains(&file_name) {
-                return false;
-            }
-
-            // Skip .git directories themselves from walking
-            if file_name == ".git" {
-                return false;
-            }
-
-            true
+fn nearest_parent_index(child: usize, normalized: &[PathBuf]) -> Option<usize> {
+    (0..normalized.len())
+        .filter(|parent| {
+            *parent != child
+                && normalized[child] != normalized[*parent]
+                && normalized[child].starts_with(&normalized[*parent])
         })
-        .build();
+        .max_by_key(|parent| normalized[*parent].components().count())
+}
 
-    for entry in walker.flatten() {
-        let path = entry.path();
+fn relative_repository_path(
+    child_path: &Path,
+    parent_path: &Path,
+    normalized_child: &Path,
+    normalized_parent: &Path,
+) -> String {
+    child_path
+        .strip_prefix(parent_path)
+        .or_else(|_| normalized_child.strip_prefix(normalized_parent))
+        .unwrap_or(child_path)
+        .to_string_lossy()
+        .to_string()
+}
 
-        // Only check directories
-        if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
-            continue;
-        }
+fn inspect_nested_repository(
+    parent_name: &str,
+    parent_path: &Path,
+    subrepo_path: &Path,
+    relative_path: String,
+) -> Result<SubrepoInstance> {
+    let subrepo_name = subrepo_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown");
+    let commit_hash = get_current_commit(subrepo_path).with_context(|| {
+        format!(
+            "failed to inspect HEAD for nested repository {}",
+            subrepo_path.display()
+        )
+    })?;
+    let short_hash = commit_hash.chars().take(7).collect();
+    let remote_url = get_remote_url(subrepo_path).ok();
+    let has_uncommitted = has_uncommitted_changes(subrepo_path).with_context(|| {
+        format!(
+            "failed to inspect worktree for nested repository {}",
+            subrepo_path.display()
+        )
+    })?;
+    let commit_timestamp = get_commit_timestamp(subrepo_path, &commit_hash);
 
-        // Skip the parent's root directory
-        if path == parent_path {
-            continue;
-        }
-
-        // Nested drift management is for independent embedded repositories.
-        // Submodules and linked worktrees use a .git file and are handled by
-        // fleet topology/Git itself instead.
-        let git_path = path.join(".git");
-        if !git_path.is_dir() {
-            continue;
-        }
-
-        // This is a nested repo! Get its info
-        let subrepo_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let relative_path = path
-            .strip_prefix(parent_path)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .to_string();
-
-        // Get git info
-        let commit_hash = match get_current_commit(path) {
-            Ok(hash) => hash,
-            Err(_) => continue, // Skip if can't get commit
-        };
-
-        let short_hash = commit_hash.chars().take(7).collect();
-        let remote_url = get_remote_url(path).ok();
-        let uncommitted = has_uncommitted_changes(path)?;
-        let commit_timestamp = get_commit_timestamp(path, &commit_hash);
-
-        nested.push(SubrepoInstance {
-            parent_repo: parent_name.to_string(),
-            parent_path: parent_path.to_path_buf(),
-            subrepo_name,
-            subrepo_path: path.to_path_buf(),
-            relative_path,
-            commit_hash,
-            short_hash,
-            remote_url,
-            has_uncommitted: uncommitted,
-            commit_timestamp,
-        });
-    }
-
-    Ok(nested)
+    Ok(SubrepoInstance {
+        parent_repo: parent_name.to_string(),
+        parent_path: parent_path.to_path_buf(),
+        subrepo_name: subrepo_name.to_string(),
+        subrepo_path: subrepo_path.to_path_buf(),
+        relative_path,
+        commit_hash,
+        short_hash,
+        remote_url,
+        has_uncommitted,
+        commit_timestamp,
+    })
 }
 
 /// Display the validation report
@@ -181,7 +198,7 @@ fn generate_validation_report(report: &ValidationReport) -> String {
     }
     lines.push(format!(
         "  {DIM}·{RESET} {:<18}{}",
-        "Checked", report.total_nested
+        "Nested copies", report.total_nested
     ));
 
     if report.total_nested == 0 {
@@ -274,10 +291,12 @@ fn nested_location(instance: &SubrepoInstance) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::generate_validation_report;
+    use super::{generate_validation_report, validate_discovered_repositories};
     use crate::subrepo::{SubrepoInstance, ValidationReport};
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::process::Command;
+    use tempfile::TempDir;
 
     fn instance(parent: &str, relative: &str, dirty: bool) -> SubrepoInstance {
         SubrepoInstance {
@@ -292,6 +311,32 @@ mod tests {
             has_uncommitted: dirty,
             commit_timestamp: 0,
         }
+    }
+
+    fn initialize_repository(path: &std::path::Path) {
+        std::fs::create_dir_all(path).unwrap();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(path)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "user.name=Test User",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "initial",
+            ])
+            .current_dir(path)
+            .status()
+            .unwrap()
+            .success());
     }
 
     #[test]
@@ -313,7 +358,7 @@ mod tests {
         assert!(output.contains("repos nested validate"));
         assert!(output.contains("Shared groups     1"));
         assert!(output.contains("Missing remote    1"));
-        assert!(output.contains("Checked           3"));
+        assert!(output.contains("Nested copies     3"));
         assert!(output.contains("alpha/vendor/shared"));
         assert!(output.contains("zeta/packages/shared"));
         assert!(output.contains("orphan/nested/shared"));
@@ -321,5 +366,70 @@ mod tests {
         assert!(output.contains("next: run `repos nested status`"));
         assert!(!output.contains("BUILD IT"));
         assert!(!output.contains("SKIP IT"));
+    }
+
+    #[test]
+    fn inventory_assigns_each_checkout_to_its_nearest_parent_once() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent = temp_dir.path().join("parent");
+        let child = parent.join("child");
+        let grandchild = child.join("grandchild");
+        initialize_repository(&parent);
+        initialize_repository(&child);
+        initialize_repository(&grandchild);
+
+        let report = validate_discovered_repositories(
+            &[
+                ("parent".to_string(), parent.clone()),
+                ("child".to_string(), child.clone()),
+                ("grandchild".to_string(), grandchild),
+            ],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(report.total_nested, 2);
+        assert_eq!(report.no_remote.len(), 2);
+        let child_instance = report
+            .no_remote
+            .iter()
+            .find(|instance| instance.subrepo_name == "child")
+            .unwrap();
+        assert_eq!(child_instance.parent_repo, "parent");
+        assert_eq!(child_instance.relative_path, "child");
+        let grandchild_instance = report
+            .no_remote
+            .iter()
+            .find(|instance| instance.subrepo_name == "grandchild")
+            .unwrap();
+        assert_eq!(grandchild_instance.parent_repo, "child");
+        assert_eq!(grandchild_instance.relative_path, "grandchild");
+    }
+
+    #[test]
+    fn inventory_excludes_registered_git_submodules_even_with_embedded_git_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent = temp_dir.path().join("parent");
+        let submodule = parent.join("submodule");
+        initialize_repository(&parent);
+        initialize_repository(&submodule);
+        assert!(Command::new("git")
+            .args(["add", "submodule"])
+            .current_dir(&parent)
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let report = validate_discovered_repositories(
+            &[
+                ("parent".to_string(), parent),
+                ("submodule".to_string(), submodule),
+            ],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(report.total_nested, 0);
     }
 }

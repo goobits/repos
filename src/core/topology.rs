@@ -130,7 +130,7 @@ impl RepositoryTopology {
     }
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| {
         if path.is_absolute() {
             path.to_path_buf()
@@ -152,7 +152,7 @@ fn repository_level(index: usize, parents: &[Option<usize>]) -> usize {
     level
 }
 
-fn gitlink_target(
+pub(crate) fn gitlink_target(
     parent_path: &Path,
     normalized_parent: &Path,
     normalized_child: &Path,

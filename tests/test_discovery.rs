@@ -260,12 +260,12 @@ fn test_handles_symlinks() {
             // Find repositories from the temp directory
             let found_repos = find_repos_from_path(temp_dir.path());
 
-            // Should find both the real repo and symlink (with deduplication)
-            // Depending on implementation, might find 1 or 2
-            assert!(
-                !found_repos.is_empty() && found_repos.len() <= 2,
-                "Should handle symlinks correctly"
+            assert_eq!(
+                found_repos.len(),
+                1,
+                "A symlink alias must not duplicate a physical repository"
             );
+            assert_eq!(found_repos[0].1, real_repo);
         }
     }
 }

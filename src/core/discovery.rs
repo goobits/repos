@@ -30,6 +30,18 @@ fn is_git_file(path: &Path) -> bool {
     }
 }
 
+fn compare_repository_aliases(left: &Path, right: &Path) -> std::cmp::Ordering {
+    let left_is_symlink =
+        fs::symlink_metadata(left).is_ok_and(|metadata| metadata.file_type().is_symlink());
+    let right_is_symlink =
+        fs::symlink_metadata(right).is_ok_and(|metadata| metadata.file_type().is_symlink());
+
+    left_is_symlink
+        .cmp(&right_is_symlink)
+        .then_with(|| left.components().count().cmp(&right.components().count()))
+        .then_with(|| left.cmp(right))
+}
+
 /// Recursively searches for git repositories from a specific path
 /// Returns a vector of (`repository_name`, path) tuples with deduplication
 ///
@@ -114,9 +126,22 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
         })
     });
 
-    let mut paths: Vec<PathBuf> = Arc::try_unwrap(repos_seen)
+    let paths: Vec<PathBuf> = Arc::try_unwrap(repos_seen)
         .map(|map| map.into_iter().map(|(path, ())| path).collect())
         .unwrap_or_else(|arc| arc.iter().map(|entry| entry.key().clone()).collect());
+    let mut physical_repositories = HashMap::<PathBuf, PathBuf>::with_capacity(paths.len());
+    for path in paths {
+        let physical_path = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        physical_repositories
+            .entry(physical_path)
+            .and_modify(|representative| {
+                if compare_repository_aliases(&path, representative).is_lt() {
+                    *representative = path.clone();
+                }
+            })
+            .or_insert(path);
+    }
+    let mut paths = physical_repositories.into_values().collect::<Vec<_>>();
     paths.sort();
 
     let mut name_counts = HashMap::with_capacity(paths.len());

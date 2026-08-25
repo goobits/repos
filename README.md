@@ -93,6 +93,7 @@ See [Commands Reference](docs/guides/commands.md) for complete flag documentatio
 - `repos fetch` updates remote-tracking refs from every configured remote without changing local branches or worktrees.
 - Repository discovery includes nested repositories even when a parent `.gitignore` excludes their paths; dependency/build directories remain explicitly skipped.
 - Use `.reposignore` when a repository below the scan root must be excluded from fleet operations.
+- Nested drift compares independent nested repositories that share a normalized `origin`; `repos nested status --all` also lists unique and missing-origin copies. Git submodules and linked worktrees remain under Git's own workflows.
 - Commit, save, and push run nested children before parents. Pull runs parents before children. Parent pushes that record Git submodules require the exact gitlink commit to be reachable from the child remote.
 - `repos push --auto-upstream` replaces the old “force” wording for publishing new branches.
 - SSH-only policy blocks HTTP(S) before Git can consult a credential helper and reports the repository, effective remote, and exact SSH fix for common hosts.

@@ -419,7 +419,7 @@ Subcommands:
 | Subcommand | Description |
 |---|---|
 | `validate` | Validate nested repository setup |
-| `status` | Show nested drift |
+| `status` | Show all drifted shared groups and summarize nested inventory; `--all` enumerates synced, unique, and missing-origin entries |
 | `sync` | Preflight every eligible copy, then sync them to one requested commit |
 | `update` | Resolve one remote target, then fast-forward eligible copies; skip dirty or divergent copies |
 

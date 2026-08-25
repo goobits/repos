@@ -30,7 +30,9 @@ repos nested validate
 ```
 
 Shows discovered nested repositories and groups shared nested repositories by
-remote URL.
+normalized `origin` identity. Discovery uses the same `.reposignore`-aware fleet
+inventory as push/pull/sync, and assigns each checkout to its nearest parent
+exactly once.
 
 ## Status
 
@@ -39,8 +41,21 @@ repos nested status
 repos nested status --all
 ```
 
-Default output is problem-first: drifted nested repositories are shown first.
-Use `--all` to include fully synced nested repositories.
+Default output is problem-first: it details every drifted shared group and
+summarizes the rest of the inventory. Use `--all` to enumerate fully synced
+shared groups, unique remote-backed repositories, and repositories without an
+`origin`.
+
+The summary distinguishes the full fleet repository count, independent nested
+copies, and shared/unique groups. Drift comparison applies
+only to independent nested repositories with two or more copies of the same
+normalized `origin`. Git submodules and linked worktrees are explicitly outside
+this command's scope; use Git's submodule/worktree commands for those checkouts.
+
+When automatic drift checks after `repos sync`, `repos push`, and `repos pull`
+find drift, their drift sections report shared-group/copy coverage. If inspection
+fails, the report says the check is incomplete instead of implying that no drift
+exists.
 
 ## Sync
 

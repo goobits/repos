@@ -251,7 +251,7 @@ enum NestedCommand {
 
     /// Show nested repository sync status (drift detection)
     Status {
-        /// Show all nested repositories, not just drifted ones
+        /// Show synced, unique, and missing-origin independent nested repositories
         #[arg(long)]
         all: bool,
     },
@@ -293,8 +293,8 @@ fn handle_nested_command(subcommand: NestedCommand) -> Result<()> {
             Ok(())
         }
         NestedCommand::Status { all } => {
-            let statuses = subrepo::status::analyze_subrepos()?;
-            subrepo::status::display_status(&statuses, all);
+            let report = subrepo::status::analyze_nested_status()?;
+            subrepo::status::display_nested_status(&report, all);
             Ok(())
         }
         NestedCommand::Sync { name, to, stash } => {

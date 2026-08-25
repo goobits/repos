@@ -281,10 +281,11 @@ async fn run_diagnostics(context: crate::core::ProcessingContext) -> DoctorRepor
         compare_repository_locations(&left.path, &left.repository, &right.path, &right.repository)
     });
 
-    match crate::subrepo::status::analyze_subrepos_quiet() {
-        Ok(statuses) => {
-            report.nested_drift_count = statuses.iter().filter(|status| status.has_drift).count();
-            report.nested_drift_lines = crate::subrepo::status::format_drift_section(&statuses);
+    match crate::subrepo::status::analyze_nested_status_for_repositories(&context.repositories) {
+        Ok(nested) => {
+            report.nested_drift_count = nested.drifted_count();
+            report.nested_drift_lines =
+                crate::subrepo::status::format_drift_work_items_with_inventory(&nested).1;
         }
         Err(error) => report.global_advisories.push(DoctorFinding::new(
             format!("nested package inspection failed: {error}"),

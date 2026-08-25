@@ -58,10 +58,12 @@ Example drift summary:
 
 ```text
 ▌ Nested Package Drift
-! 1 nested package group is at different commits
+! 1 of 1 shared nested package group is at different commits
+· Compared 2 shared copies across 12 fleet repositories; 0 unique and 0 missing-origin copies are not drift-comparable
+· Scope excludes Git submodules and linked worktrees
   pkg:auth            2 copies  → repos nested sync auth --to 105ce4e
     ✓ target app                            105ce4e
-    ↓ update website                        2f13c23
+    → sync   website                        2f13c23
 ↳ Run `repos nested status` for per-copy details.
 ```
 

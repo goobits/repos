@@ -28,6 +28,74 @@ use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
+#[tokio::test]
+async fn test_nested_status_all_reports_complete_independent_inventory() {
+    let _lock = common::lock_test().await;
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test directory");
+    let shared_remote = root.path().join("shared-remote");
+    fs::create_dir(&shared_remote).expect("Failed to create shared remote");
+    setup_git_repo(&shared_remote).expect("Failed to initialize shared remote");
+    create_test_commit(&shared_remote, "shared.txt", "v1", "initial")
+        .expect("Failed to create initial shared commit");
+    let old_commit = get_head_commit(&shared_remote).expect("Failed to inspect initial commit");
+    create_test_commit(&shared_remote, "shared.txt", "v2", "update")
+        .expect("Failed to create updated shared commit");
+
+    let unique_remote = root.path().join("unique-remote");
+    fs::create_dir(&unique_remote).expect("Failed to create unique remote");
+    setup_git_repo(&unique_remote).expect("Failed to initialize unique remote");
+    create_test_commit(&unique_remote, "unique.txt", "v1", "initial")
+        .expect("Failed to create unique commit");
+
+    let parent_a = root.path().join("parent-a");
+    let parent_b = root.path().join("parent-b");
+    for parent in [&parent_a, &parent_b] {
+        fs::create_dir(parent).expect("Failed to create parent repository");
+        setup_git_repo(parent).expect("Failed to initialize parent repository");
+        create_test_commit(parent, "README.md", "parent", "initial")
+            .expect("Failed to create parent commit");
+    }
+
+    let shared_a = parent_a.join("shared");
+    let shared_b = parent_b.join("shared");
+    clone_repo(&shared_remote, &shared_a).expect("Failed to clone first shared copy");
+    clone_repo(&shared_remote, &shared_b).expect("Failed to clone second shared copy");
+    run_git_ok(&shared_a, &["checkout", &old_commit]);
+
+    let unique = parent_a.join("unique");
+    clone_repo(&unique_remote, &unique).expect("Failed to clone unique nested repository");
+
+    let orphan = parent_b.join("orphan");
+    fs::create_dir(&orphan).expect("Failed to create missing-origin repository");
+    setup_git_repo(&orphan).expect("Failed to initialize missing-origin repository");
+    create_test_commit(&orphan, "orphan.txt", "v1", "initial")
+        .expect("Failed to create missing-origin commit");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["nested", "status", "--all"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run nested status");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("Drifted groups    1"), "{stdout}");
+    assert!(stdout.contains("Shared groups     1"), "{stdout}");
+    assert!(stdout.contains("Unique groups     1"), "{stdout}");
+    assert!(stdout.contains("Missing origin    1"), "{stdout}");
+    assert!(stdout.contains("Nested copies     4"), "{stdout}");
+    assert!(stdout.contains("Fleet repos       8"), "{stdout}");
+    assert!(stdout.contains("parent-a/shared"), "{stdout}");
+    assert!(stdout.contains("parent-b/shared"), "{stdout}");
+    assert!(stdout.contains("parent-a/unique"), "{stdout}");
+    assert!(stdout.contains("parent-b/orphan"), "{stdout}");
+}
+
 // ==============================================================================
 // SYNC COMMAND TESTS (commands/sync.rs)
 // ==============================================================================

@@ -11,7 +11,8 @@ src/
 ├── main.rs                 CLI arguments and command dispatch
 ├── lib.rs                  Library boundary
 ├── commands/               User-facing workflows
-│   ├── sync.rs             Fetch, push, pull, and two-way sync orchestration
+│   ├── sync.rs             Shared transfer setup and two-way sync orchestration
+│   ├── sync/               Focused fetch, push, pull, and progress pipelines
 │   ├── save.rs             Stage, commit, and push workflow
 │   ├── staging.rs          Stage, unstage, commit, and status commands
 │   ├── config.rs           Git identity synchronization
@@ -23,6 +24,7 @@ src/
 ├── audit/                  Secret and repository-hygiene scanners and fixes
 ├── package/                Cargo, npm, and PyPI package adapters
 ├── subrepo/                Nested repository validation, drift, and sync
+│   └── status/             Concise formatting and detailed status rendering
 └── utils/                  Filesystem and terminal helpers
 ```
 
@@ -54,10 +56,11 @@ discovered and ordered. Command scope comes from the requested scan root, and
 `.reposignore` provides explicit per-tree fleet exclusions using gitignore
 pattern syntax.
 
-Discovered paths are deduplicated and sorted before names are assigned. When
-multiple paths have the same directory name, the lexically first path owns the
-base name and later paths receive `-2`, `-3`, and so on. This makes command
-targets stable across runs even though walking is concurrent.
+Discovered paths are canonicalized and deduplicated by physical checkout before
+names are assigned, so a symlink alias cannot run a fleet operation twice. When
+different repositories have the same directory name, the lexically first path
+owns the base name and later paths receive `-2`, `-3`, and so on. This makes
+command targets stable across runs even though walking is concurrent.
 
 ## Git Execution
 
@@ -129,8 +132,10 @@ Secret scanning is limited to one repository and hygiene scanning to three.
 Nested drift repositories are ordinary Git repositories with their own `.git`
 directory inside parent repositories, not Git submodules or linked worktrees.
 Fleet commands still discover submodule checkouts, but only use their indexed
-gitlinks for ordering and publication safety. Validation groups independent
-nested repositories by a normalized remote identity.
+gitlinks for ordering and publication safety. Nested validation derives nearest
+parent relationships from that same fleet inventory so a physical checkout is
+counted once and `.reposignore` has identical scope. Validation groups
+independent nested repositories by a normalized remote identity.
 Equivalent GitHub HTTPS and SSH URLs share a group; case is preserved for paths
 on hosts where repository paths may be case-sensitive.
 

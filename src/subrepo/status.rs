@@ -1,30 +1,28 @@
-//! Subrepo status analysis and drift detection
+//! Nested-repository status models and inventory analysis.
+//!
+//! Formatting and terminal rendering live in focused child modules so the
+//! domain model does not depend on presentation details.
+
+mod detail;
+mod display;
+mod format;
+mod style;
+
+#[cfg(test)]
+mod tests;
 
 use super::SubrepoInstance;
-use crate::core::truncate_text;
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::path::PathBuf;
 
-const RESET: &str = "\x1b[0m";
-const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
-const BOLD_PURPLE: &str = "\x1b[1;38;5;141m";
-const GREEN: &str = "\x1b[1;38;5;114m";
-const YELLOW: &str = "\x1b[1;38;5;221m";
-const RED: &str = "\x1b[1;38;5;203m";
-const DIM: &str = "\x1b[2m";
+pub use display::{display_nested_status, display_status};
+pub use format::{
+    display_drift_summary, format_drift_failure, format_drift_section, format_drift_work_items,
+    format_drift_work_items_with_inventory,
+};
 
-/// Uncommitted changes state across instances
-#[derive(Debug, PartialEq)]
-enum UncommittedState {
-    /// All instances are clean (no uncommitted changes)
-    AllClean,
-    /// All instances have uncommitted changes
-    AllDirty,
-    /// Some instances are clean, some have uncommitted changes
-    Mixed,
-}
-
-/// Status of a single subrepo across multiple parent repositories
+/// Status of one remote-backed nested repository across its fleet copies.
 #[derive(Debug)]
 pub struct SubrepoStatus {
     pub name: String,
@@ -35,17 +33,61 @@ pub struct SubrepoStatus {
     pub has_drift: bool,
 }
 
+/// Complete status inventory for independent nested repositories.
+#[derive(Debug)]
+pub struct NestedStatusReport {
+    pub groups: Vec<SubrepoStatus>,
+    pub no_remote: Vec<SubrepoInstance>,
+    pub total_nested: usize,
+    pub fleet_repositories: usize,
+}
+
+impl NestedStatusReport {
+    pub fn shared_groups(&self) -> impl Iterator<Item = &SubrepoStatus> {
+        self.groups
+            .iter()
+            .filter(|status| status.instances.len() > 1)
+    }
+
+    pub fn unique_groups(&self) -> impl Iterator<Item = &SubrepoStatus> {
+        self.groups
+            .iter()
+            .filter(|status| status.instances.len() == 1)
+    }
+
+    #[must_use]
+    pub fn drifted_count(&self) -> usize {
+        self.shared_groups()
+            .filter(|status| status.has_drift)
+            .count()
+    }
+
+    #[must_use]
+    pub fn synced_count(&self) -> usize {
+        self.shared_groups()
+            .filter(|status| !status.has_drift)
+            .count()
+    }
+
+    #[must_use]
+    pub fn shared_group_count(&self) -> usize {
+        self.shared_groups().count()
+    }
+
+    #[must_use]
+    pub fn shared_copy_count(&self) -> usize {
+        self.shared_groups()
+            .map(|status| status.instances.len())
+            .sum()
+    }
+}
+
 impl SubrepoStatus {
-    /// Calculate sync score: (`total_instances` - `unique_commits`) / (`total_instances` - 1) × 100
-    ///
-    /// Examples:
-    /// - 2 instances, same commit   → (2-1)/(2-1) = 100%
-    /// - 2 instances, diff commits  → (2-2)/(2-1) = 0%
-    /// - 3 instances, 2 commits     → (3-2)/(3-1) = 50%
+    /// Calculate sync score: (`total_instances` - `unique_commits`) / (`total_instances` - 1) × 100.
     fn calculate_sync_score(instances: &[SubrepoInstance]) -> (f32, usize) {
         let unique_commits = instances
             .iter()
-            .map(|i| &i.commit_hash)
+            .map(|instance| &instance.commit_hash)
             .collect::<HashSet<_>>()
             .len();
 
@@ -58,13 +100,13 @@ impl SubrepoStatus {
         (score, unique_commits)
     }
 
-    /// Create a new `SubrepoStatus` from instances
+    /// Create a status from every copy that shares one normalized remote.
     #[must_use]
     pub fn new(name: String, remote_url: String, instances: Vec<SubrepoInstance>) -> Self {
         let (sync_score, unique_commits) = Self::calculate_sync_score(&instances);
-        let has_drift = sync_score < 100.0;
+        let has_drift = unique_commits > 1;
 
-        SubrepoStatus {
+        Self {
             name,
             remote_url,
             instances,
@@ -75,192 +117,81 @@ impl SubrepoStatus {
     }
 }
 
-/// Analyze all subrepos and return status for shared ones
+/// Analyze all nested repositories, including unique and missing-origin copies.
+pub fn analyze_nested_status() -> Result<NestedStatusReport> {
+    let (report, fleet_repositories) = super::validation::validate_subrepos_inventory(true)?;
+    Ok(analyze_nested_status_from_report(
+        report,
+        fleet_repositories,
+    ))
+}
+
+/// Analyze all nested repositories without printing scan progress.
+pub fn analyze_nested_status_quiet() -> Result<NestedStatusReport> {
+    let (report, fleet_repositories) = super::validation::validate_subrepos_inventory(false)?;
+    Ok(analyze_nested_status_from_report(
+        report,
+        fleet_repositories,
+    ))
+}
+
+/// Analyze an existing fleet discovery snapshot without rescanning the filesystem.
+pub(crate) fn analyze_nested_status_for_repositories(
+    repositories: &[(String, PathBuf)],
+) -> Result<NestedStatusReport> {
+    let report = super::validation::validate_discovered_repositories(repositories, false)?;
+    Ok(analyze_nested_status_from_report(
+        report,
+        repositories.len(),
+    ))
+}
+
+/// Analyze all subrepos and return status for shared ones.
+///
+/// This compatibility helper retains the original command-plumbing API. New
+/// report code should use [`analyze_nested_status`] so unique and missing-origin
+/// repositories cannot disappear from its coverage accounting.
 pub fn analyze_subrepos() -> Result<Vec<SubrepoStatus>> {
-    Ok(analyze_subrepos_from_report(
-        super::validation::validate_subrepos()?,
-    ))
+    Ok(analyze_nested_status()?
+        .groups
+        .into_iter()
+        .filter(|status| status.instances.len() > 1)
+        .collect())
 }
 
-/// Analyze all subrepos without printing scan progress.
+/// Analyze shared subrepos without printing scan progress.
 pub fn analyze_subrepos_quiet() -> Result<Vec<SubrepoStatus>> {
-    Ok(analyze_subrepos_from_report(
-        super::validation::validate_subrepos_quiet()?,
-    ))
+    Ok(analyze_nested_status_quiet()?
+        .groups
+        .into_iter()
+        .filter(|status| status.instances.len() > 1)
+        .collect())
 }
 
-fn analyze_subrepos_from_report(report: super::ValidationReport) -> Vec<SubrepoStatus> {
-    let mut statuses = Vec::new();
-    for (remote_url, instances) in report.by_remote {
-        // Skip non-shared subrepos
-        if instances.len() <= 1 {
-            continue;
-        }
-
-        let name = instances[0].subrepo_name.clone();
-        statuses.push(SubrepoStatus::new(name, remote_url, instances));
-    }
-
-    // Keep the full nested-status view problem-first. The concise drift report
-    // applies its own alphabetical ordering for cross-project comparison.
-    statuses.sort_by(|left, right| left.sync_score.total_cmp(&right.sync_score));
-
-    statuses
-}
-
-/// Display concise drift summary for use in repos push
-pub fn display_drift_summary(statuses: &[SubrepoStatus]) {
-    for line in format_drift_section(statuses) {
-        println!("{line}");
-    }
-}
-
-/// Format nested drift with its own report section header.
-#[must_use]
-pub fn format_drift_section(statuses: &[SubrepoStatus]) -> Vec<String> {
-    format_drift_summary_lines(statuses)
-}
-
-/// Format nested drift as actionable work items for another report section.
-#[must_use]
-pub fn format_drift_work_items(statuses: &[SubrepoStatus]) -> (usize, Vec<String>) {
-    let drifted_count = statuses.iter().filter(|status| status.has_drift).count();
-    (drifted_count, format_drift_summary_lines(statuses))
-}
-
-fn format_drift_summary_lines(statuses: &[SubrepoStatus]) -> Vec<String> {
-    let mut drifted = statuses
-        .iter()
-        .filter(|status| status.has_drift)
-        .collect::<Vec<_>>();
-    drifted.sort_by(|left, right| compare_package_statuses(left, right));
-
-    if drifted.is_empty() {
-        return Vec::new();
-    }
-
-    let mut lines = Vec::new();
-    lines.push(format!("{BOLD_PURPLE}▌ Nested Package Drift{RESET}"));
-
-    let group_label = if drifted.len() == 1 {
-        "group is"
-    } else {
-        "groups are"
-    };
-    lines.push(format!(
-        "{YELLOW}!{RESET} {} nested package {group_label} at different commits",
-        drifted.len()
-    ));
-
-    for status in &drifted {
-        format_drift_summary_item(status, &mut lines);
-    }
-
-    lines.push(format!(
-        "{DIM}↳ Run `repos nested status` for per-copy details.{RESET}"
-    ));
-    lines
-}
-
-/// Display a single drifted subrepo in concise format
-fn format_drift_summary_item(status: &SubrepoStatus, lines: &mut Vec<String>) {
-    // Find the latest clean commit (sync target)
-    let latest_clean = status
-        .instances
-        .iter()
-        .filter(|i| !i.has_uncommitted)
-        .max_by_key(|i| i.commit_timestamp);
-
-    // Find absolute latest - instances is guaranteed non-empty by caller
-    let Some(latest) = status.instances.iter().max_by_key(|i| i.commit_timestamp) else {
-        return; // Defensive: skip if somehow empty
-    };
-
-    let target_commit = latest_clean.map_or(&latest.short_hash, |t| &t.short_hash);
-    let scoped_suffix = format!("/@goobits/{}", status.name);
-    let package_label = if status
-        .instances
-        .iter()
-        .any(|instance| instance.relative_path.contains(&scoped_suffix))
-    {
-        format!("@goobits/{}", status.name)
-    } else {
-        format!("pkg:{}", status.name)
-    };
-    lines.push(format!(
-        "  {:22} {:>2} copies  → repos nested sync {} --to {}",
-        truncate_text(&package_label, 22),
-        status.instances.len(),
-        status.name,
-        target_commit
-    ));
-
-    let target_hash = latest_clean.map_or(&latest.commit_hash, |t| &t.commit_hash);
-    let mut rows = status
-        .instances
-        .iter()
-        .map(|instance| DriftRow {
-            state: DriftState::from_instance(instance, target_hash),
-            location: instance_location(instance),
-            short_hash: instance.short_hash.clone(),
+fn analyze_nested_status_from_report(
+    report: super::ValidationReport,
+    fleet_repositories: usize,
+) -> NestedStatusReport {
+    let mut statuses = report
+        .by_remote
+        .into_iter()
+        .filter_map(|(remote_url, instances)| {
+            let name = instances.first()?.subrepo_name.clone();
+            Some(SubrepoStatus::new(name, remote_url, instances))
         })
         .collect::<Vec<_>>();
-    rows.sort_by(|a, b| {
-        a.location
-            .cmp(&b.location)
-            .then_with(|| a.short_hash.cmp(&b.short_hash))
+
+    statuses.sort_by(|left, right| {
+        left.sync_score
+            .total_cmp(&right.sync_score)
+            .then_with(|| compare_package_statuses(left, right))
     });
 
-    for row in rows {
-        let state = row.state.label();
-        let state_cell = format!("{state:<8}");
-        lines.push(format!(
-            "    {} {:30} {}",
-            paint(row.state.color(), &state_cell),
-            truncate_text(&row.location, 30),
-            row.short_hash
-        ));
-    }
-}
-
-struct DriftRow {
-    state: DriftState,
-    location: String,
-    short_hash: String,
-}
-
-#[derive(Clone, Copy)]
-enum DriftState {
-    Target,
-    Update,
-    Dirty,
-}
-
-impl DriftState {
-    fn from_instance(instance: &SubrepoInstance, target_hash: &str) -> Self {
-        if instance.has_uncommitted {
-            DriftState::Dirty
-        } else if instance.commit_hash == target_hash {
-            DriftState::Target
-        } else {
-            DriftState::Update
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            DriftState::Target => "✓ target",
-            DriftState::Update => "↓ update",
-            DriftState::Dirty => "! dirty",
-        }
-    }
-
-    fn color(self) -> &'static str {
-        match self {
-            DriftState::Target => GREEN,
-            DriftState::Update => YELLOW,
-            DriftState::Dirty => RED,
-        }
+    NestedStatusReport {
+        groups: statuses,
+        no_remote: report.no_remote,
+        total_nested: report.total_nested,
+        fleet_repositories,
     }
 }
 
@@ -270,432 +201,30 @@ fn compare_package_statuses(left: &SubrepoStatus, right: &SubrepoStatus) -> std:
         .then_with(|| left.remote_url.cmp(&right.remote_url))
 }
 
+fn compare_target_instances(left: &SubrepoInstance, right: &SubrepoInstance) -> std::cmp::Ordering {
+    left.commit_timestamp
+        .cmp(&right.commit_timestamp)
+        .then_with(|| left.commit_hash.cmp(&right.commit_hash))
+        .then_with(|| instance_location(left).cmp(&instance_location(right)))
+}
+
+fn select_sync_target(status: &SubrepoStatus) -> Option<&SubrepoInstance> {
+    status
+        .instances
+        .iter()
+        .filter(|instance| !instance.has_uncommitted)
+        .max_by(|left, right| compare_target_instances(left, right))
+        .or_else(|| {
+            status
+                .instances
+                .iter()
+                .max_by(|left, right| compare_target_instances(left, right))
+        })
+}
+
 fn instance_location(instance: &SubrepoInstance) -> String {
     match instance.relative_path.as_str() {
         "" | "." => instance.parent_repo.clone(),
-        relative_path => {
-            if relative_path == instance.subrepo_name {
-                instance.parent_repo.clone()
-            } else {
-                format!("{}/{}", instance.parent_repo, relative_path)
-            }
-        }
-    }
-}
-
-fn paint(color: &str, value: &str) -> String {
-    format!("{color}{value}{RESET}")
-}
-
-/// Display subrepo status (problem-first by default)
-pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
-    println!("\n{}", generate_status_summary(statuses));
-
-    if statuses.is_empty() {
-        println!("\n{BOLD_PURPLE}▌ Result{RESET}");
-        println!("  {DIM}No shared nested repositories found.{RESET}");
-        println!(
-            "  {DIM}↳ next: run `repos nested validate` to see every nested repository{RESET}\n"
-        );
-        return;
-    }
-
-    let drifted: Vec<_> = statuses.iter().filter(|s| s.has_drift).collect();
-    let synced: Vec<_> = statuses.iter().filter(|s| !s.has_drift).collect();
-
-    println!();
-
-    // Show drifted subrepos
-    if !drifted.is_empty() {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("🔴 NESTED DRIFT ({})", drifted.len());
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-
-        for status in &drifted {
-            display_drift_status(status);
-        }
-    }
-
-    // Show synced subrepos if requested
-    if show_all && !synced.is_empty() {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("🟢 SYNCED NESTED REPOS ({})", synced.len());
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-
-        for status in synced {
-            display_synced_status(status);
-        }
-    } else if !synced.is_empty() {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!(
-            "💡 {} nested repositories fully synced (100%)",
-            synced.len()
-        );
-        println!("   Use --all to see them");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    }
-
-    // Add footer with global update suggestion if there's drift
-    if !drifted.is_empty() {
-        println!();
-        println!("🔧 To update a drifted repo to its 'origin/main' branch instead, run:");
-        println!("   repos nested update <name>  (e.g., 'repos nested update docs-engine')");
-    }
-
-    println!();
-}
-
-fn generate_status_summary(statuses: &[SubrepoStatus]) -> String {
-    let drifted = statuses.iter().filter(|status| status.has_drift).count();
-    let synced = statuses.len().saturating_sub(drifted);
-    [
-        format!("{BOLD_BLUE}repos nested status{RESET}"),
-        String::new(),
-        format!("{BOLD_PURPLE}▌ Summary{RESET}"),
-        format!("  {GREEN}✓{RESET} {:<16}{synced}", "Synced"),
-        format!("  {YELLOW}!{RESET} {:<16}{drifted}", "Drifted"),
-        format!("  {DIM}·{RESET} {:<16}{}", "Checked", statuses.len()),
-    ]
-    .join("\n")
-}
-
-/// Analyze the uncommitted state across instances
-fn analyze_uncommitted_state(instances: &[SubrepoInstance]) -> UncommittedState {
-    let uncommitted_count = instances.iter().filter(|i| i.has_uncommitted).count();
-
-    if uncommitted_count == 0 {
-        UncommittedState::AllClean
-    } else if uncommitted_count == instances.len() {
-        UncommittedState::AllDirty
-    } else {
-        UncommittedState::Mixed
-    }
-}
-
-/// Display a drifted subrepo with safe, actionable commands
-fn display_drift_status(status: &SubrepoStatus) {
-    println!("{}", status.name);
-    println!("  Remote: {}", status.remote_url);
-    println!(
-        "  Sync Score: {}% ({} commits across {} repos)",
-        status.sync_score as u32,
-        status.unique_commits,
-        status.instances.len()
-    );
-    println!();
-
-    // Find the latest timestamp (absolute latest)
-    let latest_timestamp = status
-        .instances
-        .iter()
-        .map(|i| i.commit_timestamp)
-        .max()
-        .unwrap_or(0);
-
-    // Find the latest CLEAN commit timestamp (sync target)
-    let latest_clean_timestamp = status
-        .instances
-        .iter()
-        .filter(|i| !i.has_uncommitted)
-        .map(|i| i.commit_timestamp)
-        .max();
-
-    // Group instances by commit
-    let mut by_commit: HashMap<String, Vec<&SubrepoInstance>> = HashMap::new();
-    for instance in &status.instances {
-        by_commit
-            .entry(instance.commit_hash.clone())
-            .or_default()
-            .push(instance);
-    }
-
-    // Sort commits by number of instances (most common first), then by timestamp (newest first)
-    let mut commits: Vec<_> = by_commit.into_iter().collect();
-    commits.sort_by(|a, b| {
-        // First sort by count (descending)
-        let count_cmp = b.1.len().cmp(&a.1.len());
-        if count_cmp != std::cmp::Ordering::Equal {
-            return count_cmp;
-        }
-        // Then by timestamp (descending - newest first)
-        let a_timestamp = a.1.iter().map(|i| i.commit_timestamp).max().unwrap_or(0);
-        let b_timestamp = b.1.iter().map(|i| i.commit_timestamp).max().unwrap_or(0);
-        b_timestamp.cmp(&a_timestamp)
-    });
-
-    // Display commits and their instances with arrow notation
-    for (_commit, instances) in &commits {
-        for instance in instances {
-            let is_sync_target = latest_clean_timestamp
-                .is_some_and(|t| instance.commit_timestamp == t && !instance.has_uncommitted);
-            let is_latest = instance.commit_timestamp == latest_timestamp;
-
-            let prefix = if is_sync_target { "→" } else { " " };
-            let status_indicator = if instance.has_uncommitted {
-                "⚠️ uncommitted"
-            } else {
-                "✅ clean"
-            };
-
-            let mut suffix = String::new();
-            if is_latest && !instance.has_uncommitted {
-                suffix.push_str("  ⬆️ LATEST");
-            } else if !is_latest {
-                suffix.push_str("  (outdated)");
-            }
-
-            // Align the repo name and status
-            println!(
-                "  {} {}  {:width$}  {}{}",
-                prefix,
-                instance.short_hash,
-                instance.parent_repo,
-                status_indicator,
-                suffix,
-                width = 30
-            );
-        }
-    }
-    println!();
-
-    // Analyze uncommitted state and provide safe, actionable suggestions
-    let uncommitted_state = analyze_uncommitted_state(&status.instances);
-
-    match uncommitted_state {
-        UncommittedState::AllDirty => {
-            println!("  ⚠️ All instances have uncommitted changes.");
-            println!();
-
-            // No clean target - use the latest commit (guaranteed non-empty by caller)
-            let Some(target_instance) = status.instances.iter().max_by_key(|i| i.commit_timestamp)
-            else {
-                return; // Defensive: skip if somehow empty
-            };
-            let target_commit = &target_instance.short_hash;
-
-            let dirty_repos: Vec<&str> = status
-                .instances
-                .iter()
-                .map(|i| i.parent_repo.as_str())
-                .collect();
-            let repos_desc = if dirty_repos.len() == 1 {
-                format!("'{}'", dirty_repos[0])
-            } else {
-                format!("{} repos", dirty_repos.len())
-            };
-
-            println!("  💡 EASY FIX (Recommended):");
-            println!(
-                "     repos nested sync {} --to {} --stash",
-                status.name, target_commit
-            );
-            println!("     (Stashes uncommitted changes in {repos_desc})");
-            println!();
-            println!("  Manual alternative: commit or discard local changes, then rerun sync.");
-        }
-
-        UncommittedState::Mixed => {
-            // Find the latest CLEAN commit (the sync target)
-            let Some(target_instance) = status
-                .instances
-                .iter()
-                .filter(|i| !i.has_uncommitted)
-                .max_by_key(|i| i.commit_timestamp)
-            else {
-                return; // Defensive: skip if no clean instances
-            };
-            let target_commit = &target_instance.short_hash;
-            let target_repo = &target_instance.parent_repo;
-
-            // Collect dirty repo names
-            let dirty_repos: Vec<&str> = status
-                .instances
-                .iter()
-                .filter(|i| i.has_uncommitted)
-                .map(|i| i.parent_repo.as_str())
-                .collect();
-
-            let dirty_list = if dirty_repos.len() == 1 {
-                format!("'{}'", dirty_repos[0])
-            } else {
-                dirty_repos
-                    .iter()
-                    .map(|r| format!("'{r}'"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-
-            println!("  💡 EASY FIX (Recommended):");
-            println!(
-                "     repos nested sync {} --to {} --stash",
-                status.name, target_commit
-            );
-            println!("     (Syncs {dirty_list} to the clean commit from '{target_repo}')");
-            println!();
-
-            println!(
-                "  Manual alternative: commit or discard changes in {dirty_list}, then rerun sync."
-            );
-        }
-
-        UncommittedState::AllClean => {
-            // All clean - normal sync suggestions work
-            // Find the latest commit (guaranteed non-empty by caller)
-            let Some(latest_commit) = status.instances.iter().max_by_key(|i| i.commit_timestamp)
-            else {
-                return; // Defensive: skip if somehow empty
-            };
-
-            println!("  🔧 SYNC to latest commit:");
-            println!(
-                "     repos nested sync {} --to {}",
-                status.name, latest_commit.short_hash
-            );
-        }
-    }
-
-    println!();
-}
-
-/// Display a synced subrepo
-fn display_synced_status(status: &SubrepoStatus) {
-    println!("{}", status.name);
-    println!("  Remote: {}", status.remote_url);
-    println!("  Sync Score: 100% (all at same commit)");
-    println!();
-
-    // Show the commit they're all at
-    println!("  {}  (all instances)", status.instances[0].short_hash);
-    println!();
-
-    // Check if any have uncommitted changes
-    let has_any_uncommitted = status.instances.iter().any(|i| i.has_uncommitted);
-
-    if has_any_uncommitted {
-        for instance in &status.instances {
-            let status_indicator = if instance.has_uncommitted {
-                "⚠️  uncommitted"
-            } else {
-                "✅ clean"
-            };
-            println!(
-                "    {:width$}  {}",
-                instance.parent_repo,
-                status_indicator,
-                width = 30
-            );
-        }
-        println!();
-        println!("  ✅ Already synchronized");
-        println!("  ⚠️  But some have uncommitted changes");
-    } else {
-        for instance in &status.instances {
-            println!("    • {}", instance.parent_repo);
-        }
-        println!();
-        println!("  ✅ Already synchronized and clean");
-    }
-
-    println!();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{format_drift_section, generate_status_summary, SubrepoStatus};
-    use crate::subrepo::SubrepoInstance;
-    use std::path::PathBuf;
-
-    fn instance(
-        parent: &str,
-        package: &str,
-        commit: &str,
-        short: &str,
-        dirty: bool,
-        timestamp: i64,
-    ) -> SubrepoInstance {
-        SubrepoInstance {
-            parent_repo: parent.to_string(),
-            parent_path: PathBuf::from(parent),
-            subrepo_name: package.to_string(),
-            subrepo_path: PathBuf::from(parent).join(format!("packages/{package}")),
-            relative_path: format!("packages/{package}"),
-            commit_hash: commit.to_string(),
-            short_hash: short.to_string(),
-            remote_url: Some("github.com/team/shared".to_string()),
-            has_uncommitted: dirty,
-            commit_timestamp: timestamp,
-        }
-    }
-
-    #[test]
-    fn nested_status_contract_counts_groups_and_names_each_drifted_copy() {
-        let drifted = SubrepoStatus::new(
-            "shared".to_string(),
-            "github.com/team/shared".to_string(),
-            vec![
-                instance("alpha", "shared", "aaaaaaaa", "aaaaaaa", false, 2),
-                instance("beta", "shared", "bbbbbbbb", "bbbbbbb", false, 1),
-                instance("gamma", "shared", "cccccccc", "ccccccc", true, 3),
-            ],
-        );
-        let synced = SubrepoStatus::new(
-            "stable".to_string(),
-            "github.com/team/stable".to_string(),
-            vec![
-                instance("alpha", "stable", "dddddddd", "ddddddd", false, 1),
-                instance("beta", "stable", "dddddddd", "ddddddd", false, 1),
-            ],
-        );
-        let statuses = vec![drifted, synced];
-
-        let summary = generate_status_summary(&statuses);
-        assert!(summary.contains("repos nested status"));
-        assert!(summary.contains("Synced          1"));
-        assert!(summary.contains("Drifted         1"));
-        assert!(summary.contains("Checked         2"));
-
-        let drift = format_drift_section(&statuses).join("\n");
-        assert!(drift.contains("Nested Package Drift"));
-        assert!(drift.contains("repos nested sync shared --to aaaaaaa"));
-        assert!(drift.contains("alpha/packages/shared"));
-        assert!(drift.contains("beta/packages/shared"));
-        assert!(drift.contains("gamma/packages/shared"));
-        assert!(drift.contains("✓ target"));
-        assert!(drift.contains("↓ update"));
-        assert!(drift.contains("! dirty"));
-    }
-
-    #[test]
-    fn nested_drift_is_alphabetical_by_package_then_project() {
-        let zeta = SubrepoStatus::new(
-            "zeta".to_string(),
-            "github.com/team/zeta".to_string(),
-            vec![
-                instance("zulu-project", "zeta", "bbbbbbbb", "bbbbbbb", false, 2),
-                instance("alpha-project", "zeta", "aaaaaaaa", "aaaaaaa", false, 1),
-            ],
-        );
-        let alpha = SubrepoStatus::new(
-            "alpha".to_string(),
-            "github.com/team/alpha".to_string(),
-            vec![
-                instance("zulu-project", "alpha", "dddddddd", "ddddddd", false, 2),
-                instance("alpha-project", "alpha", "cccccccc", "ccccccc", false, 1),
-            ],
-        );
-
-        let drift = format_drift_section(&[zeta, alpha]).join("\n");
-
-        let alpha_package = drift.find("pkg:alpha").expect("alpha package");
-        let zeta_package = drift.find("pkg:zeta").expect("zeta package");
-        assert!(alpha_package < zeta_package, "{drift}");
-
-        let alpha_project = drift
-            .find("alpha-project/packages/alpha")
-            .expect("alpha project copy");
-        let zulu_project = drift
-            .find("zulu-project/packages/alpha")
-            .expect("zulu project copy");
-        assert!(alpha_project < zulu_project, "{drift}");
+        relative_path => format!("{}/{}", instance.parent_repo, relative_path),
     }
 }
