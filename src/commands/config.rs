@@ -24,11 +24,11 @@ async fn show_config_selection_prompt() -> Result<Option<ConfigArgs>> {
     println!("\n📋 Git Configuration Options\n");
 
     // Get global config
-    let (global_name, global_email) = get_global_user_config().await;
+    let (global_name, global_email) = get_global_user_config().await?;
 
     // Get current directory config
     let current_dir = std::env::current_dir()?;
-    let (current_name, current_email) = get_current_user_config(&current_dir).await;
+    let (current_name, current_email) = get_current_user_config(&current_dir).await?;
 
     println!("1) Global config (~/.gitconfig)");
     if let Some(name) = &global_name {
@@ -168,11 +168,11 @@ pub async fn resolve_config_source(
     match source {
         ConfigSource::Explicit(config) => Ok(config.clone()),
         ConfigSource::Global => {
-            let (name, email) = get_global_user_config().await;
+            let (name, email) = get_global_user_config().await?;
             Ok(UserConfig::new(name, email))
         }
         ConfigSource::Current(path) => {
-            let (name, email) = get_current_user_config(path).await;
+            let (name, email) = get_current_user_config(path).await?;
             Ok(UserConfig::new(name, email))
         }
         ConfigSource::Interactive => {

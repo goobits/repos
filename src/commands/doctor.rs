@@ -13,6 +13,7 @@ use crate::git::remote::{
     context_from_url, inspect_remote, policy_violation, RemoteContext, RemoteDirection,
     RemotePolicyViolation, RemoteTransport,
 };
+use crate::git::worktree::inspect_worktree;
 use crate::utils::compare_repository_locations;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -367,27 +368,20 @@ async fn diagnose_repo(repository: &str, path: &std::path::Path) -> RepositoryDi
         }
     }
 
-    match run_git(path, &["status", "--porcelain"]).await {
-        Ok((true, status, _)) => {
-            if status
-                .lines()
-                .any(|line| line.starts_with("UU") || line.starts_with("AA"))
-            {
+    match inspect_worktree(path).await {
+        Ok(worktree) => {
+            if worktree.has_conflicts() {
                 diagnosis.blockers.push(DoctorFinding::new(
                     "conflicts",
                     format!("git -C {} status", shell_quote(&display_path)),
                 ));
-            } else if !status.trim().is_empty() {
+            } else if worktree.is_dirty() {
                 diagnosis.blockers.push(DoctorFinding::new(
                     "dirty worktree",
                     format!("git -C {} status --short", shell_quote(&display_path)),
                 ));
             }
         }
-        Ok((false, _, stderr)) => diagnosis.blockers.push(DoctorFinding::new(
-            format!("status failed: {}", clean_error_message(&stderr)),
-            format!("git -C {} status", shell_quote(&display_path)),
-        )),
         Err(error) => diagnosis.blockers.push(DoctorFinding::new(
             format!("status failed: {}", clean_error_message(&error.to_string())),
             format!("git -C {} status", shell_quote(&display_path)),

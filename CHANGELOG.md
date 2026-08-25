@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
+- Git state inspection now counts ahead/behind commits from one revision-graph snapshot, reuses that result across status and publish checks, and avoids push-specific remote/LFS probes when a tracked branch has nothing to push.
 - Nested status now derives parent/child relationships from the same fleet inventory as transfer commands, assigns each checkout to its nearest parent exactly once, and makes `--all` include synced, unique, and missing-origin repositories. Summaries distinguish shared groups, physical copies, independent repositories, Git submodules, and linked worktrees.
 - Transfer and sync reports now place their single compact summary at the bottom, including pull/push transfer counts for `repos sync`, so long actionable reports leave the run result visible without duplicating totals.
 - Repository-oriented report sections are now sorted by path, grouping nested packages under their top-level project; nested package drift is sorted alphabetically by package, then by each copy's project path.
@@ -33,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
+- Worktree and conflict detection now uses NUL-delimited porcelain v2, including every unmerged state and filenames containing newlines or non-UTF-8 bytes. Git config command failures are reported instead of being treated as unset values.
 - Repository discovery now canonicalizes physical checkouts before naming them, so symlink aliases cannot make fleet operations or nested drift reports process the same repository twice.
 - Nested inventory no longer drops registered submodules or linked worktrees; checkout type is reported as metadata instead of narrowing drift coverage. Successful automatic drift checks remain visible even when no group is drifted.
 - Automatic push, pull, and sync reports now surface an incomplete nested drift check instead of silently rendering it as no drift, and concise drift output reports its shared-group/copy coverage.

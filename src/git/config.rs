@@ -5,7 +5,8 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
-use super::operations::{get_git_config, run_git, set_git_config};
+use super::operations::{get_git_config, set_git_config};
+use super::runner::run_git_raw;
 use super::status::Status;
 
 /// Type alias for the interactive prompt function
@@ -66,28 +67,43 @@ pub struct ConfigArgs {
 }
 
 /// Gets the current user config (name and email) from a repository
-pub async fn get_current_user_config(path: &Path) -> (Option<String>, Option<String>) {
-    let name = get_git_config(path, "user.name").await.unwrap_or(None);
-    let email = get_git_config(path, "user.email").await.unwrap_or(None);
-    (name, email)
+pub async fn get_current_user_config(path: &Path) -> Result<(Option<String>, Option<String>)> {
+    let name = get_git_config(path, "user.name").await?;
+    let email = get_git_config(path, "user.email").await?;
+    Ok((name, email))
 }
 
 /// Gets the global user config (name and email)
-pub async fn get_global_user_config() -> (Option<String>, Option<String>) {
+pub async fn get_global_user_config() -> Result<(Option<String>, Option<String>)> {
     // Use a temporary directory for global config access
     let temp_dir = std::env::temp_dir();
 
-    let name = match run_git(&temp_dir, &["config", "--global", "--get", "user.name"]).await {
-        Ok((true, value, _)) if !value.is_empty() => Some(value),
-        _ => None,
-    };
+    let name = get_global_git_config(&temp_dir, "user.name").await?;
+    let email = get_global_git_config(&temp_dir, "user.email").await?;
+    Ok((name, email))
+}
 
-    let email = match run_git(&temp_dir, &["config", "--global", "--get", "user.email"]).await {
-        Ok((true, value, _)) if !value.is_empty() => Some(value),
-        _ => None,
-    };
-
-    (name, email)
+async fn get_global_git_config(path: &Path, key: &str) -> Result<Option<String>> {
+    let output = run_git_raw(path, &["config", "--global", "--get", key]).await?;
+    if output.success() {
+        let value = output.stdout_text();
+        return Ok((!value.is_empty()).then_some(value));
+    }
+    if output.exit_code == Some(1) && output.stderr.is_empty() {
+        return Ok(None);
+    }
+    let stderr = output.stderr_text();
+    anyhow::bail!(
+        "{}",
+        if stderr.is_empty() {
+            format!(
+                "global git config failed with exit code {:?}",
+                output.exit_code
+            )
+        } else {
+            stderr
+        }
+    )
 }
 
 /// Validates user config values according to basic requirements
@@ -130,7 +146,15 @@ pub async fn check_repo_config(
     prompt_fn: Option<&PromptFn>,
 ) -> (Status, String) {
     // Get current config
-    let (current_name, current_email) = get_current_user_config(path).await;
+    let (current_name, current_email) = match get_current_user_config(path).await {
+        Ok(config) => config,
+        Err(error) => {
+            return (
+                Status::ConfigError,
+                format!("config inspection failed: {error}"),
+            )
+        }
+    };
     let current_config = UserConfig::new(current_name, current_email);
 
     // Check if config needs updating

@@ -683,7 +683,16 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
         };
     }
 
-    let upstream = summarize_upstream(repo_path).await;
+    let upstream = match refresh.status {
+        Status::NoRemote => UpstreamSummary::NoRemote,
+        Status::NoUpstream => UpstreamSummary::NoUpstream,
+        Status::Skip => UpstreamSummary::Unknown,
+        _ => UpstreamSummary::from_counts(
+            refresh.upstream_name.as_deref().unwrap_or("upstream"),
+            refresh.ahead_count,
+            refresh.behind_count,
+        ),
+    };
     if let Some(summary) = upstream.message() {
         parts.push(summary.to_string());
     }
@@ -790,6 +799,23 @@ enum UpstreamSummary {
 }
 
 impl UpstreamSummary {
+    fn from_counts(upstream: &str, ahead: u32, behind: u32) -> Self {
+        let message = if ahead > 0 && behind > 0 {
+            format!("diverged ({ahead} ahead, {behind} behind)")
+        } else if ahead > 0 {
+            format!("ahead {ahead}")
+        } else if behind > 0 {
+            format!("behind {behind}")
+        } else {
+            format!("synced with {upstream}")
+        };
+        Self::Remote {
+            message,
+            ahead,
+            behind,
+        }
+    }
+
     fn message(&self) -> Option<&str> {
         match self {
             UpstreamSummary::Remote { message, .. } => Some(message),
@@ -819,69 +845,6 @@ impl UpstreamSummary {
             UpstreamSummary::Remote { behind, .. } => Some(*behind),
             _ => None,
         }
-    }
-}
-
-async fn summarize_upstream(repo_path: &std::path::Path) -> UpstreamSummary {
-    use crate::git::operations::run_git;
-
-    let upstream = run_git(repo_path, &["rev-parse", "--abbrev-ref", "@{upstream}"])
-        .await
-        .ok();
-    let Some(upstream) = upstream else {
-        return summarize_missing_upstream(repo_path).await;
-    };
-    if !upstream.0 {
-        return summarize_missing_upstream(repo_path).await;
-    }
-
-    let ahead = run_git(repo_path, &["rev-list", "--count", "HEAD", "^@{upstream}"])
-        .await
-        .ok()
-        .and_then(|(success, count, _)| {
-            if success {
-                count.parse::<u32>().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
-
-    let behind = run_git(repo_path, &["rev-list", "--count", "@{upstream}", "^HEAD"])
-        .await
-        .ok()
-        .and_then(|(success, count, _)| {
-            if success {
-                count.parse::<u32>().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
-
-    let remote = if ahead > 0 && behind > 0 {
-        format!("diverged ({ahead} ahead, {behind} behind)")
-    } else if ahead > 0 {
-        format!("ahead {ahead}")
-    } else if behind > 0 {
-        format!("behind {behind}")
-    } else {
-        format!("synced with {}", upstream.1)
-    };
-
-    UpstreamSummary::Remote {
-        message: remote,
-        ahead,
-        behind,
-    }
-}
-
-async fn summarize_missing_upstream(repo_path: &std::path::Path) -> UpstreamSummary {
-    use crate::git::operations::run_git;
-
-    match run_git(repo_path, &["remote"]).await {
-        Ok((true, remotes, _)) if !remotes.trim().is_empty() => UpstreamSummary::NoUpstream,
-        _ => UpstreamSummary::NoRemote,
     }
 }
 

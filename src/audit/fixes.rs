@@ -837,37 +837,21 @@ async fn check_repository_safety(repo_path: &str, options: &FixOptions) -> Resul
             return Err(anyhow!("git fetch failed: {}", fetch.2));
         }
 
-        // Check if we're behind remote
-        let behind = run_git(repo_path_ref, &["rev-list", "--count", "HEAD..@{u}"]).await?;
-        if !behind.0 {
-            return Err(anyhow!("behind-count check failed: {}", behind.2));
-        }
-        let behind_count = behind
-            .1
-            .parse::<u32>()
-            .map_err(|e| anyhow!("invalid behind count '{}': {e}", behind.1))?;
+        let counts = crate::git::ancestry::ahead_behind(repo_path_ref).await?;
 
-        if behind_count > 0 {
+        if counts.behind > 0 {
             return Err(anyhow!(
-                "Repository is {behind_count} commits behind remote.\n\
-                 Pull changes first: git pull"
+                "Repository is {} commits behind remote.\n\
+                 Pull changes first: git pull",
+                counts.behind
             ));
         }
 
-        // Check if we're ahead (will need force push)
-        let ahead = run_git(repo_path_ref, &["rev-list", "--count", "@{u}..HEAD"]).await?;
-        if !ahead.0 {
-            return Err(anyhow!("ahead-count check failed: {}", ahead.2));
-        }
-        let ahead_count = ahead
-            .1
-            .parse::<u32>()
-            .map_err(|e| anyhow!("invalid ahead count '{}': {e}", ahead.1))?;
-
-        if ahead_count > 0 {
+        if counts.ahead > 0 {
             eprintln!(
-                "⚠️  Warning: Repository is {ahead_count} commits ahead of remote.\n   \
-                 After history rewrite, you'll need: git push --force-with-lease"
+                "⚠️  Warning: Repository is {} commits ahead of remote.\n   \
+                 After history rewrite, you'll need: git push --force-with-lease",
+                counts.ahead
             );
         }
     }

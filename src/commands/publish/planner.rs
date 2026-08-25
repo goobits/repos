@@ -187,18 +187,11 @@ async fn verify_release_commit(path: &std::path::Path) -> anyhow::Result<()> {
         );
     }
 
-    let behind =
-        crate::git::operations::run_git(path, &["rev-list", "--count", "@{upstream}", "^HEAD"])
-            .await?;
-    if !behind.0 {
-        anyhow::bail!("release ancestry check failed: {}", behind.2);
-    }
-    let behind = behind
-        .1
-        .parse::<u32>()
-        .map_err(|error| anyhow::anyhow!("invalid behind count: {error}"))?;
-    if behind > 0 {
-        anyhow::bail!("release commit is {behind} commits behind; run `repos pull` first");
+    if state.behind_count > 0 {
+        anyhow::bail!(
+            "release commit is {} commits behind; run `repos pull` first",
+            state.behind_count
+        );
     }
     Ok(())
 }
