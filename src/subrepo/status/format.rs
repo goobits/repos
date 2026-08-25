@@ -32,7 +32,7 @@ pub fn format_drift_work_items(statuses: &[SubrepoStatus]) -> (usize, Vec<String
 #[must_use]
 pub fn format_drift_work_items_with_inventory(report: &NestedStatusReport) -> (usize, Vec<String>) {
     (
-        report.drifted_count(),
+        report.drifted_count() + report.uninitialized_submodules.len(),
         format_drift_summary_lines(&report.groups, Some(report)),
     )
 }
@@ -69,7 +69,7 @@ fn format_drift_summary_lines(
         } else {
             "groups"
         };
-        if inventory.total_nested == 0 {
+        if inventory.total_nested == 0 && inventory.uninitialized_submodules.is_empty() {
             lines.push(format!(
                 "{GREEN}✓{RESET} No nested checkouts discovered in {} fleet repositories",
                 inventory.fleet_repositories
@@ -96,6 +96,30 @@ fn format_drift_summary_lines(
             inventory.unique_groups().count(),
             inventory.no_remote.len()
         ));
+        if !inventory.uninitialized_submodules.is_empty() {
+            lines.push(format!(
+                "{YELLOW}!{RESET} {} declared submodule checkout{} uninitialized",
+                inventory.uninitialized_submodules.len(),
+                if inventory.uninitialized_submodules.len() == 1 {
+                    " is"
+                } else {
+                    "s are"
+                }
+            ));
+            for submodule in &inventory.uninitialized_submodules {
+                lines.push(format!(
+                    "  ! {}/{} @ {}",
+                    submodule.parent_repo,
+                    submodule.relative_path,
+                    submodule.target_commit.chars().take(7).collect::<String>()
+                ));
+                lines.push(format!(
+                    "    {DIM}↳ next: git -C {} submodule update --init -- {}{RESET}",
+                    submodule.parent_path.display(),
+                    submodule.relative_path
+                ));
+            }
+        }
         lines.push(format!(
             "{DIM}· Scope: {} independent, {} submodule, {} linked-worktree copies{RESET}",
             inventory.checkout_count(NestedCheckoutKind::Independent),

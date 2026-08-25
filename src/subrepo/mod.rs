@@ -67,12 +67,22 @@ pub struct SubrepoInstance {
     pub checkout_kind: NestedCheckoutKind,
 }
 
+/// A gitlink recorded by a fleet parent whose checkout is not initialized.
+#[derive(Debug, Clone)]
+pub struct DeclaredSubmodule {
+    pub parent_repo: String,
+    pub parent_path: PathBuf,
+    pub relative_path: String,
+    pub target_commit: String,
+}
+
 /// Summary of discovered subrepos grouped by remote URL
 #[derive(Debug)]
 pub struct ValidationReport {
     pub total_nested: usize,
     pub by_remote: HashMap<String, Vec<SubrepoInstance>>,
     pub no_remote: Vec<SubrepoInstance>,
+    pub uninitialized_submodules: Vec<DeclaredSubmodule>,
 }
 
 impl ValidationReport {
@@ -106,18 +116,40 @@ fn path_to_str(path: &Path) -> Result<&str> {
         .context("Path contains invalid UTF-8 characters")
 }
 
-/// Get current commit hash for a git repository
-fn get_current_commit(path: &Path) -> Result<String> {
+/// Read the exact HEAD identity and timestamp from one object snapshot.
+fn get_head_metadata(path: &Path) -> Result<(String, i64)> {
     let output = Command::new("git")
-        .args(["-C", path_to_str(path)?, "rev-parse", "HEAD"])
+        .args([
+            "-C",
+            path_to_str(path)?,
+            "show",
+            "-s",
+            "--format=%H%x00%ct",
+            "HEAD",
+        ])
         .output()
-        .context("Failed to run git rev-parse")?;
+        .context("Failed to inspect nested repository HEAD")?;
 
     if !output.status.success() {
-        anyhow::bail!("git rev-parse failed");
+        anyhow::bail!(
+            "git show failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
 
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    let stdout = String::from_utf8(output.stdout)?;
+    let (commit_hash, timestamp) = stdout
+        .trim()
+        .split_once('\0')
+        .context("Invalid nested repository HEAD metadata")?;
+    let commit_timestamp = timestamp
+        .parse()
+        .context("Invalid nested repository commit timestamp")?;
+    Ok((commit_hash.to_string(), commit_timestamp))
+}
+
+fn get_current_commit(path: &Path) -> Result<String> {
+    Ok(get_head_metadata(path)?.0)
 }
 
 /// Get the normalized origin URL, distinguishing a missing origin from an
@@ -189,7 +221,8 @@ fn has_uncommitted_changes(path: &Path) -> Result<bool> {
             "-C",
             path_str,
             "status",
-            "--porcelain=v1",
+            "--porcelain=v2",
+            "-z",
             "--untracked-files=normal",
             "--ignore-submodules=dirty",
         ])
@@ -204,26 +237,6 @@ fn has_uncommitted_changes(path: &Path) -> Result<bool> {
     }
 
     Ok(!output.stdout.is_empty())
-}
-
-/// Get commit timestamp (Unix epoch seconds).
-fn get_commit_timestamp(path: &Path, commit_hash: &str) -> Result<i64> {
-    let path_str = path_to_str(path)?;
-    let output = Command::new("git")
-        .args(["-C", path_str, "show", "-s", "--format=%ct", commit_hash])
-        .output()
-        .context("Failed to inspect nested repository commit timestamp")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git show failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    String::from_utf8(output.stdout)?
-        .trim()
-        .parse()
-        .context("Invalid nested repository commit timestamp")
 }
 
 #[cfg(test)]

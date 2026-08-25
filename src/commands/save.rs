@@ -107,6 +107,8 @@ async fn process_save_repositories(
             let progress_bar = progress_bars[index].clone();
             let gitlink_prerequisites =
                 topology.gitlink_prerequisites(index, &context.repositories);
+            let gitlink_inspection_error =
+                topology.gitlink_inspection_error(index).map(str::to_string);
             let semaphore = std::sync::Arc::clone(&context.semaphore);
             let stats = std::sync::Arc::clone(&context.statistics);
             let footer = footer_pb.clone();
@@ -122,6 +124,7 @@ async fn process_save_repositories(
                     auto_upstream,
                     dry_run,
                     &gitlink_prerequisites,
+                    gitlink_inspection_error.as_deref(),
                 )
                 .await;
 
@@ -177,7 +180,15 @@ async fn save_one_repo(
     auto_upstream: bool,
     dry_run: bool,
     gitlink_prerequisites: &[GitlinkPrerequisite],
+    gitlink_inspection_error: Option<&str>,
 ) -> (Status, String, bool) {
+    if let Some(error) = gitlink_inspection_error {
+        return (
+            Status::StagingError,
+            format!("submodule relationship inspection failed: {error}"),
+            false,
+        );
+    }
     match is_detached_head(repo_path).await {
         Ok(true) => {
             return (

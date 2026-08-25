@@ -1,10 +1,10 @@
 //! Validation logic for discovering nested repositories
 
 use super::{
-    get_commit_timestamp, get_current_commit, get_remote_url, has_uncommitted_changes,
+    get_head_metadata, get_remote_url, has_uncommitted_changes, DeclaredSubmodule,
     NestedCheckoutKind, SubrepoInstance, ValidationReport,
 };
-use crate::core::topology::{gitlink_target, normalize_path};
+use crate::core::topology::{FleetIndex, RepositoryTopology};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -39,6 +39,17 @@ pub(crate) fn validate_discovered_repositories(
     repositories: &[(String, PathBuf)],
     show_scan: bool,
 ) -> Result<ValidationReport> {
+    let index = FleetIndex::new(repositories);
+    let topology = RepositoryTopology::from_index(repositories, &index);
+    validate_discovered_repositories_with_topology(repositories, &index, &topology, show_scan)
+}
+
+pub(crate) fn validate_discovered_repositories_with_topology(
+    repositories: &[(String, PathBuf)],
+    index: &FleetIndex,
+    topology: &RepositoryTopology,
+    show_scan: bool,
+) -> Result<ValidationReport> {
     let mut all_nested = Vec::new();
 
     if show_scan {
@@ -48,29 +59,25 @@ pub(crate) fn validate_discovered_repositories(
         );
     }
 
-    let normalized = repositories
-        .iter()
-        .map(|(_, path)| normalize_path(path))
-        .collect::<Vec<_>>();
     for (child_index, (_, child_path)) in repositories.iter().enumerate() {
-        let Some(parent_index) = nearest_parent_index(child_index, &normalized) else {
+        let Some(parent_index) = index.parent(child_index) else {
             continue;
         };
 
         let (parent_name, parent_path) = &repositories[parent_index];
+        if let Some(error) = topology.gitlink_inspection_error(parent_index) {
+            anyhow::bail!(
+                "failed to inspect nested relationships for {}: {error}",
+                parent_path.display()
+            );
+        }
         let relative_path = relative_repository_path(
             child_path,
             parent_path,
-            &normalized[child_index],
-            &normalized[parent_index],
+            index.normalized_path(child_index),
+            index.normalized_path(parent_index),
         );
-        let checkout_kind = if gitlink_target(
-            parent_path,
-            &normalized[parent_index],
-            &normalized[child_index],
-        )
-        .is_some()
-        {
+        let checkout_kind = if topology.is_gitlink(parent_index, child_index) {
             NestedCheckoutKind::Submodule
         } else if child_path.join(".git").is_file() {
             NestedCheckoutKind::LinkedWorktree
@@ -86,6 +93,32 @@ pub(crate) fn validate_discovered_repositories(
             checkout_kind,
         )?);
     }
+
+    let mut uninitialized_submodules = Vec::new();
+    for (parent_index, (parent_name, parent_path)) in repositories.iter().enumerate() {
+        if let Some(error) = topology.gitlink_inspection_error(parent_index) {
+            anyhow::bail!(
+                "failed to inspect submodule declarations for {}: {error}",
+                parent_path.display()
+            );
+        }
+        for (relative_path, target_commit) in topology.indexed_gitlinks(parent_index) {
+            let checkout_path = index.normalized_path(parent_index).join(relative_path);
+            if index.repository_at(&checkout_path).is_none() {
+                uninitialized_submodules.push(DeclaredSubmodule {
+                    parent_repo: parent_name.clone(),
+                    parent_path: parent_path.clone(),
+                    relative_path: relative_path.to_string_lossy().to_string(),
+                    target_commit: target_commit.clone(),
+                });
+            }
+        }
+    }
+    uninitialized_submodules.sort_by(|left, right| {
+        left.parent_repo
+            .cmp(&right.parent_repo)
+            .then_with(|| left.relative_path.cmp(&right.relative_path))
+    });
 
     // Group by remote URL
     let mut by_remote: HashMap<String, Vec<SubrepoInstance>> = HashMap::new();
@@ -105,17 +138,8 @@ pub(crate) fn validate_discovered_repositories(
         total_nested,
         by_remote,
         no_remote,
+        uninitialized_submodules,
     })
-}
-
-fn nearest_parent_index(child: usize, normalized: &[PathBuf]) -> Option<usize> {
-    (0..normalized.len())
-        .filter(|parent| {
-            *parent != child
-                && normalized[child] != normalized[*parent]
-                && normalized[child].starts_with(&normalized[*parent])
-        })
-        .max_by_key(|parent| normalized[*parent].components().count())
 }
 
 fn relative_repository_path(
@@ -143,7 +167,7 @@ fn inspect_nested_repository(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("unknown");
-    let commit_hash = get_current_commit(subrepo_path).with_context(|| {
+    let (commit_hash, commit_timestamp) = get_head_metadata(subrepo_path).with_context(|| {
         format!(
             "failed to inspect HEAD for nested repository {}",
             subrepo_path.display()
@@ -162,13 +186,6 @@ fn inspect_nested_repository(
             subrepo_path.display()
         )
     })?;
-    let commit_timestamp = get_commit_timestamp(subrepo_path, &commit_hash).with_context(|| {
-        format!(
-            "failed to inspect commit timestamp for nested repository {}",
-            subrepo_path.display()
-        )
-    })?;
-
     Ok(SubrepoInstance {
         parent_repo: parent_name.to_string(),
         parent_path: parent_path.to_path_buf(),
@@ -206,6 +223,13 @@ fn generate_validation_report(report: &ValidationReport) -> String {
             report.no_remote.len()
         ));
     }
+    if !report.uninitialized_submodules.is_empty() {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} {:<18}{}",
+            "Uninitialized",
+            report.uninitialized_submodules.len()
+        ));
+    }
     lines.push(format!(
         "  {DIM}·{RESET} {:<18}{}",
         "Nested copies", report.total_nested
@@ -226,7 +250,7 @@ fn generate_validation_report(report: &ValidationReport) -> String {
         report.checkout_count(NestedCheckoutKind::LinkedWorktree)
     ));
 
-    if report.total_nested == 0 {
+    if report.total_nested == 0 && report.uninitialized_submodules.is_empty() {
         lines.push(String::new());
         lines.push(format!("{BOLD_PURPLE}▌ Result{RESET}"));
         lines.push(format!("  {DIM}No nested repositories found.{RESET}"));
@@ -286,6 +310,24 @@ fn generate_validation_report(report: &ValidationReport) -> String {
             ));
             lines.push(format!(
                 "    {DIM}↳ next: add an origin remote or exclude this nested repository{RESET}"
+            ));
+        }
+    }
+
+    if !report.uninitialized_submodules.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("{BOLD_PURPLE}▌ Uninitialized Submodules{RESET}"));
+        for submodule in &report.uninitialized_submodules {
+            lines.push(format!(
+                "  {YELLOW}!{RESET} {}/{} @ {}",
+                submodule.parent_repo,
+                submodule.relative_path,
+                submodule.target_commit.chars().take(7).collect::<String>()
+            ));
+            lines.push(format!(
+                "    {DIM}↳ next: git -C {} submodule update --init -- {}{RESET}",
+                submodule.parent_path.display(),
+                submodule.relative_path
             ));
         }
     }
@@ -379,6 +421,7 @@ mod tests {
                 ],
             )]),
             no_remote: vec![instance("orphan", "nested/shared", false)],
+            uninitialized_submodules: Vec::new(),
         };
 
         let output = generate_validation_report(&report);
@@ -501,6 +544,48 @@ mod tests {
 
         assert_eq!(report.total_nested, 1);
         assert_eq!(report.checkout_count(NestedCheckoutKind::Submodule), 1);
+    }
+
+    #[test]
+    fn inventory_reports_declared_submodules_without_initialized_checkouts() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source");
+        let parent = temp_dir.path().join("parent");
+        initialize_repository(&source);
+        initialize_repository(&parent);
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "modules/shared",
+            ])
+            .current_dir(&parent)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        assert!(Command::new("git")
+            .args(["submodule", "deinit", "-f", "--", "modules/shared"])
+            .current_dir(&parent)
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let report =
+            validate_discovered_repositories(&[("parent".to_string(), parent.clone())], false)
+                .unwrap();
+
+        assert_eq!(report.total_nested, 0);
+        assert_eq!(report.uninitialized_submodules.len(), 1);
+        assert_eq!(
+            report.uninitialized_submodules[0].relative_path,
+            "modules/shared"
+        );
+        assert_eq!(report.uninitialized_submodules[0].parent_path, parent);
     }
 
     #[test]

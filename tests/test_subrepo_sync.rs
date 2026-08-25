@@ -104,6 +104,7 @@ fn test_sync_subrepo_success() -> Result<()> {
         total_nested: 2,
         by_remote,
         no_remote: vec![],
+        uninitialized_submodules: vec![],
     };
 
     // 3. Run Sync
@@ -170,6 +171,7 @@ fn test_sync_preflights_every_copy_before_changing_any_checkout() -> Result<()> 
             instances.clone(),
         )]),
         no_remote: Vec::new(),
+        uninitialized_submodules: Vec::new(),
     };
 
     let result = sync_subrepo_with_report("upstream", &unavailable_target, false, false, &report);

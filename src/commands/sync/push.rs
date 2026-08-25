@@ -4,9 +4,9 @@ use super::progress::{
     create_sync_progress, finish_sync_progress, record_semaphore_error, record_transfer_result,
     spawn_slow_repo_watchdog, stop_slow_repo_watchdog, TransferDirection, TransferResultContext,
 };
-use super::{format_nested_drift_work_items, prepare_transfer_context, FleetTransfer, TransferRun};
+use super::{prepare_transfer_context, FleetTransfer, TransferRun};
 use crate::core::{
-    print_final_report, set_terminal_title_and_flush, RepositoryOrder, RepositoryTopology,
+    print_final_report, set_terminal_title_and_flush, RepositoryOrder, TopologySnapshot,
 };
 use crate::git::failure::{GitFailure, GitOperationPhase, GitOperationResult};
 use crate::git::Status;
@@ -36,6 +36,7 @@ pub async fn handle_push_command(
         show_changes,
         no_drift_check,
         true,
+        None,
     )
     .await;
     set_terminal_title_and_flush(FleetTransfer::Push.completed_title());
@@ -49,6 +50,7 @@ pub(super) async fn process_push_repositories(
     show_changes: bool,
     no_drift_check: bool,
     render_report: bool,
+    topology: Option<std::sync::Arc<TopologySnapshot>>,
 ) -> TransferRun {
     use crate::core::acquire_stats_lock;
     use crate::core::config::FETCH_CONCURRENT_CAP;
@@ -75,14 +77,20 @@ pub(super) async fn process_push_repositories(
     let rate_limit_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let has_rate_limit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let topology = RepositoryTopology::new(&context.repositories);
-    for wave in topology.waves(RepositoryOrder::ChildrenFirst) {
+    let topology = topology
+        .unwrap_or_else(|| std::sync::Arc::new(TopologySnapshot::new(&context.repositories)));
+    for wave in topology.topology().waves(RepositoryOrder::ChildrenFirst) {
         let mut futures = FuturesUnordered::new();
         for index in wave {
             let (repository, path) = &context.repositories[index];
             let progress_bar = repository_bars[index].clone();
-            let gitlink_prerequisites =
-                topology.gitlink_prerequisites(index, &context.repositories);
+            let gitlink_prerequisites = topology
+                .topology()
+                .gitlink_prerequisites(index, &context.repositories);
+            let gitlink_inspection_error = topology
+                .topology()
+                .gitlink_inspection_error(index)
+                .map(str::to_string);
             let fetch_semaphore = std::sync::Arc::clone(&fetch_semaphore);
             let push_semaphore = std::sync::Arc::clone(&context.semaphore);
             let statistics = std::sync::Arc::clone(&context.statistics);
@@ -120,12 +128,24 @@ pub(super) async fn process_push_repositories(
                 let fetch_result = fetch_and_analyze(path, auto_upstream).await;
                 drop(fetch_permit);
 
-                let blocked_children = if fetch_result.will_push(auto_upstream) {
+                let blocked_children = if gitlink_inspection_error.is_none()
+                    && fetch_result.will_push(auto_upstream)
+                {
                     crate::git::operations::unpublished_gitlinks(&gitlink_prerequisites).await
                 } else {
                     Vec::new()
                 };
-                let result = if blocked_children.is_empty() {
+                let result = if let Some(error) = gitlink_inspection_error {
+                    GitOperationResult::failed(
+                        Status::Error,
+                        GitFailure::from_message(
+                            GitOperationPhase::Push,
+                            format!("submodule relationship inspection failed: {error}"),
+                            None,
+                        ),
+                        fetch_result.has_uncommitted,
+                    )
+                } else if blocked_children.is_empty() {
                     let push_permit = match push_semaphore.acquire().await {
                         Ok(permit) => permit,
                         Err(error) => {
@@ -195,7 +215,7 @@ pub(super) async fn process_push_repositories(
     finish_sync_progress(&footer, concise.as_ref());
 
     let (drift_count, drift_lines) = if render_report && !no_drift_check {
-        format_nested_drift_work_items(&context.repositories)
+        super::format_nested_drift_work_items_with_topology(&context.repositories, &topology)
     } else {
         (0, Vec::new())
     };

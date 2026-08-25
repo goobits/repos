@@ -3,6 +3,9 @@
 `repos nested` reports and manages Git repositories discovered below another
 fleet repository. The inventory includes independent embedded repositories,
 registered Git submodules, and linked worktrees, with each checkout type labeled.
+Declared submodules whose checkout has not been initialized are reported in a
+separate section with an exact `git submodule update --init` command; they are
+not counted as inspected nested copies because no worktree exists to inspect.
 
 ## Commands
 

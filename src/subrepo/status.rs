@@ -11,7 +11,7 @@ mod style;
 #[cfg(test)]
 mod tests;
 
-use super::{NestedCheckoutKind, SubrepoInstance};
+use super::{DeclaredSubmodule, NestedCheckoutKind, SubrepoInstance};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -38,6 +38,7 @@ pub struct SubrepoStatus {
 pub struct NestedStatusReport {
     pub groups: Vec<SubrepoStatus>,
     pub no_remote: Vec<SubrepoInstance>,
+    pub uninitialized_submodules: Vec<DeclaredSubmodule>,
     pub total_nested: usize,
     pub fleet_repositories: usize,
 }
@@ -156,6 +157,22 @@ pub(crate) fn analyze_nested_status_for_repositories(
     ))
 }
 
+pub(crate) fn analyze_nested_status_for_repositories_with_topology(
+    repositories: &[(String, PathBuf)],
+    snapshot: &crate::core::TopologySnapshot,
+) -> Result<NestedStatusReport> {
+    let report = super::validation::validate_discovered_repositories_with_topology(
+        repositories,
+        snapshot.index(),
+        snapshot.topology(),
+        false,
+    )?;
+    Ok(analyze_nested_status_from_report(
+        report,
+        repositories.len(),
+    ))
+}
+
 /// Analyze all subrepos and return status for shared ones.
 ///
 /// This compatibility helper retains the original command-plumbing API. New
@@ -200,6 +217,7 @@ fn analyze_nested_status_from_report(
     NestedStatusReport {
         groups: statuses,
         no_remote: report.no_remote,
+        uninitialized_submodules: report.uninitialized_submodules,
         total_nested: report.total_nested,
         fleet_repositories,
     }

@@ -752,6 +752,7 @@ mod tests {
             total_nested: 2,
             by_remote,
             no_remote: Vec::new(),
+            uninitialized_submodules: Vec::new(),
         };
 
         let error = find_instances_by_name(&report, "shared").unwrap_err();

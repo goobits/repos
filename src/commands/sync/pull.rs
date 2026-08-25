@@ -4,9 +4,9 @@ use super::progress::{
     create_sync_progress, finish_sync_progress, record_semaphore_error, record_transfer_result,
     TransferDirection, TransferResultContext,
 };
-use super::{format_nested_drift_work_items, prepare_transfer_context, FleetTransfer, TransferRun};
+use super::{prepare_transfer_context, FleetTransfer, TransferRun};
 use crate::core::{
-    print_final_report, set_terminal_title_and_flush, RepositoryOrder, RepositoryTopology,
+    print_final_report, set_terminal_title_and_flush, RepositoryOrder, TopologySnapshot,
 };
 use crate::git::failure::GitOperationResult;
 use anyhow::Result;
@@ -33,6 +33,7 @@ pub async fn handle_pull_command(
         show_changes,
         no_drift_check,
         true,
+        None,
     )
     .await;
     set_terminal_title_and_flush(FleetTransfer::Pull.completed_title());
@@ -46,6 +47,7 @@ pub(super) async fn process_pull_repositories(
     show_changes: bool,
     no_drift_check: bool,
     render_report: bool,
+    topology: Option<std::sync::Arc<TopologySnapshot>>,
 ) -> TransferRun {
     use crate::core::acquire_stats_lock;
     use crate::core::config::FETCH_CONCURRENT_CAP;
@@ -66,8 +68,9 @@ pub(super) async fn process_pull_repositories(
     let rate_limit_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let has_rate_limit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let topology = RepositoryTopology::new(&context.repositories);
-    for wave in topology.waves(RepositoryOrder::ParentsFirst) {
+    let topology = topology
+        .unwrap_or_else(|| std::sync::Arc::new(TopologySnapshot::new(&context.repositories)));
+    for wave in topology.topology().waves(RepositoryOrder::ParentsFirst) {
         let mut futures = FuturesUnordered::new();
         for index in wave {
             let (repository, path) = &context.repositories[index];
@@ -157,7 +160,7 @@ pub(super) async fn process_pull_repositories(
     finish_sync_progress(&footer, concise.as_ref());
 
     let (drift_count, drift_lines) = if render_report && !no_drift_check {
-        format_nested_drift_work_items(&context.repositories)
+        super::format_nested_drift_work_items_with_topology(&context.repositories, &topology)
     } else {
         (0, Vec::new())
     };

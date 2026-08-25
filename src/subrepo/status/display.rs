@@ -5,12 +5,12 @@ use super::detail::{
 };
 use super::style::{BOLD_BLUE, BOLD_PURPLE, DIM, GREEN, RESET, YELLOW};
 use super::{instance_location, NestedStatusReport, SubrepoInstance, SubrepoStatus};
-use crate::subrepo::NestedCheckoutKind;
+use crate::subrepo::{DeclaredSubmodule, NestedCheckoutKind};
 
 /// Display shared subrepo status through the compatibility API.
 pub fn display_status(statuses: &[SubrepoStatus], show_all: bool) {
     let total_nested = statuses.iter().map(|status| status.instances.len()).sum();
-    display_status_inventory(statuses, &[], total_nested, None, show_all);
+    display_status_inventory(statuses, &[], &[], total_nested, None, show_all);
 }
 
 /// Display a complete independent-nested-repository inventory.
@@ -18,6 +18,7 @@ pub fn display_nested_status(report: &NestedStatusReport, show_all: bool) {
     display_status_inventory(
         &report.groups,
         &report.no_remote,
+        &report.uninitialized_submodules,
         report.total_nested,
         Some(report.fleet_repositories),
         show_all,
@@ -27,16 +28,23 @@ pub fn display_nested_status(report: &NestedStatusReport, show_all: bool) {
 fn display_status_inventory(
     statuses: &[SubrepoStatus],
     no_remote: &[SubrepoInstance],
+    uninitialized_submodules: &[DeclaredSubmodule],
     total_nested: usize,
     fleet_repositories: Option<usize>,
     show_all: bool,
 ) {
     println!(
         "\n{}",
-        generate_status_summary(statuses, no_remote, total_nested, fleet_repositories)
+        generate_status_summary(
+            statuses,
+            no_remote,
+            uninitialized_submodules,
+            total_nested,
+            fleet_repositories,
+        )
     );
 
-    if total_nested == 0 {
+    if total_nested == 0 && uninitialized_submodules.is_empty() {
         println!("\n{BOLD_PURPLE}▌ Result{RESET}");
         if fleet_repositories.is_some() {
             println!("  {DIM}No nested repositories found.{RESET}\n");
@@ -72,13 +80,19 @@ fn display_status_inventory(
             display_unique_status,
         );
         display_missing_remote_section(no_remote);
-    } else if !synced.is_empty() || !unique.is_empty() || !no_remote.is_empty() {
+        display_uninitialized_submodules(uninitialized_submodules);
+    } else if !synced.is_empty()
+        || !unique.is_empty()
+        || !no_remote.is_empty()
+        || !uninitialized_submodules.is_empty()
+    {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!(
-            "💡 Details hidden: {} synced shared groups, {} unique repositories, {} missing origin",
+            "💡 Details hidden: {} synced shared groups, {} unique repositories, {} missing origin, {} uninitialized submodules",
             synced.len(),
             unique.len(),
-            no_remote.len()
+            no_remote.len(),
+            uninitialized_submodules.len()
         );
         println!("   Use --all to show every discovered nested repository");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -90,6 +104,28 @@ fn display_status_inventory(
         println!("   repos nested update <name>  (e.g., 'repos nested update docs-engine')");
     }
     println!();
+}
+
+fn display_uninitialized_submodules(submodules: &[DeclaredSubmodule]) {
+    if submodules.is_empty() {
+        return;
+    }
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("🟡 UNINITIALIZED SUBMODULES ({})", submodules.len());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    for submodule in submodules {
+        println!(
+            "{} / {} @ {}",
+            submodule.parent_repo,
+            submodule.relative_path,
+            submodule.target_commit.chars().take(7).collect::<String>()
+        );
+        println!(
+            "  ↳ next: git -C {} submodule update --init -- {}\n",
+            submodule.parent_path.display(),
+            submodule.relative_path
+        );
+    }
 }
 
 fn display_section(title: &str, statuses: &[&SubrepoStatus], display_item: fn(&SubrepoStatus)) {
@@ -123,6 +159,7 @@ fn display_missing_remote_section(instances: &[SubrepoInstance]) {
 pub(super) fn generate_status_summary(
     statuses: &[SubrepoStatus],
     no_remote: &[SubrepoInstance],
+    uninitialized_submodules: &[DeclaredSubmodule],
     total_nested: usize,
     fleet_repositories: Option<usize>,
 ) -> String {
@@ -155,6 +192,13 @@ pub(super) fn generate_status_summary(
         lines.push(format!(
             "  {YELLOW}!{RESET} {:<18}{missing_remote}",
             "Missing origin"
+        ));
+    }
+    if fleet_repositories.is_some() && !uninitialized_submodules.is_empty() {
+        lines.push(format!(
+            "  {YELLOW}!{RESET} {:<18}{}",
+            "Uninitialized",
+            uninitialized_submodules.len()
         ));
     }
     if let Some(fleet_repositories) = fleet_repositories {

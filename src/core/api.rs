@@ -49,4 +49,6 @@ pub(crate) use super::progress::{
     create_separator_progress_bar, print_final_report,
 };
 pub(crate) use super::stats::{clean_error_message, format_relative_repo_path, truncate_text};
-pub(crate) use super::topology::{GitlinkPrerequisite, RepositoryOrder, RepositoryTopology};
+pub(crate) use super::topology::{
+    GitlinkPrerequisite, RepositoryOrder, RepositoryTopology, TopologySnapshot,
+};

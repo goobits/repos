@@ -917,6 +917,8 @@ async fn process_commit_repositories(
                 .filter(|child| completed[**child] == Some(Status::Committed))
                 .map(|child| context.repositories[*child].1.clone())
                 .collect::<Vec<_>>();
+            let gitlink_inspection_error =
+                topology.gitlink_inspection_error(index).map(str::to_string);
             let stats_clone = std::sync::Arc::clone(&context.statistics);
             let semaphore_clone = std::sync::Arc::clone(&context.semaphore);
             let footer_clone = footer_pb.clone();
@@ -930,6 +932,7 @@ async fn process_commit_repositories(
                     &message_clone,
                     include_empty,
                     &committed_gitlinks,
+                    gitlink_inspection_error.as_deref(),
                 )
                 .await;
 
@@ -1013,8 +1016,16 @@ async fn perform_commit_operation(
     message: &str,
     include_empty: bool,
     committed_gitlinks: &[PathBuf],
+    gitlink_inspection_error: Option<&str>,
 ) -> (Status, String) {
     use crate::core::clean_error_message;
+
+    if let Some(error) = gitlink_inspection_error {
+        return (
+            Status::CommitError,
+            format!("submodule relationship inspection failed: {error}"),
+        );
+    }
 
     match is_detached_head(repo_path).await {
         Ok(true) => {

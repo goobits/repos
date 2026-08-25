@@ -50,7 +50,7 @@ fn nested_status_contract_counts_groups_and_names_each_drifted_copy() {
     );
     let statuses = vec![drifted, synced];
 
-    let summary = generate_status_summary(&statuses, &[], 5, Some(5));
+    let summary = generate_status_summary(&statuses, &[], &[], 5, Some(5));
     assert!(summary.contains("repos nested status"));
     assert!(summary.contains("Synced groups     1"));
     assert!(summary.contains("Drifted groups    1"));
@@ -120,11 +120,18 @@ fn complete_inventory_distinguishes_groups_copies_and_non_comparable_repositorie
     let report = NestedStatusReport {
         groups: vec![drifted, unique],
         no_remote: vec![missing],
+        uninitialized_submodules: Vec::new(),
         total_nested: 4,
         fleet_repositories: 8,
     };
 
-    let summary = generate_status_summary(&report.groups, &report.no_remote, 4, Some(8));
+    let summary = generate_status_summary(
+        &report.groups,
+        &report.no_remote,
+        &report.uninitialized_submodules,
+        4,
+        Some(8),
+    );
     assert!(summary.contains("Drifted groups    1"));
     assert!(summary.contains("Shared groups     1"));
     assert!(summary.contains("Unique groups     1"));
@@ -163,6 +170,7 @@ fn successful_automatic_drift_check_is_visible_even_without_drift() {
             vec![first, second],
         )],
         no_remote: Vec::new(),
+        uninitialized_submodules: Vec::new(),
         total_nested: 2,
         fleet_repositories: 4,
     };
@@ -182,6 +190,7 @@ fn successful_automatic_check_reports_an_empty_nested_inventory() {
     let report = NestedStatusReport {
         groups: Vec::new(),
         no_remote: Vec::new(),
+        uninitialized_submodules: Vec::new(),
         total_nested: 0,
         fleet_repositories: 7,
     };
@@ -220,7 +229,7 @@ fn legacy_status_summary_does_not_invent_complete_fleet_coverage() {
         ],
     )];
 
-    let summary = generate_status_summary(&statuses, &[], 2, None);
+    let summary = generate_status_summary(&statuses, &[], &[], 2, None);
     assert!(summary.contains("Shared copies     2"));
     assert!(summary.contains("complete fleet coverage unavailable"));
     assert!(!summary.contains("Fleet repos"));

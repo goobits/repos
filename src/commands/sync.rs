@@ -173,8 +173,17 @@ pub async fn handle_sync_command(
         start_time,
         concurrent_limit,
     )?;
-    let pull_run =
-        process_pull_repositories(pull_context, true, verbose, show_changes, true, false).await;
+    let topology = std::sync::Arc::new(crate::core::TopologySnapshot::new(&repositories));
+    let pull_run = process_pull_repositories(
+        pull_context,
+        true,
+        verbose,
+        show_changes,
+        true,
+        false,
+        Some(std::sync::Arc::clone(&topology)),
+    )
+    .await;
 
     if verbose {
         println!("{DIM}Phase 2/2 · push{RESET}");
@@ -186,13 +195,14 @@ pub async fn handle_sync_command(
         show_changes,
         no_drift_check,
         false,
+        Some(std::sync::Arc::clone(&topology)),
     )
     .await;
 
     let (drift_count, drift_lines) = if no_drift_check {
         (0, Vec::new())
     } else {
-        format_nested_drift_work_items(&repositories)
+        format_nested_drift_work_items_with_topology(&repositories, &topology)
     };
     let pull_stats = crate::core::acquire_stats_lock(&pull_run.statistics);
     let push_stats = crate::core::acquire_stats_lock(&push_run.statistics);
@@ -221,11 +231,15 @@ pub async fn handle_sync_command(
     Ok(())
 }
 
-pub(super) fn format_nested_drift_work_items(
+pub(super) fn format_nested_drift_work_items_with_topology(
     repositories: &[(String, std::path::PathBuf)],
+    topology: &crate::core::TopologySnapshot,
 ) -> (usize, Vec<String>) {
     format_nested_drift_result(
-        crate::subrepo::status::analyze_nested_status_for_repositories(repositories),
+        crate::subrepo::status::analyze_nested_status_for_repositories_with_topology(
+            repositories,
+            topology,
+        ),
     )
 }
 

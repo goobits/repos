@@ -103,6 +103,12 @@ repositories in a wave still run concurrently. Only indexed Git gitlinks are
 hard publication dependencies—ordinary nested repositories and linked
 worktrees receive deterministic ordering without being treated as submodules.
 
+One immutable topology snapshot supplies canonical nearest-parent relationships
+and batched parent-index gitlinks to both transfer phases and nested reporting.
+Gitlink inspection failures are retained as errors rather than interpreted as
+the absence of a submodule. Parents with `.gitmodules` are also inspected so
+declared but uninitialized submodules remain visible outside checkout discovery.
+
 The standalone `repos fetch` command uses the common Git concurrency limit,
 updates every configured remote, and never changes a local branch or worktree.
 Secret scanning is limited to one repository and hygiene scanning to three.

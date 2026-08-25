@@ -144,6 +144,9 @@ pub async fn apply_fixes(
         .map(|(name, path, _)| (name.clone(), PathBuf::from(path)))
         .collect::<Vec<_>>();
     let topology = RepositoryTopology::new(&topology_input);
+    if (options.fix_large || options.fix_secrets) && topology.has_gitlink_inspection_failures() {
+        anyhow::bail!("Cannot verify submodule relationships for history rewrite");
+    }
     if (options.fix_large || options.fix_secrets) && topology.has_gitlink_dependencies() {
         anyhow::bail!(
             "bulk history rewrite is unsafe across parent/submodule dependencies; target and rewrite each dependency chain explicitly"

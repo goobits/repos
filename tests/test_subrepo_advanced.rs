@@ -57,6 +57,7 @@ fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
         total_nested: 1,
         by_remote,
         no_remote: vec![],
+        uninitialized_submodules: vec![],
     };
 
     // 5. Try sync without stash/force (should fail/skip)
@@ -123,6 +124,7 @@ fn test_update_skips_diverged_local_commits() -> Result<()> {
         total_nested: 1,
         by_remote,
         no_remote: vec![],
+        uninitialized_submodules: vec![],
     };
 
     update_subrepo_with_report("upstream", false, &report)?;
@@ -174,6 +176,7 @@ fn test_update_allows_fast_forward_commit() -> Result<()> {
         total_nested: 1,
         by_remote: HashMap::from([(remote_path.to_string_lossy().into_owned(), vec![instance])]),
         no_remote: Vec::new(),
+        uninitialized_submodules: Vec::new(),
     };
 
     update_subrepo_with_report("upstream", false, &report)?;
@@ -240,6 +243,7 @@ fn test_update_uses_one_immutable_target_for_every_copy() -> Result<()> {
             instances.clone(),
         )]),
         no_remote: Vec::new(),
+        uninitialized_submodules: Vec::new(),
     };
 
     update_subrepo_with_report("upstream", false, &report)?;
@@ -301,6 +305,7 @@ fn test_sync_force_discards_tracked_changes() -> Result<()> {
         total_nested: 1,
         by_remote,
         no_remote: vec![],
+        uninitialized_submodules: vec![],
     };
 
     sync_subrepo_with_report("upstream", &commit2, false, true, &report)?;
@@ -316,6 +321,7 @@ fn test_sync_missing_remote_handled() -> Result<()> {
         total_nested: 0,
         by_remote: HashMap::new(),
         no_remote: vec![],
+        uninitialized_submodules: vec![],
     };
 
     // Should bail with "not found"
@@ -373,6 +379,7 @@ fn test_multiple_subrepos_batch_sync() -> Result<()> {
         total_nested: 3,
         by_remote,
         no_remote: vec![],
+        uninitialized_submodules: vec![],
     };
 
     sync_subrepo_with_report("upstream", &commit2, false, false, &report)?;
