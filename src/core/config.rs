@@ -104,9 +104,6 @@ pub const SKIP_DIRECTORIES: &[&str] = &[
 /// Per-tree ignore file for repositories that must not join fleet operations.
 pub const FLEET_IGNORE_FILENAME: &str = ".reposignore";
 
-// Repository discovery configuration
-#[doc(hidden)] // Internal discovery limit
-pub const MAX_SCAN_DEPTH: usize = 10; // Maximum directory depth to scan
 #[doc(hidden)] // Internal optimization hint
 pub const ESTIMATED_REPO_COUNT: usize = 50; // Pre-allocation hint for collections
 
@@ -156,7 +153,6 @@ mod tests {
     // - FETCH_CONCURRENT_CAP = 24 (positive, allows parallelism)
     // - GIT_CONCURRENT_CAP = 12 (positive, allows parallelism)
     // - TRUFFLE_CONCURRENT_LIMIT = 1, HYGIENE_CONCURRENT_LIMIT = 3 (at least 1)
-    // - MAX_SCAN_DEPTH = 10 (positive, prevents excessive recursion)
     // - ESTIMATED_REPO_COUNT = 50 (positive, reasonable)
 
     #[test]

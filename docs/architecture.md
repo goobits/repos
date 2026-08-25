@@ -55,7 +55,7 @@ versa.
 
 `core::discovery` uses `ignore::WalkBuilder` with a parallel walker. It follows
 directory symlinks, skips curated dependency/build directories and `.git`
-internals, and limits traversal depth. Git, global, and tool-specific ignore
+internals, and scans to arbitrary depth. Git, global, and tool-specific ignore
 files are not fleet inventory controls: an ignored nested repository is still
 discovered and ordered. Command scope comes from the requested scan root, and
 `.reposignore` provides explicit per-tree fleet exclusions using gitignore
@@ -157,7 +157,9 @@ parent relationships from the same fleet inventory so a physical checkout is
 counted once and `.reposignore` has identical scope. Validation groups nested
 repositories by a normalized remote identity.
 Equivalent GitHub HTTPS and SSH URLs share a group; case is preserved for paths
-on hosts where repository paths may be case-sensitive.
+on hosts where repository paths may be case-sensitive. Exact HEAD, origin, and
+worktree inspection runs through a bounded eight-worker pool; results are
+restored to fleet order before errors or reports are emitted.
 
 Sync and update select a single remote group by nested repository name. If the
 same name refers to different remotes, the command stops as ambiguous before

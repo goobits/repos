@@ -202,7 +202,7 @@ fn test_skips_node_modules() {
 }
 
 #[test]
-fn test_max_depth_limit() {
+fn test_deeply_nested_repositories_are_not_silently_omitted() {
     if !is_git_available() {
         eprintln!("Git not available, skipping test");
         return;
@@ -210,31 +210,27 @@ fn test_max_depth_limit() {
 
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
 
-    // Create deeply nested directory structure (depth 12)
+    // Create a repository beyond the historical depth-10 cutoff.
     let mut current_path = temp_dir.path().to_path_buf();
     for i in 1..=12 {
         current_path = current_path.join(format!("level{}", i));
         fs::create_dir(&current_path).expect("Failed to create directory");
     }
 
-    // Create a repo at depth 12 (should be beyond MAX_SCAN_DEPTH of 10)
     setup_git_repo(&current_path).expect("Failed to setup deep repo");
 
-    // Create a repo at depth 2 (should be found)
     let shallow_repo = temp_dir.path().join("level1").join("shallow-repo");
     fs::create_dir(&shallow_repo).expect("Failed to create shallow repo");
     setup_git_repo(&shallow_repo).expect("Failed to setup shallow repo");
 
-    // Find repositories from the temp directory
     let found_repos = find_repos_from_path(temp_dir.path());
+    let paths = found_repos
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect::<Vec<_>>();
 
-    // Should only find the shallow repo, not the deep one
-    assert_eq!(
-        found_repos.len(),
-        1,
-        "Should not find repo beyond max depth"
-    );
-    assert_eq!(found_repos[0].0, "shallow-repo");
+    assert!(paths.contains(&shallow_repo));
+    assert!(paths.contains(&current_path));
 }
 
 #[test]

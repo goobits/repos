@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::config::{
-    DEFAULT_REPO_NAME, ESTIMATED_REPO_COUNT, FLEET_IGNORE_FILENAME, MAX_SCAN_DEPTH,
-    SKIP_DIRECTORIES, UNKNOWN_REPO_NAME,
+    DEFAULT_REPO_NAME, ESTIMATED_REPO_COUNT, FLEET_IGNORE_FILENAME, SKIP_DIRECTORIES,
+    UNKNOWN_REPO_NAME,
 };
 
 /// Check if a .git file (for submodules/worktrees) contains gitdir reference
@@ -63,7 +63,6 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
         .git_exclude(false)
         .add_custom_ignore_filename(FLEET_IGNORE_FILENAME)
         .follow_links(true) // Follow symlinks to find symlinked repos
-        .max_depth(Some(MAX_SCAN_DEPTH)) // Limit depth to avoid deep recursion
         .threads(
             std::thread::available_parallelism()
                 .map(std::num::NonZeroUsize::get)

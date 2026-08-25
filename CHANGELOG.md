@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
+- Exact per-checkout nested inspection now runs through a bounded eight-worker pool and restores deterministic fleet order before reporting.
 - Automatic Git concurrency now scales as `min(CPU cores + 2, 32)` to bound subprocess/network pressure on large hosts; explicit `--jobs` remains an override and fetch multipliers use saturating arithmetic.
 - Oversized command, Git, audit, and reporting modules were decomposed into focused status, pull, remote, LFS, visibility, worktree, history-safety, formatting, and sync-report components. No production source module exceeds 800 lines.
 - Transfer operations now carry exact commit/ref quantities into statistics instead of deriving totals from display text. The already thread-safe statistics collector is shared directly, removing the fleet-wide outer mutex from top-level commands.
@@ -42,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
+- Repository discovery no longer silently stops at depth 10, so deeply nested checkouts participate in fleet and nested-drift reporting.
 - Nested status now reports declared but uninitialized submodules separately with exact initialization commands. Gitlink inspection failures make the inventory incomplete instead of silently classifying affected checkouts as independent.
 - Worktree and conflict detection now uses NUL-delimited porcelain v2, including every unmerged state and filenames containing newlines or non-UTF-8 bytes. Git config command failures are reported instead of being treated as unset values.
 - Repository discovery now canonicalizes physical checkouts before naming them, so symlink aliases cannot make fleet operations or nested drift reports process the same repository twice.

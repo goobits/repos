@@ -8,6 +8,9 @@ use crate::core::topology::{FleetIndex, RepositoryTopology};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+const NESTED_INSPECTION_CONCURRENCY: usize = 8;
 
 const RESET: &str = "\x1b[0m";
 const BOLD_BLUE: &str = "\x1b[1;38;5;75m";
@@ -50,8 +53,6 @@ pub(crate) fn validate_discovered_repositories_with_topology(
     topology: &RepositoryTopology,
     show_scan: bool,
 ) -> Result<ValidationReport> {
-    let mut all_nested = Vec::new();
-
     if show_scan {
         println!(
             "🔍 Inspecting {} fleet repositories for nested checkouts...\n",
@@ -59,6 +60,7 @@ pub(crate) fn validate_discovered_repositories_with_topology(
         );
     }
 
+    let mut inspections = Vec::new();
     for (child_index, (_, child_path)) in repositories.iter().enumerate() {
         let Some(parent_index) = index.parent(child_index) else {
             continue;
@@ -85,14 +87,15 @@ pub(crate) fn validate_discovered_repositories_with_topology(
             NestedCheckoutKind::Independent
         };
 
-        all_nested.push(inspect_nested_repository(
-            parent_name,
-            parent_path,
-            child_path,
+        inspections.push(NestedInspection {
+            parent_name: parent_name.clone(),
+            parent_path: parent_path.clone(),
+            subrepo_path: child_path.clone(),
             relative_path,
             checkout_kind,
-        )?);
+        });
     }
+    let all_nested = inspect_nested_repositories(&inspections)?;
 
     let mut uninitialized_submodules = Vec::new();
     for (parent_index, (parent_name, parent_path)) in repositories.iter().enumerate() {
@@ -140,6 +143,69 @@ pub(crate) fn validate_discovered_repositories_with_topology(
         no_remote,
         uninitialized_submodules,
     })
+}
+
+struct NestedInspection {
+    parent_name: String,
+    parent_path: PathBuf,
+    subrepo_path: PathBuf,
+    relative_path: String,
+    checkout_kind: NestedCheckoutKind,
+}
+
+/// Inspect exact Git state with bounded parallelism, then restore fleet order
+/// so diagnostics and generated reports remain deterministic.
+fn inspect_nested_repositories(inspections: &[NestedInspection]) -> Result<Vec<SubrepoInstance>> {
+    if inspections.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let worker_count = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(NESTED_INSPECTION_CONCURRENCY)
+        .min(inspections.len());
+    let next = AtomicUsize::new(0);
+    let (sender, receiver) = std::sync::mpsc::channel();
+
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let next = &next;
+            scope.spawn(move || loop {
+                let position = next.fetch_add(1, Ordering::Relaxed);
+                let Some(inspection) = inspections.get(position) else {
+                    break;
+                };
+                let result = inspect_nested_repository(
+                    &inspection.parent_name,
+                    &inspection.parent_path,
+                    &inspection.subrepo_path,
+                    inspection.relative_path.clone(),
+                    inspection.checkout_kind,
+                );
+                if sender.send((position, result)).is_err() {
+                    break;
+                }
+            });
+        }
+    });
+    drop(sender);
+
+    let mut ordered = (0..inspections.len())
+        .map(|_| None)
+        .collect::<Vec<Option<Result<SubrepoInstance>>>>();
+    for (position, result) in receiver {
+        ordered[position] = Some(result);
+    }
+
+    ordered
+        .into_iter()
+        .enumerate()
+        .map(|(position, result)| {
+            result.with_context(|| format!("nested inspection worker omitted item {position}"))?
+        })
+        .collect()
 }
 
 fn relative_repository_path(
