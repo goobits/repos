@@ -13,7 +13,7 @@ use crate::git::remote::{
     context_from_url, inspect_remote, policy_violation, RemoteContext, RemoteDirection,
     RemotePolicyViolation, RemoteTransport,
 };
-use crate::git::worktree::inspect_worktree;
+use crate::git::worktree::{inspect_repository_state, HeadState};
 use crate::utils::compare_repository_locations;
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -301,19 +301,15 @@ async fn diagnose_repo(repository: &str, path: &std::path::Path) -> RepositoryDi
     let mut diagnosis = RepositoryDiagnosis::new(repository, path);
     let display_path = diagnosis.path.clone();
 
-    match run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
-        Ok((true, branch, _)) if branch == "HEAD" => diagnosis.blockers.push(DoctorFinding::new(
-            "detached HEAD",
-            format!("git -C {} switch <branch>", shell_quote(&display_path)),
-        )),
-        Ok((true, _, _)) => {}
-        Ok((false, _, stderr)) => diagnosis.blockers.push(DoctorFinding::new(
-            format!("branch check failed: {}", clean_error_message(&stderr)),
-            format!(
-                "git -C {} rev-parse --abbrev-ref HEAD",
-                shell_quote(&display_path)
-            ),
-        )),
+    let worktree = inspect_repository_state(path).await;
+    match &worktree {
+        Ok(state) if state.head() == &HeadState::Detached => {
+            diagnosis.blockers.push(DoctorFinding::new(
+                "detached HEAD",
+                format!("git -C {} switch <branch>", shell_quote(&display_path)),
+            ))
+        }
+        Ok(_) => {}
         Err(error) => diagnosis.blockers.push(DoctorFinding::new(
             format!(
                 "branch check failed: {}",
@@ -368,7 +364,7 @@ async fn diagnose_repo(repository: &str, path: &std::path::Path) -> RepositoryDi
         }
     }
 
-    match inspect_worktree(path).await {
+    match worktree {
         Ok(worktree) => {
             if worktree.has_conflicts() {
                 diagnosis.blockers.push(DoctorFinding::new(

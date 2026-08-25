@@ -8,12 +8,12 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::ancestry::ahead_behind;
 use super::failure::{GitFailure, GitOperationPhase, GitOperationResult};
 use super::remote::{inspect_remote, policy_violation, RemoteContext, RemoteDirection};
 pub(crate) use super::runner::run_git;
 use super::runner::run_git_raw;
 use super::status::Status;
+use super::worktree::{inspect_refreshed_repository_state, inspect_repository_state, HeadState};
 
 // Git command arguments
 const GIT_REMOTE_ARGS: &[&str] = &["remote"];
@@ -270,13 +270,17 @@ async fn get_upstream_push_target(
     Ok(None)
 }
 
-async fn get_branch_remote_name(path: &Path, current_branch: &str, remotes: &str) -> String {
+async fn get_branch_remote_name(
+    path: &Path,
+    current_branch: &str,
+    remotes: &str,
+) -> Result<String> {
     let remote_key = format!("branch.{current_branch}.remote");
-    if let Ok(Some(remote)) = get_git_config(path, &remote_key).await {
-        return remote;
+    if let Some(remote) = get_git_config(path, &remote_key).await? {
+        return Ok(remote);
     }
 
-    remotes.lines().next().unwrap_or("origin").to_string()
+    Ok(remotes.lines().next().unwrap_or("origin").to_string())
 }
 
 async fn inspect_operation_remote(
@@ -501,10 +505,36 @@ pub(crate) async fn unpublished_gitlinks(
 pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult {
     use crate::core::clean_error_message;
 
-    let has_uncommitted = match has_uncommitted_changes(path).await {
-        Ok(has_changes) => has_changes,
+    let initial_state = match inspect_refreshed_repository_state(path).await {
+        Ok(state) => state,
         Err(e) => {
             return FetchResult::error(clean_error_message(&e.to_string()), false, String::new())
+        }
+    };
+    let has_uncommitted = initial_state.is_dirty();
+    let current_branch = match initial_state.head() {
+        HeadState::Branch(branch) => branch.clone(),
+        HeadState::Unborn => "HEAD".to_string(),
+        HeadState::Detached => {
+            return FetchResult {
+                has_uncommitted,
+                current_branch: String::new(),
+                ahead_count: 0,
+                behind_count: 0,
+                upstream_exists: false,
+                upstream_remote: None,
+                upstream_branch: None,
+                status: Status::Skip,
+                message: STATUS_DETACHED_HEAD.to_string(),
+                failure: None,
+            }
+        }
+        HeadState::Unknown => {
+            return FetchResult::error(
+                "branch inspection returned no HEAD state".to_string(),
+                has_uncommitted,
+                String::new(),
+            )
         }
     };
 
@@ -542,42 +572,16 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
         };
     }
 
-    // Get current branch
-    let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
-        Ok((true, branch, _)) => branch,
-        Ok((false, _, stderr)) => {
+    let fetch_remote = match get_branch_remote_name(path, &current_branch, &remotes).await {
+        Ok(remote) => remote,
+        Err(error) => {
             return FetchResult::error(
-                command_error(&stderr, "branch inspection failed"),
+                clean_error_message(&error.to_string()),
                 has_uncommitted,
-                String::new(),
-            )
-        }
-        Err(e) => {
-            return FetchResult::error(
-                clean_error_message(&e.to_string()),
-                has_uncommitted,
-                String::new(),
+                current_branch,
             )
         }
     };
-
-    // Skip if in detached HEAD state
-    if current_branch == DETACHED_HEAD_BRANCH {
-        return FetchResult {
-            has_uncommitted,
-            current_branch: String::new(),
-            ahead_count: 0,
-            behind_count: 0,
-            upstream_exists: false,
-            upstream_remote: None,
-            upstream_branch: None,
-            status: Status::Skip,
-            message: STATUS_DETACHED_HEAD.to_string(),
-            failure: None,
-        };
-    }
-
-    let fetch_remote = get_branch_remote_name(path, &current_branch, &remotes).await;
     let (fetch_context, policy_failure) =
         match inspect_operation_remote(path, &fetch_remote, RemoteDirection::Fetch).await {
             Ok(result) => result,
@@ -611,11 +615,24 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
         return FetchResult::failed(failure, has_uncommitted, current_branch);
     }
 
-    // Check if current branch has an upstream
-    let upstream_check = run_git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await;
-    let upstream_exists = upstream_check.as_ref().is_ok_and(|result| result.0);
-
-    if !upstream_exists {
+    let final_state = match inspect_repository_state(path).await {
+        Ok(state) => state,
+        Err(error) => {
+            return FetchResult::error(
+                clean_error_message(&error.to_string()),
+                has_uncommitted,
+                current_branch,
+            )
+        }
+    };
+    if final_state.head() != &HeadState::Branch(current_branch.clone()) {
+        return FetchResult::error(
+            "branch changed while repository state was being inspected".to_string(),
+            has_uncommitted,
+            current_branch,
+        );
+    }
+    let Some(upstream_name) = final_state.upstream() else {
         // May be pushed in phase 2 if the caller opted into setting upstreams.
         let status = Status::NoUpstream;
         return FetchResult {
@@ -624,29 +641,43 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
             ahead_count: 0,
             behind_count: 0,
             upstream_exists: false,
-            upstream_remote: None,
+            upstream_remote: Some(fetch_remote),
             upstream_branch: None,
             status,
             message: STATUS_NO_UPSTREAM.to_string(),
             failure: None,
         };
-    }
-
-    let (upstream_remote, upstream_branch) =
-        match get_upstream_push_target(path, &current_branch).await {
-            Ok(Some((remote, branch))) => (Some(remote), Some(branch)),
-            _ => (None, None),
-        };
-
-    let counts = match ahead_behind(path).await {
-        Ok(counts) => counts,
-        Err(e) => {
-            return FetchResult::error(
-                clean_error_message(&e.to_string()),
-                has_uncommitted,
-                current_branch,
-            )
-        }
+    };
+    let Some(counts) = final_state.ahead_behind() else {
+        return FetchResult::error(
+            "upstream ancestry counts are missing".to_string(),
+            has_uncommitted,
+            current_branch,
+        );
+    };
+    let upstream_remote = Some(fetch_remote.clone());
+    let upstream_branch = upstream_name
+        .strip_prefix(&format!("{fetch_remote}/"))
+        .map(str::to_string);
+    let upstream_branch = match upstream_branch {
+        Some(branch) => Some(branch),
+        None => match get_upstream_push_target(path, &current_branch).await {
+            Ok(Some((_, branch))) => Some(branch),
+            Ok(None) => {
+                return FetchResult::error(
+                    "configured upstream branch could not be resolved".to_string(),
+                    has_uncommitted,
+                    current_branch,
+                )
+            }
+            Err(e) => {
+                return FetchResult::error(
+                    clean_error_message(&e.to_string()),
+                    has_uncommitted,
+                    current_branch,
+                )
+            }
+        },
     };
 
     let ahead_count = counts.ahead;
@@ -740,15 +771,11 @@ pub(crate) async fn push_if_needed_with_context(
         );
     }
 
-    // Detect remote name for LFS and push operations
-    let default_remote_name = match run_git(path, GIT_REMOTE_ARGS).await {
-        Ok((true, remotes, _)) => remotes.lines().next().unwrap_or("origin").to_string(),
-        _ => "origin".to_string(),
-    };
+    // Fetch captured the exact branch/default remote used for this operation.
     let remote_name = fetch_result
         .upstream_remote
         .clone()
-        .unwrap_or_else(|| default_remote_name.clone());
+        .unwrap_or_else(|| "origin".to_string());
     let target_branch = fetch_result
         .upstream_branch
         .clone()
@@ -1163,10 +1190,42 @@ impl PullFetchResult {
 pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
     use crate::core::clean_error_message;
 
-    let has_uncommitted = match has_uncommitted_changes(path).await {
-        Ok(has_changes) => has_changes,
+    let initial_state = match inspect_refreshed_repository_state(path).await {
+        Ok(state) => state,
         Err(e) => {
             return PullFetchResult::error(clean_error_message(&e.to_string()), false);
+        }
+    };
+    fetch_and_analyze_for_pull_with_state(path, initial_state).await
+}
+
+pub(crate) async fn fetch_and_analyze_for_pull_with_state(
+    path: &Path,
+    initial_state: super::worktree::WorktreeState,
+) -> PullFetchResult {
+    use crate::core::clean_error_message;
+
+    let has_uncommitted = initial_state.is_dirty();
+    let current_branch = match initial_state.head() {
+        HeadState::Branch(branch) => branch.clone(),
+        HeadState::Unborn => "HEAD".to_string(),
+        HeadState::Detached => {
+            return PullFetchResult {
+                has_uncommitted,
+                ahead_count: 0,
+                behind_count: 0,
+                upstream_name: None,
+                status: Status::Skip,
+                message: STATUS_DETACHED_HEAD.to_string(),
+                failure: None,
+                remote: None,
+            }
+        }
+        HeadState::Unknown => {
+            return PullFetchResult::error(
+                "branch inspection returned no HEAD state".to_string(),
+                has_uncommitted,
+            )
         }
     };
 
@@ -1197,35 +1256,12 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
         };
     }
 
-    // Get current branch
-    let current_branch = match run_git(path, GIT_REV_PARSE_HEAD_ARGS).await {
-        Ok((true, branch, _)) => branch,
-        Ok((false, _, stderr)) => {
-            return PullFetchResult::error(
-                command_error(&stderr, "branch inspection failed"),
-                has_uncommitted,
-            )
-        }
-        Err(e) => {
-            return PullFetchResult::error(clean_error_message(&e.to_string()), has_uncommitted)
+    let fetch_remote = match get_branch_remote_name(path, &current_branch, &remotes).await {
+        Ok(remote) => remote,
+        Err(error) => {
+            return PullFetchResult::error(clean_error_message(&error.to_string()), has_uncommitted)
         }
     };
-
-    // Skip if in detached HEAD state
-    if current_branch == DETACHED_HEAD_BRANCH {
-        return PullFetchResult {
-            has_uncommitted,
-            ahead_count: 0,
-            behind_count: 0,
-            upstream_name: None,
-            status: Status::Skip,
-            message: STATUS_DETACHED_HEAD.to_string(),
-            failure: None,
-            remote: None,
-        };
-    }
-
-    let fetch_remote = get_branch_remote_name(path, &current_branch, &remotes).await;
     let (fetch_context, policy_failure) =
         match inspect_operation_remote(path, &fetch_remote, RemoteDirection::Fetch).await {
             Ok(result) => result,
@@ -1259,14 +1295,19 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
         return PullFetchResult::failed(failure, has_uncommitted);
     }
 
-    // Check if current branch has an upstream
-    let upstream_check = run_git(path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await;
-    let upstream_name = upstream_check
-        .as_ref()
-        .ok()
-        .filter(|result| result.0)
-        .map(|result| result.1.clone());
-
+    let final_state = match inspect_repository_state(path).await {
+        Ok(state) => state,
+        Err(error) => {
+            return PullFetchResult::error(clean_error_message(&error.to_string()), has_uncommitted)
+        }
+    };
+    if final_state.head() != &HeadState::Branch(current_branch) {
+        return PullFetchResult::error(
+            "branch changed while repository state was being inspected".to_string(),
+            has_uncommitted,
+        );
+    }
+    let upstream_name = final_state.upstream().map(str::to_string);
     if upstream_name.is_none() {
         return PullFetchResult {
             has_uncommitted,
@@ -1280,11 +1321,11 @@ pub async fn fetch_and_analyze_for_pull(path: &Path) -> PullFetchResult {
         };
     }
 
-    let counts = match ahead_behind(path).await {
-        Ok(counts) => counts,
-        Err(e) => {
-            return PullFetchResult::error(clean_error_message(&e.to_string()), has_uncommitted)
-        }
+    let Some(counts) = final_state.ahead_behind() else {
+        return PullFetchResult::error(
+            "upstream ancestry counts are missing".to_string(),
+            has_uncommitted,
+        );
     };
     let ahead_count = counts.ahead;
     let behind_count = counts.behind;

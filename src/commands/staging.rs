@@ -640,7 +640,19 @@ fn append_status_section(
 }
 
 async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> FleetStatus {
-    use crate::git::operations::run_git;
+    let initial_state =
+        match crate::git::worktree::inspect_refreshed_repository_state(repo_path).await {
+            Ok(state) => state,
+            Err(error) => {
+                return FleetStatus {
+                    status: Status::StagingError,
+                    worktree_status: Status::StagingError,
+                    message: format!("status failed: {}", clean_error_message(&error.to_string())),
+                    upstream: UpstreamSummary::Unknown,
+                    failure: None,
+                }
+            }
+        };
 
     let status_result = get_staging_status(repo_path).await;
     let (working_status, mut parts, details) = match status_result {
@@ -656,13 +668,17 @@ async fn get_fleet_status(repo_path: &std::path::Path, show_details: bool) -> Fl
         }
     };
 
-    let branch = match run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
-        Ok((true, branch, _)) => branch,
-        _ => "unknown".to_string(),
+    let branch = match initial_state.head() {
+        crate::git::worktree::HeadState::Branch(branch) => branch.clone(),
+        crate::git::worktree::HeadState::Detached => "HEAD".to_string(),
+        crate::git::worktree::HeadState::Unborn => "unborn".to_string(),
+        crate::git::worktree::HeadState::Unknown => "unknown".to_string(),
     };
     parts.insert(0, format!("branch {branch}"));
 
-    let refresh = crate::git::fetch_and_analyze_for_pull(repo_path).await;
+    let refresh =
+        crate::git::operations::fetch_and_analyze_for_pull_with_state(repo_path, initial_state)
+            .await;
     if refresh.status == Status::Error {
         let failure = refresh.failure;
         let reason = failure

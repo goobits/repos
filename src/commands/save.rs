@@ -12,9 +12,10 @@ use crate::core::{
     set_terminal_title, set_terminal_title_and_flush, BatchOperation, GitlinkPrerequisite,
     RepositoryOrder, RepositoryTopology, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
 };
+use crate::git::worktree::{inspect_refreshed_repository_state, HeadState};
 use crate::git::{
-    commit_changes, fetch_and_analyze, get_staging_status, has_staged_changes, is_detached_head,
-    push_if_needed, stage_all_changes, stage_tracked_changes, Status,
+    commit_changes, fetch_and_analyze, has_staged_changes, push_if_needed, stage_all_changes,
+    stage_tracked_changes, Status,
 };
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
@@ -189,31 +190,36 @@ async fn save_one_repo(
             false,
         );
     }
-    match is_detached_head(repo_path).await {
-        Ok(true) => {
+    let worktree = match inspect_refreshed_repository_state(repo_path).await {
+        Ok(state) => state,
+        Err(error) => {
+            return (
+                Status::StagingError,
+                format!("repository state inspection failed: {error}"),
+                false,
+            )
+        }
+    };
+    match worktree.head() {
+        HeadState::Detached => {
             return (
                 Status::Skip,
                 "detached HEAD; checkout a branch before save".to_string(),
                 false,
             );
         }
-        Ok(false) => {}
-        Err(e) => {
+        HeadState::Unknown => {
             return (
                 Status::StagingError,
-                format!("branch check failed: {e}"),
+                "branch inspection returned no HEAD state".to_string(),
                 false,
             )
         }
+        HeadState::Branch(_) | HeadState::Unborn => {}
     }
 
-    let status = match get_staging_status(repo_path).await {
-        Ok((stdout, _)) => stdout,
-        Err(e) => return (Status::StagingError, format!("status failed: {e}"), false),
-    };
-
-    let has_tracked_changes = status.lines().any(has_tracked_change);
-    let has_untracked_changes = status.lines().any(|line| line.starts_with("??"));
+    let has_tracked_changes = worktree.has_tracked_changes();
+    let has_untracked_changes = worktree.has_untracked_changes();
 
     if !has_tracked_changes && has_untracked_changes && !include_untracked {
         return (
@@ -303,13 +309,4 @@ async fn save_one_repo(
             has_uncommitted,
         ),
     }
-}
-
-fn has_tracked_change(line: &str) -> bool {
-    if line.starts_with("??") || line.len() < 2 {
-        return false;
-    }
-
-    let bytes = line.as_bytes();
-    bytes[0] != b' ' || bytes[1] != b' '
 }
