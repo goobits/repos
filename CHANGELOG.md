@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
+- Declared submodule validation now honors `.reposignore`, so intentionally excluded checkouts are not misreported as uninitialized.
 - Repository discovery no longer silently stops at depth 10, so deeply nested checkouts participate in fleet and nested-drift reporting.
 - Nested status now reports declared but uninitialized submodules separately with exact initialization commands. Gitlink inspection failures make the inventory incomplete instead of silently classifying affected checkouts as independent.
 - Worktree and conflict detection now uses NUL-delimited porcelain v2, including every unmerged state and filenames containing newlines or non-UTF-8 bytes. Git config command failures are reported instead of being treated as unset values.

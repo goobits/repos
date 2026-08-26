@@ -4,8 +4,12 @@ use super::{
     get_head_metadata, get_remote_url, has_uncommitted_changes, DeclaredSubmodule,
     NestedCheckoutKind, SubrepoInstance, ValidationReport,
 };
-use crate::core::topology::{FleetIndex, RepositoryTopology};
+use crate::core::{
+    config::FLEET_IGNORE_FILENAME,
+    topology::{FleetIndex, RepositoryTopology},
+};
 use anyhow::{Context, Result};
+use ignore::gitignore::GitignoreBuilder;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -107,7 +111,9 @@ pub(crate) fn validate_discovered_repositories_with_topology(
         }
         for (relative_path, target_commit) in topology.indexed_gitlinks(parent_index) {
             let checkout_path = index.normalized_path(parent_index).join(relative_path);
-            if index.repository_at(&checkout_path).is_none() {
+            if index.repository_at(&checkout_path).is_none()
+                && !fleet_ignore_excludes(index.normalized_path(parent_index), &checkout_path)
+            {
                 uninitialized_submodules.push(DeclaredSubmodule {
                     parent_repo: parent_name.clone(),
                     parent_path: parent_path.clone(),
@@ -142,6 +148,45 @@ pub(crate) fn validate_discovered_repositories_with_topology(
         by_remote,
         no_remote,
         uninitialized_submodules,
+    })
+}
+
+/// Match declared checkout paths against the same per-tree fleet exclusions
+/// used by repository discovery. Ignore files can live at the repository root
+/// or in any traversed ancestor of the checkout.
+fn fleet_ignore_excludes(parent_path: &Path, checkout_path: &Path) -> bool {
+    let Some(checkout_parent) = checkout_path.parent() else {
+        return false;
+    };
+    let Ok(relative_parent) = checkout_parent.strip_prefix(parent_path) else {
+        return false;
+    };
+
+    let mut directory = parent_path.to_path_buf();
+    if fleet_ignore_file_excludes(&directory, checkout_path) {
+        return true;
+    }
+    for component in relative_parent.components() {
+        directory.push(component);
+        if fleet_ignore_file_excludes(&directory, checkout_path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn fleet_ignore_file_excludes(directory: &Path, checkout_path: &Path) -> bool {
+    let ignore_file = directory.join(FLEET_IGNORE_FILENAME);
+    if !ignore_file.is_file() {
+        return false;
+    }
+
+    let mut builder = GitignoreBuilder::new(directory);
+    let _partial_error = builder.add(ignore_file);
+    builder.build().is_ok_and(|matcher| {
+        matcher
+            .matched_path_or_any_parents(checkout_path, true)
+            .is_ignore()
     })
 }
 
@@ -652,6 +697,38 @@ mod tests {
             "modules/shared"
         );
         assert_eq!(report.uninitialized_submodules[0].parent_path, parent);
+    }
+
+    #[test]
+    fn inventory_omits_gitlinks_excluded_from_the_fleet() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source");
+        let parent = temp_dir.path().join("parent");
+        initialize_repository(&source);
+        initialize_repository(&parent);
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "modules/shared",
+            ])
+            .current_dir(&parent)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        std::fs::write(parent.join(".reposignore"), "/modules/shared/\n").unwrap();
+
+        let repositories = crate::core::discovery::find_repos_from_path(&parent);
+        assert_eq!(repositories.len(), 1);
+
+        let report = validate_discovered_repositories(&repositories, false).unwrap();
+
+        assert_eq!(report.total_nested, 0);
+        assert!(report.uninitialized_submodules.is_empty());
     }
 
     #[test]
