@@ -6,7 +6,7 @@ project:
   name: repos
   workspace_path: /workspace
 vm:
-  box: '@vibe-box'
+  image: '@vibe-image'
   cpus: 6
   gui: false
   memory: 8192
