@@ -191,7 +191,6 @@ pub async fn handle_sync_command(
     let push_run = process_push_repositories(
         push_context,
         auto_upstream,
-        true,
         verbose,
         show_changes,
         no_drift_check,
