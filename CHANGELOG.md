@@ -60,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested drift commands classify independent embedded repositories, Git submodules, and linked worktrees without conflating or excluding them.
 
 ### Security
+- TruffleHog installation now uses private OS-created temporary workspaces and unique, automatically removed writability probes instead of predictable `/tmp` scripts or a fixed `test_write` path.
 - Installer-generated PATH configuration now quotes custom installation directories safely, and default build artifacts live in a private user cache instead of a predictable shared `/tmp` directory.
 - HTTP credentials, URL user information, and query strings are redacted from Git failure reports.
 - Secret and hygiene reports retain repository and file attribution, while `repos audit --json` emits one redirect-safe JSON document even with dry-run fixes.

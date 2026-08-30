@@ -1,7 +1,9 @@
 //! TruffleHog availability checks and checksum-verified installation.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 use tokio::process::Command;
 
 const TRUFFLEHOG_INSTALL_SCRIPT_SHA256: &str =
@@ -61,7 +63,7 @@ pub(super) async fn ensure_trufflehog_installed() -> Result<()> {
     Ok(())
 }
 
-async fn verify_file_checksum(path: &std::path::Path, expected_sha256: &str) -> Result<bool> {
+async fn verify_file_checksum(path: &Path, expected_sha256: &str) -> Result<bool> {
     if expected_sha256 == "PLACEHOLDER_UPDATE_WITH_ACTUAL_CHECKSUM" {
         return Ok(false);
     }
@@ -87,26 +89,15 @@ async fn install_trufflehog_direct() -> Result<()> {
 
     let script_url =
         "https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh";
-    let install_dir = "/usr/local/bin";
+    let home = PathBuf::from(std::env::var("HOME")?);
+    let install_path = select_install_path(Path::new("/usr/local/bin"), &home).await?;
 
-    let install_path = if tokio::fs::metadata(install_dir).await.is_ok()
-        && tokio::fs::File::create(format!("{install_dir}/test_write"))
-            .await
-            .is_ok()
-    {
-        let _ = tokio::fs::remove_file(format!("{install_dir}/test_write")).await;
-        install_dir.to_string()
-    } else {
-        let home = std::env::var("HOME")?;
-        let user_bin = format!("{home}/.local/bin");
-        tokio::fs::create_dir_all(&user_bin).await?;
-        eprintln!("⚠️  Installing to {user_bin} (add to PATH if needed)");
-        user_bin
-    };
-
-    let temp_script = format!("/tmp/trufflehog-install-{}.sh", std::process::id());
+    let script_workspace = create_script_workspace()?;
+    let temp_script = script_workspace.path().join("install.sh");
     let download_output = Command::new("curl")
-        .args(["-sSfL", "-o", &temp_script, script_url])
+        .args(["-sSfL", "-o"])
+        .arg(&temp_script)
+        .arg(script_url)
         .output()
         .await?;
 
@@ -117,17 +108,14 @@ async fn install_trufflehog_direct() -> Result<()> {
 
     eprintln!("✅ Download complete, verifying checksum...");
 
-    let temp_script_path = std::path::Path::new(&temp_script);
-    match verify_file_checksum(temp_script_path, TRUFFLEHOG_INSTALL_SCRIPT_SHA256).await {
+    match verify_file_checksum(&temp_script, TRUFFLEHOG_INSTALL_SCRIPT_SHA256).await {
         Ok(true) => eprintln!("✅ Checksum verification passed"),
         Ok(false) => {
-            let _ = tokio::fs::remove_file(&temp_script).await;
             return Err(anyhow!(
                 "TruffleHog installer checksum did not match the trusted value"
             ));
         }
         Err(error) => {
-            let _ = tokio::fs::remove_file(&temp_script).await;
             return Err(anyhow!(
                 "TruffleHog installer checksum check failed: {error}"
             ));
@@ -136,11 +124,11 @@ async fn install_trufflehog_direct() -> Result<()> {
 
     eprintln!("🔧 Executing installation script...");
     let install_output = Command::new("sh")
-        .args([&temp_script, "-b", &install_path])
+        .arg(&temp_script)
+        .arg("-b")
+        .arg(&install_path)
         .output()
         .await?;
-
-    let _ = tokio::fs::remove_file(&temp_script).await;
 
     if !install_output.status.success() {
         let stderr = String::from_utf8_lossy(&install_output.stderr);
@@ -148,4 +136,96 @@ async fn install_trufflehog_direct() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn select_install_path(system_bin: &Path, home: &Path) -> Result<PathBuf> {
+    if tokio::fs::metadata(system_bin).await.is_ok() && directory_is_writable(system_bin) {
+        return Ok(system_bin.to_path_buf());
+    }
+
+    let user_bin = home.join(".local/bin");
+    tokio::fs::create_dir_all(&user_bin).await?;
+    eprintln!(
+        "⚠️  Installing to {} (add to PATH if needed)",
+        user_bin.display()
+    );
+    Ok(user_bin)
+}
+
+fn directory_is_writable(path: &Path) -> bool {
+    tempfile::Builder::new()
+        .prefix(".repos-write-test-")
+        .tempfile_in(path)
+        .is_ok()
+}
+
+fn create_script_workspace() -> Result<TempDir> {
+    let workspace = tempfile::Builder::new()
+        .prefix("repos-trufflehog-")
+        .tempdir()
+        .context("Failed to create a private installer workspace")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(workspace.path(), std::fs::Permissions::from_mode(0o700))
+            .context("Failed to secure the installer workspace")?;
+    }
+    Ok(workspace)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{create_script_workspace, directory_is_writable, select_install_path};
+
+    #[test]
+    fn writable_probe_preserves_existing_files_and_leaves_no_artifact() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let sentinel = directory.path().join("test_write");
+        std::fs::write(&sentinel, "keep me").expect("write sentinel");
+        let before = std::fs::read_dir(directory.path())
+            .expect("read directory")
+            .count();
+
+        assert!(directory_is_writable(directory.path()));
+        assert_eq!(
+            std::fs::read_to_string(sentinel).expect("read sentinel"),
+            "keep me"
+        );
+        assert_eq!(
+            std::fs::read_dir(directory.path())
+                .expect("read directory")
+                .count(),
+            before
+        );
+    }
+
+    #[tokio::test]
+    async fn install_path_falls_back_to_private_user_bin() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let unavailable_system_bin = root.path().join("missing/system/bin");
+        let home = root.path().join("home");
+
+        let selected = select_install_path(&unavailable_system_bin, &home)
+            .await
+            .expect("select install path");
+
+        assert_eq!(selected, home.join(".local/bin"));
+        assert!(selected.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installer_workspace_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let workspace = create_script_workspace().expect("create workspace");
+        let mode = workspace
+            .path()
+            .metadata()
+            .expect("workspace metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o077, 0);
+    }
 }

@@ -14,7 +14,6 @@ homepage = "https://github.com/goobits/repos"
 
 [dev-dependencies]
 criterion = { version = "0.8.1", features = ["async_tokio"] }
-tempfile = "3.23"
 
 [dependencies]
 # Error handling
@@ -39,6 +38,7 @@ toml = "0.8"
 chrono = "0.4"
 sha2 = "0.10"
 async-trait = "0.1.89"
+tempfile = "3.23"
 
 [[bin]]
 name = "repos"
