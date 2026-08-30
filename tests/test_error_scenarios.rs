@@ -50,6 +50,72 @@ async fn test_pull_merge_conflict_handled() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_rebase_conflict_restores_original_checkout() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "shared.txt", "base", "Init")?;
+
+    let local_path = root.join("local");
+    Command::new("git")
+        .args([
+            "clone",
+            remote_path
+                .to_str()
+                .expect("temporary path should be UTF-8"),
+            local_path.to_str().expect("temporary path should be UTF-8"),
+        ])
+        .output()?;
+    setup_git_repo(&local_path)?;
+
+    create_test_commit(&remote_path, "shared.txt", "remote change", "Remote update")?;
+    create_test_commit(&local_path, "shared.txt", "local change", "Local update")?;
+    let original_head = git_output(&local_path, &["rev-parse", "HEAD"])?;
+    let original_branch = git_output(&local_path, &["symbolic-ref", "--short", "HEAD"])?;
+
+    let fetch_result = fetch_and_analyze_for_pull(&local_path).await;
+    assert_eq!(fetch_result.status, Status::PullError);
+
+    let (status, message, _) = pull_if_needed(&local_path, &fetch_result, true).await;
+    assert_eq!(status, Status::PullError);
+    assert!(
+        message.contains("aborted and restored original checkout"),
+        "{message}"
+    );
+    assert_eq!(
+        git_output(&local_path, &["rev-parse", "HEAD"])?,
+        original_head
+    );
+    assert_eq!(
+        git_output(&local_path, &["symbolic-ref", "--short", "HEAD"])?,
+        original_branch
+    );
+    assert!(git_output(&local_path, &["status", "--porcelain"])?.is_empty());
+
+    let rebase_head = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "REBASE_HEAD"])
+        .current_dir(&local_path)
+        .output()?;
+    assert!(!rebase_head.status.success());
+
+    Ok(())
+}
+
+fn git_output(path: &std::path::Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git").args(args).current_dir(path).output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[tokio::test]
 async fn test_invalid_git_repo_detection() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path();

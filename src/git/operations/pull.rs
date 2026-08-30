@@ -307,6 +307,7 @@ pub(crate) async fn pull_if_needed_with_context(
         }
         Ok((false, _, stderr)) => {
             let error_message = clean_error_message(&stderr);
+            let error_message = recover_failed_rebase(path, use_rebase, &error_message).await;
             let final_message = if error_message.to_lowercase().contains("conflict") {
                 format!("merge conflict: {error_message}")
             } else if error_message
@@ -328,6 +329,7 @@ pub(crate) async fn pull_if_needed_with_context(
         }
         Err(error) => {
             let error_message = clean_error_message(&error.to_string());
+            let error_message = recover_failed_rebase(path, use_rebase, &error_message).await;
             let final_message = if is_rate_limit_error(&error_message) {
                 format!("⚠️ RATE LIMIT: {error_message}")
             } else {
@@ -340,5 +342,39 @@ pub(crate) async fn pull_if_needed_with_context(
             );
             GitOperationResult::failed(Status::PullError, failure, fetch_result.has_uncommitted)
         }
+    }
+}
+
+async fn recover_failed_rebase(path: &Path, use_rebase: bool, error_message: &str) -> String {
+    if !use_rebase {
+        return error_message.to_string();
+    }
+
+    let rebase_head = match run_git(path, &["rev-parse", "--verify", "--quiet", "REBASE_HEAD"])
+        .await
+    {
+        Ok((true, _, _)) => true,
+        Ok((false, _, _)) => false,
+        Err(error) => {
+            return format!(
+                "rebase failed and its recovery state could not be inspected: {error_message}; {error}"
+            );
+        }
+    };
+    if !rebase_head {
+        return error_message.to_string();
+    }
+
+    match run_git(path, &["rebase", "--abort"]).await {
+        Ok((true, _, _)) => {
+            format!("rebase conflict; aborted and restored original checkout: {error_message}")
+        }
+        Ok((false, _, stderr)) => format!(
+            "rebase conflict and automatic abort failed: {error_message}; abort failed: {}",
+            crate::core::clean_error_message(&stderr)
+        ),
+        Err(error) => format!(
+            "rebase conflict and automatic abort failed: {error_message}; abort failed: {error}"
+        ),
     }
 }

@@ -6,6 +6,7 @@ use super::status::Status;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GitFailureKind {
     Authentication,
+    Conflict,
     Diverged,
     Network,
     Timeout,
@@ -77,6 +78,8 @@ impl GitFailure {
             ],
         ) {
             GitFailureKind::Authentication
+        } else if lower.contains("conflict") {
+            GitFailureKind::Conflict
         } else if lower.contains("diverged") {
             GitFailureKind::Diverged
         } else if lower.contains("timed out") || lower.contains("timeout") {
@@ -108,6 +111,7 @@ impl GitFailure {
             GitFailureKind::Authentication => {
                 format!("authentication failed during {}", self.phase.label())
             }
+            GitFailureKind::Conflict => self.message.clone(),
             GitFailureKind::TransportPolicy => self.remote.as_ref().map_or_else(
                 || format!("SSH-only policy blocked {}", self.phase.label()),
                 |remote| {
@@ -149,6 +153,14 @@ impl GitFailure {
                     }
                 },
             ),
+            GitFailureKind::Conflict => {
+                if self.message.contains("automatic abort failed") {
+                    "run `git rebase --abort`, resolve the conflicting commits, then retry"
+                        .to_string()
+                } else {
+                    "resolve the conflicting commits manually, then retry".to_string()
+                }
+            }
             GitFailureKind::Diverged => "repos sync or resolve manually".to_string(),
             GitFailureKind::Network => "retry or inspect remote connectivity".to_string(),
             GitFailureKind::Timeout => "retry with --sequential".to_string(),
@@ -246,6 +258,11 @@ mod tests {
                 "diverged: 2 ahead / 3 behind",
                 GitFailureKind::Diverged,
                 "diverged: 2 ahead / 3 behind",
+            ),
+            (
+                "rebase conflict; aborted and restored original checkout",
+                GitFailureKind::Conflict,
+                "rebase conflict; aborted and restored original checkout",
             ),
             (
                 "Git operation timed out",
