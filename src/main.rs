@@ -285,7 +285,7 @@ struct Cli {
 }
 
 /// Handles nested repository subcommands.
-fn handle_nested_command(subcommand: NestedCommand) -> Result<()> {
+async fn handle_nested_command(subcommand: NestedCommand) -> Result<()> {
     match subcommand {
         NestedCommand::Validate => {
             let report = subrepo::validation::validate_subrepos()?;
@@ -298,9 +298,9 @@ fn handle_nested_command(subcommand: NestedCommand) -> Result<()> {
             Ok(())
         }
         NestedCommand::Sync { name, to, stash } => {
-            subrepo::sync::sync_subrepo(&name, &to, stash, false)
+            subrepo::sync::sync_subrepo(&name, &to, stash, false).await
         }
-        NestedCommand::Update { name } => subrepo::sync::update_subrepo(&name, false),
+        NestedCommand::Update { name } => subrepo::sync::update_subrepo(&name, false).await,
     }
 }
 
@@ -475,7 +475,7 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Some(Commands::Nested { subcommand }) => handle_nested_command(subcommand.clone()),
+        Some(Commands::Nested { subcommand }) => handle_nested_command(subcommand.clone()).await,
         Some(Commands::Doctor) => handle_doctor_command().await,
         None => {
             // Default behavior - show help

@@ -10,8 +10,8 @@ use tempfile::TempDir;
 mod common;
 use common::git::{clone_repo, create_test_commit, get_head_commit, setup_git_repo};
 
-#[test]
-fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
+#[tokio::test]
+async fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
 
@@ -61,13 +61,13 @@ fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
     };
 
     // 5. Try sync without stash/force (should fail/skip)
-    let result = sync_subrepo_with_report("upstream", &commit2, false, false, &report);
+    let result = sync_subrepo_with_report("upstream", &commit2, false, false, &report).await;
     assert!(result.is_ok()); // sync_subrepo returns Ok even if it skips, but shows warning
                              // Verify it DID NOT sync
     assert_eq!(get_head_commit(&sub_path)?, commit1);
 
     // 6. Try sync WITH stash
-    sync_subrepo_with_report("upstream", &commit2, true, false, &report)?;
+    sync_subrepo_with_report("upstream", &commit2, true, false, &report).await?;
 
     // Verify it DID sync
     assert_eq!(get_head_commit(&sub_path)?, commit2);
@@ -80,8 +80,8 @@ fn test_sync_with_uncommitted_changes_stash() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_update_skips_diverged_local_commits() -> Result<()> {
+#[tokio::test]
+async fn test_update_skips_diverged_local_commits() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
 
@@ -127,7 +127,7 @@ fn test_update_skips_diverged_local_commits() -> Result<()> {
         uninitialized_submodules: vec![],
     };
 
-    update_subrepo_with_report("upstream", false, &report)?;
+    update_subrepo_with_report("upstream", false, &report).await?;
 
     assert_eq!(
         get_head_commit(&sub_path)?,
@@ -139,8 +139,8 @@ fn test_update_skips_diverged_local_commits() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_update_allows_fast_forward_commit() -> Result<()> {
+#[tokio::test]
+async fn test_update_allows_fast_forward_commit() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
 
@@ -179,14 +179,14 @@ fn test_update_allows_fast_forward_commit() -> Result<()> {
         uninitialized_submodules: Vec::new(),
     };
 
-    update_subrepo_with_report("upstream", false, &report)?;
+    update_subrepo_with_report("upstream", false, &report).await?;
     assert_eq!(get_head_commit(&sub_path)?, remote_tip);
     Ok(())
 }
 
 #[cfg(unix)]
-#[test]
-fn test_update_uses_one_immutable_target_for_every_copy() -> Result<()> {
+#[tokio::test]
+async fn test_update_uses_one_immutable_target_for_every_copy() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let temp_dir = TempDir::new()?;
@@ -246,7 +246,7 @@ fn test_update_uses_one_immutable_target_for_every_copy() -> Result<()> {
         uninitialized_submodules: Vec::new(),
     };
 
-    update_subrepo_with_report("upstream", false, &report)?;
+    update_subrepo_with_report("upstream", false, &report).await?;
 
     assert!(marker.exists(), "race hook did not advance the remote");
     assert_ne!(get_head_commit(&remote_path)?, selected_target);
@@ -260,8 +260,8 @@ fn test_update_uses_one_immutable_target_for_every_copy() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_sync_force_discards_tracked_changes() -> Result<()> {
+#[tokio::test]
+async fn test_sync_force_discards_tracked_changes() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
 
@@ -308,15 +308,15 @@ fn test_sync_force_discards_tracked_changes() -> Result<()> {
         uninitialized_submodules: vec![],
     };
 
-    sync_subrepo_with_report("upstream", &commit2, false, true, &report)?;
+    sync_subrepo_with_report("upstream", &commit2, false, true, &report).await?;
     assert_eq!(get_head_commit(&sub_path)?, commit2);
     assert_eq!(std::fs::read_to_string(sub_path.join("common.txt"))?, "v2");
 
     Ok(())
 }
 
-#[test]
-fn test_sync_missing_remote_handled() -> Result<()> {
+#[tokio::test]
+async fn test_sync_missing_remote_handled() -> Result<()> {
     let report = ValidationReport {
         total_nested: 0,
         by_remote: HashMap::new(),
@@ -325,13 +325,13 @@ fn test_sync_missing_remote_handled() -> Result<()> {
     };
 
     // Should bail with "not found"
-    let result = sync_subrepo_with_report("nonexistent", "abc", false, false, &report);
+    let result = sync_subrepo_with_report("nonexistent", "abc", false, false, &report).await;
     assert!(result.is_err());
     Ok(())
 }
 
-#[test]
-fn test_multiple_subrepos_batch_sync() -> Result<()> {
+#[tokio::test]
+async fn test_multiple_subrepos_batch_sync() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
 
@@ -382,7 +382,7 @@ fn test_multiple_subrepos_batch_sync() -> Result<()> {
         uninitialized_submodules: vec![],
     };
 
-    sync_subrepo_with_report("upstream", &commit2, false, false, &report)?;
+    sync_subrepo_with_report("upstream", &commit2, false, false, &report).await?;
 
     // Verify all 3 synced
     for i in 1..=3 {

@@ -45,13 +45,13 @@ fn find_instances_by_name(report: &ValidationReport, name: &str) -> Result<Vec<S
 }
 
 /// Sync a subrepo to a specific commit across all parent repositories
-pub fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -> Result<()> {
+pub async fn sync_subrepo(name: &str, target_commit: &str, stash: bool, force: bool) -> Result<()> {
     let report = super::validation::validate_subrepos()?;
-    sync_subrepo_with_report(name, target_commit, stash, force, &report)
+    sync_subrepo_with_report(name, target_commit, stash, force, &report).await
 }
 
 /// Sync logic that accepts a report (useful for testing)
-pub fn sync_subrepo_with_report(
+pub async fn sync_subrepo_with_report(
     name: &str,
     target_commit: &str,
     stash: bool,
@@ -98,7 +98,7 @@ pub fn sync_subrepo_with_report(
             ));
             continue;
         }
-        if let Err(error) = ensure_commit_available(&instance.subrepo_path, target_commit) {
+        if let Err(error) = ensure_commit_available(&instance.subrepo_path, target_commit).await {
             let error = clean_error_message(&error.to_string());
             println!(
                 "  ❌ {} (target preflight failed: {})",
@@ -183,13 +183,13 @@ pub fn sync_subrepo_with_report(
 }
 
 /// Update a subrepo to the latest commit from remote
-pub fn update_subrepo(name: &str, force: bool) -> Result<()> {
+pub async fn update_subrepo(name: &str, force: bool) -> Result<()> {
     let report = super::validation::validate_subrepos()?;
-    update_subrepo_with_report(name, force, &report)
+    update_subrepo_with_report(name, force, &report).await
 }
 
 /// Update logic that accepts a report (useful for testing)
-pub fn update_subrepo_with_report(
+pub async fn update_subrepo_with_report(
     name: &str,
     force: bool,
     report: &ValidationReport,
@@ -198,7 +198,7 @@ pub fn update_subrepo_with_report(
 
     // Use first instance to determine latest commit
     println!("\n🔍 Fetching latest commit for {name}...");
-    let latest = fetch_latest_commit(&instances[0].subrepo_path)?;
+    let latest = fetch_latest_commit(&instances[0].subrepo_path).await?;
     let short_latest = latest.chars().take(7).collect::<String>();
     println!("   Latest commit: {short_latest}\n");
 
@@ -265,7 +265,7 @@ pub fn update_subrepo_with_report(
             }
         }
 
-        if let Err(error) = ensure_commit_available(&instance.subrepo_path, &latest) {
+        if let Err(error) = ensure_commit_available(&instance.subrepo_path, &latest).await {
             let error = clean_error_message(&error.to_string());
             println!("  ❌ {} (fetch failed: {})", instance.parent_repo, error);
             outcomes.push(NestedOutcome::new(

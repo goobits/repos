@@ -4,6 +4,9 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
 
+use crate::git::operations::run_git;
+use crate::git::remote::{inspect_remote, policy_violation, RemoteDirection};
+
 fn path_to_str(path: &Path) -> Result<&str> {
     path.to_str()
         .context("Path contains invalid UTF-8 characters")
@@ -97,15 +100,18 @@ pub(super) fn is_ancestor(path: &Path, ancestor: &str, descendant: &str) -> Resu
     }
 }
 
-fn fetch_origin(path: &Path) -> Result<()> {
-    let path_str = path_to_str(path)?;
-    let fetch_output = Command::new("git")
-        .args(["-C", path_str, "fetch", "origin"])
-        .output()
-        .context("Failed to run git fetch")?;
+async fn fetch_origin(path: &Path) -> Result<()> {
+    let contexts = inspect_remote(path, "origin", RemoteDirection::Fetch)
+        .await
+        .context("Failed to inspect nested origin")?;
+    if let Some(violation) = policy_violation(&contexts)? {
+        anyhow::bail!(violation.message());
+    }
 
-    if !fetch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+    let (success, _, stderr) = run_git(path, &["fetch", "origin"])
+        .await
+        .context("Failed to run nested git fetch")?;
+    if !success {
         anyhow::bail!("git fetch failed: {stderr}");
     }
 
@@ -121,11 +127,11 @@ fn commit_exists(path: &Path, commit: &str) -> Result<bool> {
     Ok(output.status.success())
 }
 
-pub(super) fn ensure_commit_available(path: &Path, commit: &str) -> Result<()> {
+pub(super) async fn ensure_commit_available(path: &Path, commit: &str) -> Result<()> {
     if commit_exists(path, commit)? {
         return Ok(());
     }
-    fetch_origin(path)?;
+    fetch_origin(path).await?;
     if commit_exists(path, commit)? {
         Ok(())
     } else {
@@ -136,9 +142,9 @@ pub(super) fn ensure_commit_available(path: &Path, commit: &str) -> Result<()> {
     }
 }
 
-pub(super) fn fetch_latest_commit(path: &Path) -> Result<String> {
+pub(super) async fn fetch_latest_commit(path: &Path) -> Result<String> {
     let path_str = path_to_str(path)?;
-    fetch_origin(path)?;
+    fetch_origin(path).await?;
 
     for branch in &["origin/HEAD", "origin/main", "origin/master"] {
         let output = Command::new("git")

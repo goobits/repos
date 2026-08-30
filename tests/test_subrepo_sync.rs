@@ -7,8 +7,8 @@ use tempfile::TempDir;
 mod common;
 use common::git::{clone_repo, create_test_commit, get_head_commit, setup_git_repo};
 
-#[test]
-fn test_sync_subrepo_success() -> Result<()> {
+#[tokio::test]
+async fn test_sync_subrepo_success() -> Result<()> {
     // 1. Setup
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
@@ -108,7 +108,7 @@ fn test_sync_subrepo_success() -> Result<()> {
     };
 
     // 3. Run Sync
-    sync_subrepo_with_report("upstream-lib", &target_commit, false, false, &report)?;
+    sync_subrepo_with_report("upstream-lib", &target_commit, false, false, &report).await?;
 
     // 4. Verify
     let head_a = get_head_commit(&subrepo_a_path)?;
@@ -120,8 +120,8 @@ fn test_sync_subrepo_success() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_sync_preflights_every_copy_before_changing_any_checkout() -> Result<()> {
+#[tokio::test]
+async fn test_sync_preflights_every_copy_before_changing_any_checkout() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path();
     let remote_path = root.join("upstream");
@@ -174,7 +174,8 @@ fn test_sync_preflights_every_copy_before_changing_any_checkout() -> Result<()> 
         uninitialized_submodules: Vec::new(),
     };
 
-    let result = sync_subrepo_with_report("upstream", &unavailable_target, false, false, &report);
+    let result =
+        sync_subrepo_with_report("upstream", &unavailable_target, false, false, &report).await;
 
     assert!(result.is_err(), "unavailable target must fail the batch");
     for instance in instances {
