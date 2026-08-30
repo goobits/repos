@@ -161,6 +161,45 @@ async fn test_sync_command_with_no_repos() {
 }
 
 #[tokio::test]
+async fn test_sync_command_rebases_and_pushes_diverged_repository() {
+    let _lock = common::lock_test().await;
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
+    let updater_root = TempDir::new().expect("Failed to create updater directory");
+    let updater = updater_root.path().join("updater");
+    clone_repo(&remote.path().join("remote.git"), &updater).expect("Failed to clone test remote");
+
+    create_test_commit(&updater, "remote.txt", "remote change", "Remote update")
+        .expect("Failed to create remote commit");
+    run_git_ok(&updater, &["push"]);
+    create_test_commit(repo.path(), "local.txt", "local change", "Local update")
+        .expect("Failed to create local commit");
+
+    let sync = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["sync", "--sequential", "--no-drift-check"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos sync");
+    let stdout = String::from_utf8_lossy(&sync.stdout);
+    let stderr = String::from_utf8_lossy(&sync.stderr);
+
+    assert!(sync.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("▌ Pulled"), "{stdout}");
+    assert!(stdout.contains("▌ Pushed"), "{stdout}");
+    assert!(repo.path().join("remote.txt").is_file());
+    assert!(repo.path().join("local.txt").is_file());
+    assert_eq!(
+        get_head_commit(repo.path()).expect("Failed to resolve local HEAD"),
+        get_head_commit(&remote.path().join("remote.git")).expect("Failed to resolve remote HEAD"),
+        "sync should push the rebased local commit"
+    );
+}
+
+#[tokio::test]
 async fn test_fetch_command_with_no_repos() {
     let _lock = common::lock_test().await;
     if !is_git_available() {

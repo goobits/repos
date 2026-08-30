@@ -249,7 +249,11 @@ pub(crate) async fn pull_if_needed_with_context(
 ) -> GitOperationResult {
     use crate::core::clean_error_message;
 
-    if fetch_result.status != Status::Synced {
+    let can_rebase_diverged_branch = use_rebase
+        && fetch_result.status == Status::PullError
+        && fetch_result.ahead_count > 0
+        && fetch_result.behind_count > 0;
+    if fetch_result.status != Status::Synced && !can_rebase_diverged_branch {
         return result_from_fetch_state(
             fetch_result.status,
             &fetch_result.message,

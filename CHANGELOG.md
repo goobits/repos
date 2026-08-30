@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
+- `repos sync` and `repos pull --rebase` now rebase clean diverged branches instead of rejecting them during preflight before Git can reconcile the histories.
 - Declared submodule validation now honors `.reposignore`, so intentionally excluded checkouts are not misreported as uninitialized.
 - Repository discovery no longer silently stops at depth 10, so deeply nested checkouts participate in fleet and nested-drift reporting.
 - Nested status now reports declared but uninitialized submodules separately with exact initialization commands. Gitlink inspection failures make the inventory incomplete instead of silently classifying affected checkouts as independent.
