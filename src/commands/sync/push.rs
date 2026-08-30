@@ -15,6 +15,22 @@ use anyhow::Result;
 const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[2m";
 
+#[derive(Clone, Copy)]
+pub(super) enum PushRunMode {
+    Standalone,
+    Sync,
+}
+
+impl PushRunMode {
+    fn skips_dirty(self) -> bool {
+        matches!(self, Self::Sync)
+    }
+
+    fn renders_report(self) -> bool {
+        matches!(self, Self::Standalone)
+    }
+}
+
 pub async fn handle_push_command(
     auto_upstream: bool,
     verbose: bool,
@@ -32,10 +48,10 @@ pub async fn handle_push_command(
     let run = process_push_repositories(
         context,
         auto_upstream,
+        PushRunMode::Standalone,
         verbose,
         show_changes,
         no_drift_check,
-        true,
         None,
     )
     .await;
@@ -46,10 +62,10 @@ pub async fn handle_push_command(
 pub(super) async fn process_push_repositories(
     context: crate::core::ProcessingContext,
     auto_upstream: bool,
+    run_mode: PushRunMode,
     verbose: bool,
     show_changes: bool,
     no_drift_check: bool,
-    render_report: bool,
     topology: Option<std::sync::Arc<TopologySnapshot>>,
 ) -> TransferRun {
     use crate::core::config::FETCH_CONCURRENT_CAP;
@@ -128,14 +144,26 @@ pub(super) async fn process_push_repositories(
                 let fetch_result = fetch_and_analyze(path, auto_upstream).await;
                 drop(fetch_permit);
 
-                let blocked_children = if gitlink_inspection_error.is_none()
+                let skip_dirty = should_skip_dirty_worktree(
+                    run_mode,
+                    fetch_result.has_uncommitted,
+                    fetch_result.status,
+                );
+                let blocked_children = if !skip_dirty
+                    && gitlink_inspection_error.is_none()
                     && fetch_result.will_push(auto_upstream)
                 {
                     crate::git::operations::unpublished_gitlinks(&gitlink_prerequisites).await
                 } else {
                     Vec::new()
                 };
-                let result = if let Some(error) = gitlink_inspection_error {
+                let result = if skip_dirty {
+                    GitOperationResult::new(
+                        Status::Dirty,
+                        "dirty worktree; commit or stash before sync".to_string(),
+                        true,
+                    )
+                } else if let Some(error) = gitlink_inspection_error {
                     GitOperationResult::failed(
                         Status::Error,
                         GitFailure::from_message(
@@ -214,13 +242,13 @@ pub(super) async fn process_push_repositories(
     }
     finish_sync_progress(&footer, concise.as_ref());
 
-    let (drift_count, drift_lines) = if render_report && !no_drift_check {
+    let (drift_count, drift_lines) = if run_mode.renders_report() && !no_drift_check {
         super::format_nested_drift_work_items_with_topology(&context.repositories, &topology)
     } else {
         (0, Vec::new())
     };
     let final_stats = statistics.as_ref();
-    if render_report {
+    if run_mode.renders_report() {
         let report = if drift_count == 0 && drift_lines.is_empty() {
             final_stats.generate_push_report(context.start_time.elapsed(), show_changes)
         } else {
@@ -240,6 +268,16 @@ pub(super) async fn process_push_repositories(
         statistics,
         error_count,
     }
+}
+
+fn should_skip_dirty_worktree(
+    run_mode: PushRunMode,
+    has_uncommitted: bool,
+    fetch_status: Status,
+) -> bool {
+    run_mode.skips_dirty()
+        && has_uncommitted
+        && matches!(fetch_status, Status::Synced | Status::NoUpstream)
 }
 
 async fn push_with_rate_limit_retry(
@@ -273,5 +311,109 @@ async fn push_with_rate_limit_retry(
             failure.message = suggestion;
         }
         return result;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{process_push_repositories, should_skip_dirty_worktree, PushRunMode};
+    use crate::core::create_processing_context;
+    use crate::git::Status;
+    use std::process::Command;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::Instant;
+    use tempfile::TempDir;
+
+    fn git(path: &std::path::Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("git should run");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn sync_skips_dirty_worktrees_but_standalone_push_does_not() {
+        assert!(should_skip_dirty_worktree(
+            PushRunMode::Sync,
+            true,
+            Status::Synced
+        ));
+        assert!(!should_skip_dirty_worktree(
+            PushRunMode::Standalone,
+            true,
+            Status::Synced
+        ));
+        assert!(!should_skip_dirty_worktree(
+            PushRunMode::Sync,
+            false,
+            Status::Synced
+        ));
+        assert!(!should_skip_dirty_worktree(
+            PushRunMode::Sync,
+            true,
+            Status::Error
+        ));
+    }
+
+    #[tokio::test]
+    async fn sync_does_not_push_commits_from_a_dirty_worktree() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let root = TempDir::new().expect("temporary root should be created");
+        let repository = root.path().join("repository");
+        let remote = root.path().join("remote.git");
+        git(root.path(), &["init", repository.to_str().unwrap()]);
+        git(root.path(), &["init", "--bare", remote.to_str().unwrap()]);
+        git(&repository, &["config", "user.name", "repos test"]);
+        git(
+            &repository,
+            &["config", "user.email", "repos@example.invalid"],
+        );
+        git(
+            &repository,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+
+        std::fs::write(repository.join("tracked.txt"), "initial\n")
+            .expect("initial file should be written");
+        git(&repository, &["add", "tracked.txt"]);
+        git(&repository, &["commit", "-m", "initial"]);
+        let branch = git(&repository, &["symbolic-ref", "--short", "HEAD"]);
+        git(&repository, &["push", "-u", "origin", &branch]);
+        let remote_ref = format!("refs/heads/{branch}");
+        let original_remote_head = git(&remote, &["rev-parse", &remote_ref]);
+
+        std::fs::write(repository.join("ahead.txt"), "committed locally\n")
+            .expect("ahead file should be written");
+        git(&repository, &["add", "ahead.txt"]);
+        git(&repository, &["commit", "-m", "ahead"]);
+        std::fs::write(repository.join("dirty.txt"), "not committed\n")
+            .expect("dirty file should be written");
+
+        let repositories = Arc::new(vec![("repository".to_string(), repository.clone())]);
+        let context = create_processing_context(repositories, Instant::now(), 1)
+            .expect("processing context should be created");
+        let run =
+            process_push_repositories(context, false, PushRunMode::Sync, false, false, true, None)
+                .await;
+
+        assert_eq!(run.error_count, 0);
+        assert_eq!(run.statistics.pushed_repos.load(Ordering::Relaxed), 0);
+        assert_eq!(run.statistics.skipped_repos.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            git(&remote, &["rev-parse", &remote_ref]),
+            original_remote_head
+        );
     }
 }

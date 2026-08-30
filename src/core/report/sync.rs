@@ -204,8 +204,6 @@ fn sync_outcome(repository: &SyncRepository) -> SyncOutcome {
         .collect::<Vec<_>>();
     if phases.iter().any(|outcome| is_failure(outcome.status)) {
         SyncOutcome::Failed
-    } else if phases.iter().any(|outcome| is_skip(outcome.status)) {
-        SyncOutcome::Skipped
     } else if phases.iter().any(|outcome| {
         matches!(
             outcome.status,
@@ -213,6 +211,8 @@ fn sync_outcome(repository: &SyncRepository) -> SyncOutcome {
         )
     }) {
         SyncOutcome::Updated
+    } else if phases.iter().any(|outcome| is_skip(outcome.status)) {
+        SyncOutcome::Skipped
     } else {
         SyncOutcome::UpToDate
     }
@@ -437,5 +437,65 @@ fn plural(count: u64, singular: &'static str, plural: &'static str) -> &'static 
         singular
     } else {
         plural
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome(status: Status, message: &str) -> RepositoryOutcome {
+        RepositoryOutcome {
+            repository: "app".to_string(),
+            path: "./app".to_string(),
+            status,
+            message: message.to_string(),
+            has_uncommitted: false,
+        }
+    }
+
+    #[test]
+    fn successful_push_takes_precedence_over_pull_skip() {
+        let repository = SyncRepository {
+            path: "./app".to_string(),
+            pull: Some(outcome(Status::NoUpstream, "no tracking")),
+            push: Some(outcome(Status::Pushed, "set upstream & pushed")),
+        };
+
+        assert_eq!(sync_outcome(&repository), SyncOutcome::Updated);
+    }
+
+    #[test]
+    fn successful_auto_upstream_push_removes_stale_skip_guidance() {
+        let pull = SyncStatistics::new();
+        pull.update("app", "./app", &Status::NoUpstream, "no tracking", false);
+        let push = SyncStatistics::new();
+        push.update(
+            "app",
+            "./app",
+            &Status::Pushed,
+            "set upstream & pushed",
+            false,
+        );
+
+        let report = generate_sync_report(&pull, &push, Duration::ZERO, 1, false, 0, &[]);
+
+        assert!(report.contains("Updated         1"), "{report}");
+        assert!(!report.contains("Skipped         1"), "{report}");
+        assert!(
+            !report.contains("run `repos push --auto-upstream`"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn failure_still_takes_precedence_over_successful_transfer() {
+        let repository = SyncRepository {
+            path: "./app".to_string(),
+            pull: Some(outcome(Status::PullError, "pull failed")),
+            push: Some(outcome(Status::Pushed, "pushed")),
+        };
+
+        assert_eq!(sync_outcome(&repository), SyncOutcome::Failed);
     }
 }

@@ -38,6 +38,16 @@ pub(crate) async fn push_if_needed_with_context(
         );
     }
 
+    // A normal push without an upstream is intentionally a no-op. Decide that
+    // before inspecting the push transport or attempting an LFS transfer.
+    if !fetch_result.upstream_exists && !auto_upstream {
+        return GitOperationResult::new(
+            Status::NoUpstream,
+            STATUS_NO_UPSTREAM.to_string(),
+            fetch_result.has_uncommitted,
+        );
+    }
+
     let remote_name = fetch_result
         .upstream_remote
         .clone()
@@ -69,13 +79,9 @@ pub(crate) async fn push_if_needed_with_context(
 
     let uses_lfs = check_uses_git_lfs(path).await;
     if uses_lfs && has_pending_lfs_objects(path).await {
-        let branch = if target_branch.is_empty() {
-            "HEAD".to_string()
-        } else {
-            target_branch.clone()
-        };
+        let branch = lfs_source_ref(&fetch_result.current_branch);
 
-        let (lfs_success, lfs_error) = push_lfs_objects(path, &remote_name, &branch).await;
+        let (lfs_success, lfs_error) = push_lfs_objects(path, &remote_name, branch).await;
         if !lfs_success {
             let error_msg = if lfs_error.is_empty() {
                 "LFS push failed".to_string()
@@ -96,71 +102,47 @@ pub(crate) async fn push_if_needed_with_context(
     }
 
     if !fetch_result.upstream_exists {
-        if auto_upstream {
-            let transferred =
-                match count_new_upstream_commits(path, &remote_name, &target_branch).await {
-                    Ok(count) => count,
-                    Err(error) => {
-                        let failure = GitFailure::from_message(
-                            GitOperationPhase::Push,
-                            format!("new-upstream commit inspection failed: {error}"),
-                            push_context,
-                        );
-                        return GitOperationResult::failed(
-                            Status::Error,
-                            failure,
-                            fetch_result.has_uncommitted,
-                        );
-                    }
-                };
-            let push_args = vec!["push", "-u", &remote_name, &fetch_result.current_branch];
-            match run_git(path, &push_args).await {
-                Ok((true, _, _)) => {
-                    let msg = if uses_lfs {
-                        format!("set upstream ({remote_name}) & pushed (with LFS)")
-                    } else {
-                        format!("set upstream ({remote_name}) & pushed")
-                    };
-                    return GitOperationResult::new(
-                        Status::Pushed,
-                        msg,
-                        fetch_result.has_uncommitted,
-                    )
-                    .with_transferred(transferred);
-                }
-                Ok((false, _, stderr)) => {
-                    let error_message = clean_error_message(&stderr);
-                    let failure = GitFailure::from_message(
-                        GitOperationPhase::Push,
-                        error_message,
-                        push_context,
-                    );
-                    return GitOperationResult::failed(
-                        Status::Error,
-                        failure,
-                        fetch_result.has_uncommitted,
-                    );
-                }
-                Err(error) => {
-                    let error_message = clean_error_message(&error.to_string());
-                    let failure = GitFailure::from_message(
-                        GitOperationPhase::Push,
-                        error_message,
-                        push_context,
-                    );
-                    return GitOperationResult::failed(
-                        Status::Error,
-                        failure,
-                        fetch_result.has_uncommitted,
-                    );
-                }
+        debug_assert!(auto_upstream);
+        let transferred = match count_new_upstream_commits(path, &remote_name, &target_branch).await
+        {
+            Ok(count) => count,
+            Err(error) => {
+                let failure = GitFailure::from_message(
+                    GitOperationPhase::Push,
+                    format!("new-upstream commit inspection failed: {error}"),
+                    push_context,
+                );
+                return GitOperationResult::failed(
+                    Status::Error,
+                    failure,
+                    fetch_result.has_uncommitted,
+                );
             }
-        }
-        return GitOperationResult::new(
-            Status::NoUpstream,
-            STATUS_NO_UPSTREAM.to_string(),
-            fetch_result.has_uncommitted,
-        );
+        };
+        let push_args = vec!["push", "-u", &remote_name, &fetch_result.current_branch];
+        return match run_git(path, &push_args).await {
+            Ok((true, _, _)) => {
+                let msg = if uses_lfs {
+                    format!("set upstream ({remote_name}) & pushed (with LFS)")
+                } else {
+                    format!("set upstream ({remote_name}) & pushed")
+                };
+                GitOperationResult::new(Status::Pushed, msg, fetch_result.has_uncommitted)
+                    .with_transferred(transferred)
+            }
+            Ok((false, _, stderr)) => {
+                let error_message = clean_error_message(&stderr);
+                let failure =
+                    GitFailure::from_message(GitOperationPhase::Push, error_message, push_context);
+                GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted)
+            }
+            Err(error) => {
+                let error_message = clean_error_message(&error.to_string());
+                let failure =
+                    GitFailure::from_message(GitOperationPhase::Push, error_message, push_context);
+                GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted)
+            }
+        };
     }
 
     if fetch_result.ahead_count == 0 {
@@ -220,6 +202,14 @@ pub(crate) async fn push_if_needed_with_context(
     }
 }
 
+fn lfs_source_ref(current_branch: &str) -> &str {
+    if current_branch.is_empty() {
+        "HEAD"
+    } else {
+        current_branch
+    }
+}
+
 async fn count_new_upstream_commits(path: &Path, remote: &str, branch: &str) -> Result<u64> {
     let remote_ref = format!("refs/remotes/{remote}/{branch}");
     let reference_exists =
@@ -240,5 +230,44 @@ async fn count_new_upstream_commits(path: &Path, remote: &str, branch: &str) -> 
             .parse()
             .map_err(|_| anyhow::anyhow!("git returned an invalid commit count")),
         (false, _, stderr) => anyhow::bail!(command_error(&stderr, "commit inspection failed")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn no_upstream_fetch_result() -> FetchResult {
+        FetchResult {
+            has_uncommitted: false,
+            current_branch: "local-feature".to_string(),
+            ahead_count: 0,
+            behind_count: 0,
+            upstream_exists: false,
+            upstream_remote: Some("missing-remote".to_string()),
+            upstream_branch: None,
+            status: Status::NoUpstream,
+            message: STATUS_NO_UPSTREAM.to_string(),
+            failure: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn no_upstream_without_opt_in_returns_before_remote_inspection() {
+        let result = push_if_needed_with_context(
+            Path::new("/nonexistent/no-upstream-repository"),
+            &no_upstream_fetch_result(),
+            false,
+        )
+        .await;
+
+        assert_eq!(result.status, Status::NoUpstream);
+        assert_eq!(result.message, STATUS_NO_UPSTREAM);
+    }
+
+    #[test]
+    fn lfs_push_uses_the_local_source_ref() {
+        assert_eq!(lfs_source_ref("local-feature"), "local-feature");
+        assert_eq!(lfs_source_ref(""), "HEAD");
     }
 }

@@ -13,7 +13,7 @@ mod tests;
 
 use anyhow::Result;
 use pull::process_pull_repositories;
-use push::process_push_repositories;
+use push::{process_push_repositories, PushRunMode};
 
 use crate::core::{
     create_processing_context, generate_sync_report, init_command, print_final_report,
@@ -191,10 +191,10 @@ pub async fn handle_sync_command(
     let push_run = process_push_repositories(
         push_context,
         auto_upstream,
+        PushRunMode::Sync,
         verbose,
         show_changes,
         no_drift_check,
-        false,
         Some(std::sync::Arc::clone(&topology)),
     )
     .await;
