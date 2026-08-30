@@ -120,7 +120,6 @@ Options:
 
 | Option | Description |
 |---|---|
-| `-u`, `--include-untracked` | Include untracked files |
 | `-a`, `--all` | Stage all non-ignored changes |
 | `--auto-upstream` | Set upstream for branches without tracking |
 | `--dry-run` | Print planned save actions without mutating repositories |
@@ -129,8 +128,7 @@ Examples:
 
 ```bash
 repos save "Update docs"
-repos save "Add assets" --include-untracked
-repos save "Initial project state" --all
+repos save "Add assets" --all
 repos save "Publish branch" --auto-upstream
 repos save "Preview save" --dry-run
 ```
@@ -286,7 +284,7 @@ Options:
 
 | Option | Description |
 |---|---|
-| `--rebase` | Use `git pull --rebase` |
+| `--rebase` | Rebase diverged branches; without it, pulls must fast-forward |
 | `-v`, `--verbose` | Show detailed progress |
 | `-c`, `--show-changes` | Show file changes in dirty repositories |
 | `--no-drift-check` | Skip nested drift check |

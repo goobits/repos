@@ -16,7 +16,7 @@ Common issues and solutions for the repos tool.
 |-------|-------|----------|
 | `not authenticated` or `401 Unauthorized` | Missing registry credentials | Configure [publishing credentials](credentials_setup.md) |
 | `uncommitted changes` or `dirty working directory` | Uncommitted files in repo | Commit or stash changes: `git status` to review |
-| `tag already exists` | Version tag already published | Delete tag locally and remotely, then retry: `git tag -d v1.0.0 && git push origin :refs/tags/v1.0.0` |
+| `tag already exists` | Version tag already published | Compare `git rev-parse v1.0.0` with `git rev-parse HEAD`; if they differ, bump the version and publish a new immutable tag |
 | `not a package` or `no manifest found` | Missing package manifest | Ensure repo has `package.json`, `Cargo.toml`, or `pyproject.toml` |
 | `version mismatch` | package.json version differs from git tag | Update package version to match git tag |
 

@@ -54,7 +54,7 @@ Use `repos <command> --help` for exact options.
 ## Safety model
 
 Status and dry-run paths are the preview surfaces. `save` stages tracked files
-by default; `--include-untracked` and `--all` explicitly widen that scope. It
+by default; `--all` explicitly widens that scope to all non-ignored files. It
 then commits and pushes according to the selected mode. `sync` pulls safe remote
 changes, pushes local commits, and reports nested drift. Missing remotes,
 upstreams, conflicts, dirty state, and failed inspection remain visible rather

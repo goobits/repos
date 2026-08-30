@@ -38,8 +38,6 @@ Quick reference for `repos` commands, flags, and concepts.
 
 **`--auto-upstream`** - Set upstream automatically for branches without tracking.
 
-**`--include-untracked`** - Include untracked files in `repos save`.
-
 **`--all`** - Include all non-ignored changes for `repos save`, or enumerate every discovered nested repository for `repos nested status`, including synced, unique, missing-origin, submodule, linked-worktree, and declared-but-uninitialized submodule entries.
 
 **`--no-drift-check`** - Skip nested drift checks in `sync`, `push`, or `pull`.

@@ -153,7 +153,7 @@ impl BatchOperation {
             Status::Skip if outcome.message.contains("detached HEAD") => "checkout a branch",
             Status::ConfigSkipped => "rerun and approve the update, or pass `--yes`",
             Status::NoChanges if matches!(self, Self::Save { .. }) => {
-                "pass `--include-untracked` if those files should be saved"
+                "pass `--all` if those files should be saved"
             }
             Status::Error
             | Status::ConfigError
@@ -392,7 +392,7 @@ mod tests {
             "scratch-app",
             "./scratch-app",
             &Status::NoChanges,
-            "only untracked changes; pass --include-untracked",
+            "only untracked changes; pass --all",
             true,
         );
 
@@ -401,7 +401,7 @@ mod tests {
 
         assert!(report.contains("Needs work      1"));
         assert!(report.contains("path: ./scratch-app"));
-        assert!(report.contains("next: pass `--include-untracked`"));
+        assert!(report.contains("next: pass `--all`"));
     }
 
     #[test]

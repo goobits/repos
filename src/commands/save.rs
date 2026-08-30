@@ -24,7 +24,6 @@ const SCANNING_MESSAGE: &str = "🔍 Scanning for git repositories...";
 pub async fn handle_save_command(
     message: String,
     include_untracked: bool,
-    all: bool,
     auto_upstream: bool,
     dry_run: bool,
 ) -> Result<()> {
@@ -57,14 +56,7 @@ pub async fn handle_save_command(
             }
         };
 
-    process_save_repositories(
-        context,
-        message,
-        include_untracked || all,
-        auto_upstream,
-        dry_run,
-    )
-    .await?;
+    process_save_repositories(context, message, include_untracked, auto_upstream, dry_run).await?;
 
     set_terminal_title_and_flush("✅ repos save");
     Ok(())
@@ -222,7 +214,7 @@ async fn save_one_repo(
     if !has_tracked_changes && has_untracked_changes && !include_untracked {
         return (
             Status::NoChanges,
-            "only untracked changes; pass --include-untracked".to_string(),
+            "only untracked changes; pass --all".to_string(),
             true,
         );
     }

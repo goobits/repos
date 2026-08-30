@@ -98,7 +98,7 @@ Learn more about [credential configuration](credentials_setup.md).
 |-------|----------|
 | **"uncommitted changes"** | Commit first: `repos save "Release v1.2.3"` or stage explicitly |
 | **"not authenticated"** | Configure [publishing credentials](credentials_setup.md) |
-| **"tag already exists"** | Delete tag: `git tag -d v1.2.3 && git push origin :refs/tags/v1.2.3` |
+| **"tag already exists"** | Inspect `git rev-parse v1.2.3` and `git rev-parse HEAD`. If they differ, bump the package version and publish a new immutable tag. |
 
 ---
 

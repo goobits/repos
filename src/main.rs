@@ -29,11 +29,8 @@ enum Commands {
     Save {
         /// Commit message
         message: String,
-        /// Include untracked files in the save
-        #[arg(long, short = 'u', conflicts_with = "all")]
-        include_untracked: bool,
         /// Stage all non-ignored changes, including untracked files
-        #[arg(long, short = 'a', conflicts_with = "include_untracked")]
+        #[arg(long, short = 'a', alias = "include-untracked", short_alias = 'u')]
         all: bool,
         /// Set upstream automatically for branches without tracking
         #[arg(long)]
@@ -98,7 +95,7 @@ enum Commands {
     },
     /// Pull changes from remotes across all repositories
     Pull {
-        /// Use rebase instead of merge (git pull --rebase)
+        /// Rebase diverged branches; default pulls require a fast-forward
         #[arg(long)]
         rebase: bool,
         /// Show detailed progress for all repositories
@@ -312,20 +309,10 @@ async fn main() -> Result<()> {
     match &cli.command {
         Some(Commands::Save {
             message,
-            include_untracked,
             all,
             auto_upstream,
             dry_run,
-        }) => {
-            handle_save_command(
-                message.clone(),
-                *include_untracked,
-                *all,
-                *auto_upstream,
-                *dry_run,
-            )
-            .await
-        }
+        }) => handle_save_command(message.clone(), *all, *auto_upstream, *dry_run).await,
         Some(Commands::Sync {
             auto_upstream,
             verbose,

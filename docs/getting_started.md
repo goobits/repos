@@ -42,7 +42,7 @@ result. It does not stage untracked files unless you opt in, which prevents
 accidental commits of scratch files, generated output, secrets, or local config:
 
 ```bash
-repos save "Add new docs" --include-untracked
+repos save "Add new docs" --all
 ```
 
 ### Sync Repositories
@@ -105,7 +105,7 @@ repos save "Update docs" --dry-run
 ### Include New Files
 
 ```bash
-repos save "Add examples" --include-untracked
+repos save "Add examples" --all
 ```
 
 ### Publish Packages

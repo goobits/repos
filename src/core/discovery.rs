@@ -224,7 +224,6 @@ pub(crate) fn find_repos() -> Result<Vec<(String, PathBuf)>> {
 }
 
 /// Common initialization for commands that scan repositories
-#[must_use]
 pub async fn init_command(
     scanning_msg: &str,
 ) -> Result<(std::time::Instant, Vec<(String, PathBuf)>)> {
@@ -237,7 +236,6 @@ pub async fn init_command(
 }
 
 /// Common initialization without a human-oriented scanning preamble.
-#[must_use]
 pub(crate) async fn init_command_quiet() -> Result<(std::time::Instant, Vec<(String, PathBuf)>)> {
     let start_time = std::time::Instant::now();
     let repos = await_discovery_task(tokio::task::spawn_blocking(find_repos)).await?;

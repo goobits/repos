@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
+- `repos save --all` is now the single documented option for including untracked files (`--include-untracked` and `-u` remain hidden compatibility aliases), and pull help now states the fast-forward default accurately.
 - Nested sync and update fetches now use the shared bounded, retrying, non-interactive Git runner and enforce the configured transport policy before credentials can run.
 - Exact per-checkout nested inspection now runs through a bounded eight-worker pool and restores deterministic fleet order before reporting.
 - Automatic Git concurrency now scales as `min(CPU cores + 2, 32)` to bound subprocess/network pressure on large hosts; explicit `--jobs` remains an override and fetch multipliers use saturating arithmetic.
