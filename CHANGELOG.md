@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
+- npm’s nonzero “version already exists” responses are now treated as idempotent publish success while genuine authentication, permission, and registry failures remain errors.
 - Fleet commands now fail explicitly when filesystem traversal is incomplete or the discovery worker fails instead of operating on a partial or falsely empty repository list.
 - `push --auto-upstream` now honors `branch.<name>.pushRemote` and `remote.pushDefault`, otherwise prefers `origin` or a sole remote, and refuses ambiguous multi-remote repositories instead of pushing to the alphabetically first remote.
 - Failed `sync` and `pull --rebase` rebases now abort automatically and restore the original branch and clean checkout instead of leaving repositories mid-rebase.

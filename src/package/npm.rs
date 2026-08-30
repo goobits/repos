@@ -127,36 +127,40 @@ async fn publish_internal(repo_path: &Path, dry_run: bool) -> (bool, String) {
     .await;
 
     match result {
-        Ok(Ok(output)) => {
-            if output.status.success() {
-                if dry_run {
-                    (true, "dry-run ok".to_string())
-                } else {
-                    // Check if it was actually published or already exists
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    if stderr.contains("You cannot publish over the previously published versions")
-                        || stderr.contains("cannot publish over existing version")
-                    {
-                        (true, "already published".to_string())
-                    } else {
-                        (true, "published".to_string())
-                    }
-                }
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let error_message = clean_npm_error(&stderr);
-                (false, error_message)
-            }
-        }
+        Ok(Ok(output)) => classify_publish_result(
+            output.status.success(),
+            dry_run,
+            &String::from_utf8_lossy(&output.stderr),
+        ),
         Ok(Err(e)) => (false, format!("npm command failed: {e}")),
         Err(_) => (false, "npm operation timed out".to_string()),
     }
 }
 
+fn classify_publish_result(success: bool, dry_run: bool, stderr: &str) -> (bool, String) {
+    if is_already_published(stderr) {
+        return (true, "already published".to_string());
+    }
+    if success {
+        return (
+            true,
+            if dry_run { "dry-run ok" } else { "published" }.to_string(),
+        );
+    }
+
+    (false, clean_npm_error(stderr))
+}
+
+fn is_already_published(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("cannot publish over the previously published versions")
+        || message.contains("cannot publish over existing version")
+}
+
 /// Cleans up npm error messages to be more user-friendly
 fn clean_npm_error(error: &str) -> String {
     // Extract the most relevant error message
-    if error.contains("You cannot publish over the previously published versions") {
+    if is_already_published(error) {
         "already published".to_string()
     } else if error.contains("You must be logged in") || error.contains("need auth") {
         "not authenticated (run: npm login)".to_string()
@@ -173,5 +177,50 @@ fn clean_npm_error(error: &str) -> String {
                 || error.trim().to_string(),
                 |line| line.replace("npm ERR!", "").trim().to_string(),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_publish_result;
+
+    #[test]
+    fn nonzero_already_published_result_is_idempotent_success() {
+        for stderr in [
+            "npm ERR! You cannot publish over the previously published versions: 1.0.0.",
+            "npm ERR! cannot publish over existing version 1.0.0",
+        ] {
+            assert_eq!(
+                classify_publish_result(false, false, stderr),
+                (true, "already published".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn real_npm_failures_remain_failures() {
+        assert_eq!(
+            classify_publish_result(false, false, "npm ERR! You must be logged in"),
+            (false, "not authenticated (run: npm login)".to_string())
+        );
+        assert_eq!(
+            classify_publish_result(false, false, "npm ERR! code E403"),
+            (
+                false,
+                "permission denied (check npm permissions)".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn successful_publish_messages_preserve_dry_run_state() {
+        assert_eq!(
+            classify_publish_result(true, false, ""),
+            (true, "published".to_string())
+        );
+        assert_eq!(
+            classify_publish_result(true, true, ""),
+            (true, "dry-run ok".to_string())
+        );
     }
 }
