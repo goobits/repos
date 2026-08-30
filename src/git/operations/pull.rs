@@ -138,7 +138,8 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
         return PullFetchResult::failed(failure, has_uncommitted);
     }
 
-    let fetch_error = match run_git(path, GIT_FETCH_ARGS).await {
+    let fetch_args = ["fetch", "--quiet", fetch_remote.as_str()];
+    let fetch_error = match run_git(path, &fetch_args).await {
         Ok((true, _, _)) => None,
         Ok((false, _, stderr)) => Some(command_error(&stderr, "fetch failed")),
         Err(error) => Some(clean_error_message(&error.to_string())),

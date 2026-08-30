@@ -33,7 +33,6 @@ use super::worktree::{inspect_refreshed_repository_state, inspect_repository_sta
 // Git command arguments
 const GIT_REMOTE_ARGS: &[&str] = &["remote"];
 const GIT_REV_PARSE_HEAD_ARGS: &[&str] = &["rev-parse", "--abbrev-ref", "HEAD"];
-const GIT_FETCH_ARGS: &[&str] = &["fetch", "--quiet"];
 const GIT_REMOTE_REFS_ARGS: &[&str] = &[
     "for-each-ref",
     "--format=%(refname) %(objectname)",
@@ -234,7 +233,45 @@ async fn get_branch_remote_name(
         return Ok(remote);
     }
 
-    Ok(remotes.lines().next().unwrap_or("origin").to_string())
+    default_remote_name(current_branch, remotes, "fetch")
+}
+
+async fn get_auto_upstream_remote_name(
+    path: &Path,
+    current_branch: &str,
+    remotes: &str,
+) -> Result<String> {
+    for key in [
+        format!("branch.{current_branch}.pushRemote"),
+        "remote.pushDefault".to_string(),
+        format!("branch.{current_branch}.remote"),
+    ] {
+        if let Some(remote) = get_git_config(path, &key).await? {
+            return Ok(remote);
+        }
+    }
+
+    default_remote_name(current_branch, remotes, "push")
+}
+
+fn default_remote_name(current_branch: &str, remotes: &str, operation: &str) -> Result<String> {
+    let remote_names = remotes
+        .lines()
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    if remote_names.contains(&"origin") {
+        return Ok("origin".to_string());
+    }
+    if let [remote] = remote_names.as_slice() {
+        return Ok((*remote).to_string());
+    }
+
+    let setting = if operation == "push" {
+        format!("branch.{current_branch}.pushRemote or remote.pushDefault")
+    } else {
+        format!("branch.{current_branch}.remote")
+    };
+    anyhow::bail!("ambiguous {operation} remote; set {setting}")
 }
 
 async fn inspect_operation_remote(
@@ -249,7 +286,7 @@ async fn inspect_operation_remote(
 
 /// Phase 1: Fetch and analyze repository state (read-only, can be highly concurrent)
 /// Returns `FetchResult` with repository state after fetching
-pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult {
+pub async fn fetch_and_analyze(path: &Path, auto_upstream: bool) -> FetchResult {
     use crate::core::clean_error_message;
 
     let initial_state = match inspect_refreshed_repository_state(path).await {
@@ -319,7 +356,12 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
         };
     }
 
-    let fetch_remote = match get_branch_remote_name(path, &current_branch, &remotes).await {
+    let remote_result = if auto_upstream && initial_state.upstream().is_none() {
+        get_auto_upstream_remote_name(path, &current_branch, &remotes).await
+    } else {
+        get_branch_remote_name(path, &current_branch, &remotes).await
+    };
+    let fetch_remote = match remote_result {
         Ok(remote) => remote,
         Err(error) => {
             return FetchResult::error(
@@ -346,7 +388,8 @@ pub async fn fetch_and_analyze(path: &Path, _auto_upstream: bool) -> FetchResult
     }
 
     // Fetch latest changes to ensure we have up-to-date refs
-    let fetch_error = match run_git(path, GIT_FETCH_ARGS).await {
+    let fetch_args = ["fetch", "--quiet", fetch_remote.as_str()];
+    let fetch_error = match run_git(path, &fetch_args).await {
         Ok((true, _, _)) => None,
         Ok((false, _, stderr)) => Some(command_error(&stderr, "fetch failed")),
         Err(e) => Some(clean_error_message(&e.to_string())),

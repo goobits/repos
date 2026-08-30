@@ -1033,6 +1033,172 @@ async fn test_push_command_with_auto_upstream() {
 }
 
 #[tokio::test]
+async fn test_auto_upstream_prefers_origin_over_alphabetical_remote() {
+    let _lock = common::lock_test().await;
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create temp directory");
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let aaa_remote = root.path().join("aaa.git");
+    let origin_remote = root.path().join("origin.git");
+    for remote in [&aaa_remote, &origin_remote] {
+        run_git_ok(
+            root.path(),
+            &["init", "--bare", remote.to_str().expect("UTF-8 path")],
+        );
+    }
+    run_git_ok(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "aaa",
+            aaa_remote.to_str().expect("UTF-8 path"),
+        ],
+    );
+    run_git_ok(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            origin_remote.to_str().expect("UTF-8 path"),
+        ],
+    );
+
+    let fetch_result = fetch_and_analyze(repo.path(), true).await;
+    assert_eq!(fetch_result.status, Status::NoUpstream);
+    assert_eq!(fetch_result.upstream_remote.as_deref(), Some("origin"));
+    let (status, message, _) = push_if_needed(repo.path(), &fetch_result, true).await;
+    assert_eq!(status, Status::Pushed, "{message}");
+
+    let branch = git_stdout(repo.path(), &["symbolic-ref", "--short", "HEAD"]);
+    assert_eq!(
+        git_stdout(repo.path(), &["config", &format!("branch.{branch}.remote")]),
+        "origin"
+    );
+    assert!(git_succeeds(
+        &origin_remote,
+        &["show-ref", "--verify", &format!("refs/heads/{branch}")]
+    ));
+    assert!(!git_succeeds(
+        &aaa_remote,
+        &["show-ref", "--verify", &format!("refs/heads/{branch}")]
+    ));
+}
+
+#[tokio::test]
+async fn test_auto_upstream_honors_push_default_over_origin() {
+    let _lock = common::lock_test().await;
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create temp directory");
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let preferred_remote = root.path().join("preferred.git");
+    let origin_remote = root.path().join("origin.git");
+    for remote in [&preferred_remote, &origin_remote] {
+        run_git_ok(
+            root.path(),
+            &["init", "--bare", remote.to_str().expect("UTF-8 path")],
+        );
+    }
+    run_git_ok(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "preferred",
+            preferred_remote.to_str().expect("UTF-8 path"),
+        ],
+    );
+    run_git_ok(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            origin_remote.to_str().expect("UTF-8 path"),
+        ],
+    );
+    run_git_ok(repo.path(), &["config", "remote.pushDefault", "preferred"]);
+
+    let fetch_result = fetch_and_analyze(repo.path(), true).await;
+    assert_eq!(fetch_result.status, Status::NoUpstream);
+    assert_eq!(fetch_result.upstream_remote.as_deref(), Some("preferred"));
+    let (status, message, _) = push_if_needed(repo.path(), &fetch_result, true).await;
+    assert_eq!(status, Status::Pushed, "{message}");
+
+    let branch = git_stdout(repo.path(), &["symbolic-ref", "--short", "HEAD"]);
+    assert!(git_succeeds(
+        &preferred_remote,
+        &["show-ref", "--verify", &format!("refs/heads/{branch}")]
+    ));
+    assert!(!git_succeeds(
+        &origin_remote,
+        &["show-ref", "--verify", &format!("refs/heads/{branch}")]
+    ));
+}
+
+#[tokio::test]
+async fn test_auto_upstream_rejects_ambiguous_remotes() {
+    let _lock = common::lock_test().await;
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create temp directory");
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    for name in ["aaa", "zzz"] {
+        let remote = root.path().join(format!("{name}.git"));
+        run_git_ok(
+            root.path(),
+            &["init", "--bare", remote.to_str().expect("UTF-8 path")],
+        );
+        run_git_ok(
+            repo.path(),
+            &["remote", "add", name, remote.to_str().expect("UTF-8 path")],
+        );
+    }
+
+    let fetch_result = fetch_and_analyze(repo.path(), true).await;
+    assert_eq!(fetch_result.status, Status::Error);
+    assert!(
+        fetch_result.message.contains("ambiguous push remote"),
+        "{}",
+        fetch_result.message
+    );
+}
+
+fn git_stdout(path: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .expect("Failed to run git");
+    assert!(
+        output.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn git_succeeds(path: &std::path::Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .expect("Failed to run git")
+        .status
+        .success()
+}
+
+#[tokio::test]
 async fn test_push_if_needed_uses_upstream_remote_for_current_branch() {
     let _lock = common::lock_test().await;
     if !is_git_available() {
