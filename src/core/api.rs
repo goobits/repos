@@ -28,6 +28,7 @@ pub use super::stats::SyncStatistics;
 /// Returns a vector of `(repository_name, path)` tuples.
 #[allow(unused_imports)] // Used by integration tests
 pub use super::discovery::find_repos_from_path;
+pub use super::discovery::try_find_repos_from_path;
 
 /// Common initialization for commands that scan repositories.
 pub use super::discovery::init_command;

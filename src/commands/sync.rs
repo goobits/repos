@@ -93,7 +93,7 @@ pub(super) async fn prepare_transfer_context(
     use crate::core::config::get_git_concurrency;
 
     set_terminal_title(operation.running_title());
-    let (start_time, repositories) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repositories) = init_command(SCANNING_MESSAGE).await?;
     println!();
 
     if repositories.is_empty() {
@@ -139,7 +139,7 @@ pub async fn handle_sync_command(
     use crate::core::config::get_git_concurrency;
 
     set_terminal_title("🔄 repos sync");
-    let (start_time, repositories) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repositories) = init_command(SCANNING_MESSAGE).await?;
     println!();
 
     if repositories.is_empty() {
@@ -191,6 +191,7 @@ pub async fn handle_sync_command(
     let push_run = process_push_repositories(
         push_context,
         auto_upstream,
+        true,
         verbose,
         show_changes,
         no_drift_check,

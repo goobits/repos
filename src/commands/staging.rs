@@ -84,7 +84,7 @@ async fn prepare_batch_command(
 ) -> Result<Option<crate::core::ProcessingContext>> {
     set_terminal_title(running_title);
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE).await?;
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
         set_terminal_title_and_flush(done_title);
@@ -117,7 +117,7 @@ pub async fn handle_staging_status_command(
     // Set terminal title to indicate repos is running
     set_terminal_title("🚀 repos status");
 
-    let (start_time, mut repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, mut repos) = init_command(SCANNING_MESSAGE).await?;
     repos = filter_status_repositories(repos, &targets);
 
     if repos.is_empty() {

@@ -34,7 +34,7 @@ pub fn validate_subrepos_quiet() -> Result<ValidationReport> {
 }
 
 pub(crate) fn validate_subrepos_inventory(show_scan: bool) -> Result<(ValidationReport, usize)> {
-    let repositories = crate::core::discovery::find_repos();
+    let repositories = crate::core::discovery::find_repos()?;
     let fleet_repositories = repositories.len();
     Ok((
         validate_discovered_repositories(&repositories, show_scan)?,

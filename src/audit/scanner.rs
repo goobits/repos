@@ -45,9 +45,9 @@ pub async fn run_truffle_scan(
     target_repos: Option<Vec<String>>,
 ) -> Result<(TruffleStatistics, HygieneStatistics)> {
     let (start_time, repos) = if json {
-        init_command_quiet().await
+        init_command_quiet().await?
     } else {
-        init_command(SCANNING_MESSAGE).await
+        init_command(SCANNING_MESSAGE).await?
     };
 
     if repos.is_empty() {

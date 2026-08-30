@@ -1,12 +1,13 @@
 //! Repository discovery and initialization utilities
 
+use anyhow::{Context, Result};
 use dashmap::DashMap;
 use ignore::WalkBuilder;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::config::{
     DEFAULT_REPO_NAME, ESTIMATED_REPO_COUNT, FLEET_IGNORE_FILENAME, SKIP_DIRECTORIES,
@@ -23,7 +24,7 @@ fn is_git_file(path: &Path) -> bool {
             reader
                 .lines()
                 .take(5)
-                .filter_map(Result::ok)
+                .filter_map(std::result::Result::ok)
                 .any(|line| line.trim_start().starts_with("gitdir:"))
         }
         Err(_) => false,
@@ -48,9 +49,19 @@ fn compare_repository_aliases(left: &Path, right: &Path) -> std::cmp::Ordering {
 /// Directory walking is parallel, while naming happens after paths are sorted so
 /// duplicate-name suffixes are stable across runs.
 pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathBuf)> {
+    try_find_repos_from_path(search_path).unwrap_or_else(|error| {
+        eprintln!("Repository discovery failed: {error}");
+        Vec::new()
+    })
+}
+
+/// Strict repository discovery for commands that must not operate on a partial
+/// or falsely empty fleet.
+pub fn try_find_repos_from_path(search_path: impl AsRef<Path>) -> Result<Vec<(String, PathBuf)>> {
     let search_path = search_path.as_ref();
 
     let repos_seen = Arc::new(DashMap::with_capacity(ESTIMATED_REPO_COUNT));
+    let walk_errors = Arc::new(Mutex::new(Vec::new()));
 
     // Repository inventory is defined by the filesystem, not by a containing
     // repository's ignore rules. A nested repository is commonly ignored by
@@ -90,40 +101,65 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
     // Walk the directory tree in parallel
     walker.run(|| {
         let repos_seen = Arc::clone(&repos_seen);
+        let walk_errors = Arc::clone(&walk_errors);
 
         Box::new(move |result| {
             use ignore::WalkState;
 
-            if let Ok(entry) = result {
-                let path = entry.path();
-
-                // Only check directories
-                if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
+            let entry = match result {
+                Ok(entry) => entry,
+                Err(error) => {
+                    if let Ok(mut errors) = walk_errors.lock() {
+                        errors.push(error.to_string());
+                    }
                     return WalkState::Continue;
                 }
+            };
+            let path = entry.path();
 
-                // Check if this directory contains a .git entry
-                let git_path = path.join(".git");
+            // Only check directories
+            if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                return WalkState::Continue;
+            }
 
-                if git_path.exists() {
-                    let is_git_repo = if git_path.is_dir() {
-                        true
-                    } else if git_path.is_file() {
-                        // Submodules and worktrees expose a .git file
-                        is_git_file(&git_path)
-                    } else {
-                        false
-                    };
+            // Check if this directory contains a .git entry
+            let git_path = path.join(".git");
 
-                    if is_git_repo {
-                        repos_seen.insert(path.to_path_buf(), ());
-                    }
+            if git_path.exists() {
+                let is_git_repo = if git_path.is_dir() {
+                    true
+                } else if git_path.is_file() {
+                    // Submodules and worktrees expose a .git file
+                    is_git_file(&git_path)
+                } else {
+                    false
+                };
+
+                if is_git_repo {
+                    repos_seen.insert(path.to_path_buf(), ());
                 }
             }
 
             WalkState::Continue
         })
     });
+
+    let walk_errors = walk_errors
+        .lock()
+        .map_err(|_| anyhow::anyhow!("repository discovery error collector was poisoned"))?;
+    if !walk_errors.is_empty() {
+        let examples = walk_errors
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("; ");
+        anyhow::bail!(
+            "repository discovery incomplete ({} traversal error{}): {examples}",
+            walk_errors.len(),
+            if walk_errors.len() == 1 { "" } else { "s" }
+        );
+    }
 
     let paths: Vec<PathBuf> = Arc::try_unwrap(repos_seen)
         .map(|map| map.into_iter().map(|(path, ())| path).collect())
@@ -175,7 +211,7 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
             .then_with(|| a.1.cmp(&b.1))
     });
 
-    repos
+    Ok(repos)
 }
 
 /// Recursively searches for git repositories in the current directory
@@ -183,13 +219,15 @@ pub fn find_repos_from_path(search_path: impl AsRef<Path>) -> Vec<(String, PathB
 ///
 /// This is a convenience wrapper around `find_repos_from_path()` that searches
 /// from the current working directory.
-pub fn find_repos() -> Vec<(String, PathBuf)> {
-    find_repos_from_path(".")
+pub(crate) fn find_repos() -> Result<Vec<(String, PathBuf)>> {
+    try_find_repos_from_path(".")
 }
 
 /// Common initialization for commands that scan repositories
 #[must_use]
-pub async fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(String, PathBuf)>) {
+pub async fn init_command(
+    scanning_msg: &str,
+) -> Result<(std::time::Instant, Vec<(String, PathBuf)>)> {
     println!();
     print!("{scanning_msg}");
     // Flush stdout - ignore errors as this is non-critical
@@ -200,16 +238,17 @@ pub async fn init_command(scanning_msg: &str) -> (std::time::Instant, Vec<(Strin
 
 /// Common initialization without a human-oriented scanning preamble.
 #[must_use]
-pub(crate) async fn init_command_quiet() -> (std::time::Instant, Vec<(String, PathBuf)>) {
+pub(crate) async fn init_command_quiet() -> Result<(std::time::Instant, Vec<(String, PathBuf)>)> {
     let start_time = std::time::Instant::now();
-    let repos = tokio::task::spawn_blocking(find_repos)
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("Error in repository discovery: {e}");
-            Vec::new()
-        });
+    let repos = await_discovery_task(tokio::task::spawn_blocking(find_repos)).await?;
 
-    (start_time, repos)
+    Ok((start_time, repos))
+}
+
+async fn await_discovery_task(
+    task: tokio::task::JoinHandle<Result<Vec<(String, PathBuf)>>>,
+) -> Result<Vec<(String, PathBuf)>> {
+    task.await.context("repository discovery worker failed")?
 }
 
 #[cfg(test)]
@@ -249,5 +288,26 @@ mod tests {
         assert!(names.contains(&"repo1"));
         assert!(names.contains(&"repo2"));
         assert!(names.contains(&"repo3"));
+    }
+
+    #[test]
+    fn strict_discovery_rejects_a_missing_root() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let missing = temp_dir.path().join("missing");
+
+        let error = try_find_repos_from_path(&missing).unwrap_err();
+
+        assert!(error.to_string().contains("discovery incomplete"));
+    }
+
+    #[tokio::test]
+    async fn discovery_worker_panics_are_reported() {
+        let task = tokio::task::spawn_blocking(|| -> Result<Vec<(String, PathBuf)>> {
+            panic!("discovery worker panic probe")
+        });
+
+        let error = await_discovery_task(task).await.unwrap_err();
+
+        assert!(error.to_string().contains("discovery worker failed"));
     }
 }

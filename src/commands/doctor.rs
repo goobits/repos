@@ -35,7 +35,7 @@ struct DirectionInspection {
 pub async fn handle_doctor_command() -> Result<()> {
     set_terminal_title("🩺 repos doctor");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE).await?;
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
         set_terminal_title_and_flush("✅ repos doctor");

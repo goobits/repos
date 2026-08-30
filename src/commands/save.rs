@@ -30,7 +30,7 @@ pub async fn handle_save_command(
 ) -> Result<()> {
     set_terminal_title("💾 repos save");
 
-    let (start_time, repos) = init_command(SCANNING_MESSAGE).await;
+    let (start_time, repos) = init_command(SCANNING_MESSAGE).await?;
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");
