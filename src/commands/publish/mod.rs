@@ -8,7 +8,7 @@ use crate::core::{
 };
 use anyhow::Result;
 use executor::execute_publish;
-use planner::{plan_publish, PlannerOptions};
+use planner::{missing_requested_targets, plan_publish, PlannerOptions};
 
 const SCANNING_MESSAGE: &str = "🔍 Scanning for packages...";
 
@@ -24,6 +24,15 @@ pub async fn handle_publish_command(
     set_terminal_title("📦 repos");
 
     let (start_time, repos) = init_command(SCANNING_MESSAGE).await?;
+
+    let missing_targets = missing_requested_targets(&repos, &target_repos);
+    if !missing_targets.is_empty() {
+        set_terminal_title_and_flush("✅ repos");
+        anyhow::bail!(
+            "requested publish repositories not found: {}",
+            missing_targets.join(", ")
+        );
+    }
 
     if repos.is_empty() {
         println!("\r{NO_REPOS_MESSAGE}");

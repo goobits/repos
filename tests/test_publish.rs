@@ -1,10 +1,39 @@
 use goobits_repos::commands::publish::handle_publish_command;
-use std::env;
 use std::fs;
 
 mod common;
 use common::fixtures::TestRepo;
 use common::git::is_git_available;
+use common::CurrentDirGuard;
+
+#[tokio::test]
+async fn test_publish_rejects_missing_requested_repository() {
+    let _lock = common::lock_test().await;
+    if !is_git_available() {
+        return;
+    }
+
+    let repo = TestRepo::new().expect("Failed to create test repo");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change directory");
+
+    let error = handle_publish_command(
+        vec!["missing-repository".to_string()],
+        true,
+        false,
+        false,
+        true,
+        false,
+    )
+    .await
+    .expect_err("missing explicit target must fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("requested publish repositories not found: missing-repository"),
+        "{error}"
+    );
+}
 
 #[tokio::test]
 async fn test_publish_dry_run_cargo() {
@@ -13,8 +42,6 @@ async fn test_publish_dry_run_cargo() {
         eprintln!("Git not available, skipping test");
         return;
     }
-
-    let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository
     let repo = match TestRepo::new() {
@@ -32,8 +59,7 @@ version = "0.1.0"
 "#;
     fs::write(repo.path().join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
 
-    // Change to repo directory
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run publish command with dry_run = true
     let result = handle_publish_command(
@@ -45,9 +71,6 @@ version = "0.1.0"
         false,  // private_only
     )
     .await;
-
-    // Restore original directory
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -63,8 +86,6 @@ async fn test_publish_dry_run_npm() {
         eprintln!("Git not available, skipping test");
         return;
     }
-
-    let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository
     let repo = match TestRepo::new() {
@@ -83,8 +104,7 @@ async fn test_publish_dry_run_npm() {
     fs::write(repo.path().join("package.json"), package_json)
         .expect("Failed to write package.json");
 
-    // Change to repo directory
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run publish command with dry_run = true
     let result = handle_publish_command(
@@ -96,9 +116,6 @@ async fn test_publish_dry_run_npm() {
         false,  // private_only
     )
     .await;
-
-    // Restore original directory
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),

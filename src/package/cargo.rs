@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::{PackageInfo, PackageManager, PackageManifest};
+use super::{run_package_command, CommandEffect, PackageInfo, PackageManager, PackageManifest};
 
 const CARGO_OPERATION_TIMEOUT_SECS: u64 = 600; // 10 minutes for cargo operations (can be slow)
 
@@ -126,19 +126,23 @@ async fn publish_internal(repo_path: &Path, dry_run: bool) -> (bool, String) {
         args.push("--dry-run");
     }
 
-    let timeout_duration = Duration::from_secs(CARGO_OPERATION_TIMEOUT_SECS);
-
-    let result = tokio::time::timeout(
-        timeout_duration,
-        Command::new("cargo")
-            .args(&args)
-            .current_dir(repo_path)
-            .output(),
+    let mut command = Command::new("cargo");
+    command.args(&args).current_dir(repo_path);
+    let effect = if dry_run {
+        CommandEffect::Local
+    } else {
+        CommandEffect::RegistryMutation
+    };
+    let result = run_package_command(
+        command,
+        Duration::from_secs(CARGO_OPERATION_TIMEOUT_SECS),
+        "cargo publish",
+        effect,
     )
     .await;
 
     match result {
-        Ok(Ok(output)) => {
+        Ok(output) => {
             if output.status.success() {
                 if dry_run {
                     (true, "dry-run ok".to_string())
@@ -159,8 +163,7 @@ async fn publish_internal(repo_path: &Path, dry_run: bool) -> (bool, String) {
                 }
             }
         }
-        Ok(Err(e)) => (false, format!("cargo command failed: {e}")),
-        Err(_) => (false, "cargo operation timed out".to_string()),
+        Err(error) => (false, error.to_string()),
     }
 }
 

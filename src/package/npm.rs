@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::{PackageInfo, PackageManager, PackageManifest};
+use super::{run_package_command, CommandEffect, PackageInfo, PackageManager, PackageManifest};
 
 const NPM_OPERATION_TIMEOUT_SECS: u64 = 300; // 5 minutes for npm operations
 
@@ -115,25 +115,28 @@ async fn publish_internal(repo_path: &Path, dry_run: bool) -> (bool, String) {
         args.push("--dry-run");
     }
 
-    let timeout_duration = Duration::from_secs(NPM_OPERATION_TIMEOUT_SECS);
-
-    let result = tokio::time::timeout(
-        timeout_duration,
-        Command::new("npm")
-            .args(&args)
-            .current_dir(repo_path)
-            .output(),
+    let mut command = Command::new("npm");
+    command.args(&args).current_dir(repo_path);
+    let effect = if dry_run {
+        CommandEffect::Local
+    } else {
+        CommandEffect::RegistryMutation
+    };
+    let result = run_package_command(
+        command,
+        Duration::from_secs(NPM_OPERATION_TIMEOUT_SECS),
+        "npm publish",
+        effect,
     )
     .await;
 
     match result {
-        Ok(Ok(output)) => classify_publish_result(
+        Ok(output) => classify_publish_result(
             output.status.success(),
             dry_run,
             &String::from_utf8_lossy(&output.stderr),
         ),
-        Ok(Err(e)) => (false, format!("npm command failed: {e}")),
-        Err(_) => (false, "npm operation timed out".to_string()),
+        Err(error) => (false, error.to_string()),
     }
 }
 

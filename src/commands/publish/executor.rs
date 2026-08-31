@@ -132,11 +132,17 @@ impl PublishStatistics {
             PublishStatus::Error => PublishOutcomeKind::Failed,
             PublishStatus::Skipped | PublishStatus::DryRunOk => return,
         };
+        let message = if message.contains("registry outcome is unknown") {
+            "publish timed out; registry outcome is unknown—check the registry before retrying"
+                .to_string()
+        } else {
+            clean_error_message(message)
+        };
         self.outcomes.push(PublishOutcome {
             package: package.to_string(),
             path: path.to_path_buf(),
             kind,
-            message: clean_error_message(message),
+            message,
         });
     }
 
@@ -262,10 +268,18 @@ fn append_outcome_section(
             format_relative_repo_path(&outcome.path.to_string_lossy())
         ));
         if kind == PublishOutcomeKind::Failed {
-            lines.push(format!(
-                "    {DIM}↳ next: inspect registry credentials/version, then retry `repos publish {}`{RESET}",
-                outcome.package
-            ));
+            let next = if outcome.message.contains("registry outcome is unknown") {
+                format!(
+                    "check the registry for {} before retrying; the publish may have completed",
+                    outcome.package
+                )
+            } else {
+                format!(
+                    "inspect registry credentials/version, then retry `repos publish {}`",
+                    outcome.package
+                )
+            };
+            lines.push(format!("    {DIM}↳ next: {next}{RESET}"));
         }
     }
 }
@@ -490,6 +504,22 @@ mod tests {
         assert!(report.contains("▌ Failed"));
         assert!(report.contains("path: ./gamma"));
         assert!(report.contains("next: inspect registry credentials/version"));
+    }
+
+    #[test]
+    fn timeout_report_requires_registry_reconciliation_before_retry() {
+        let mut stats = PublishStatistics::default();
+        stats.update(
+            &PublishStatus::Error,
+            "alpha",
+            Path::new("alpha"),
+            "cargo publish timed out; registry outcome is unknown",
+        );
+
+        let report = stats.generate_report(Duration::ZERO);
+
+        assert!(report.contains("check the registry for alpha before retrying"));
+        assert!(!report.contains("inspect registry credentials/version"));
     }
 
     #[test]

@@ -11,10 +11,77 @@ pub mod cargo;
 pub mod npm;
 pub mod pypi;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::Path;
+use std::process::{Output, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::process::Command;
+
+#[derive(Clone, Copy)]
+pub(crate) enum CommandEffect {
+    Local,
+    RegistryMutation,
+}
+
+/// Runs package tooling with a hard timeout and cancellation-on-drop.
+///
+/// Registry commands report an unknown outcome after timeout because the
+/// registry may have accepted a request before the local process was killed.
+/// Unix commands run in a dedicated process group so cancellation also reaches
+/// descendants; other platforms retain Tokio's direct-child kill-on-drop.
+pub(crate) async fn run_package_command(
+    mut command: Command,
+    timeout_duration: Duration,
+    operation: &str,
+    effect: CommandEffect,
+) -> Result<Output> {
+    command.kill_on_drop(true);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+
+    let child = command
+        .spawn()
+        .with_context(|| format!("{operation} command failed"))?;
+    #[cfg(unix)]
+    let process_group = child.id();
+    let mut output = Box::pin(child.wait_with_output());
+
+    match tokio::time::timeout(timeout_duration, &mut output).await {
+        Ok(result) => result.with_context(|| format!("{operation} command failed")),
+        Err(_) => {
+            #[cfg(unix)]
+            terminate_process_group(process_group);
+
+            if matches!(effect, CommandEffect::RegistryMutation) {
+                anyhow::bail!(
+                    "{operation} timed out and was cancelled; registry outcome is unknown—check the registry before retrying"
+                );
+            }
+            anyhow::bail!("{operation} timed out and was cancelled");
+        }
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process_group(process_group: Option<u32>) {
+    use std::ffi::c_int;
+
+    extern "C" {
+        fn kill(pid: c_int, signal: c_int) -> c_int;
+    }
+
+    const SIGKILL: c_int = 9;
+    let Some(process_group) = process_group.and_then(|id| c_int::try_from(id).ok()) else {
+        return;
+    };
+
+    // The child was started as the leader of a new process group, so a negative
+    // PID targets it and every descendant that has not explicitly left the group.
+    let _ = unsafe { kill(-process_group, SIGKILL) };
+}
 
 /// Trait for package managers to implement.
 ///
@@ -141,6 +208,35 @@ impl PublishStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timed_out_registry_command_is_cancelled_and_reports_unknown_outcome() {
+        let root = tempfile::TempDir::new().expect("temporary directory");
+        let marker = root.path().join("completed");
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg("(sleep 0.25; printf reached > \"$1\") & wait")
+            .arg("repos-package-test")
+            .arg(&marker);
+
+        let error = run_package_command(
+            command,
+            Duration::from_millis(25),
+            "fake publish",
+            CommandEffect::RegistryMutation,
+        )
+        .await
+        .expect_err("delayed command should time out");
+
+        assert!(error.to_string().contains("registry outcome is unknown"));
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        assert!(
+            !marker.exists(),
+            "a descendant of the timed-out command continued running"
+        );
+    }
 
     #[tokio::test]
     async fn test_detect_npm_package() {
