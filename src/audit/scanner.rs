@@ -11,7 +11,7 @@ mod report;
 
 use anyhow::{anyhow, bail, Result};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -60,6 +60,7 @@ pub(crate) struct ScannedSecret {
     pub(crate) verification: SecretVerification,
     pub(crate) raw: Option<String>,
     pub(crate) raw_v2: Option<String>,
+    pub(crate) secret_parts: Vec<String>,
 }
 
 /// Runs complete `TruffleHog` secret scanning and hygiene checking
@@ -421,6 +422,10 @@ fn parse_truffle_finding(line: &[u8]) -> Result<ScannedSecret> {
         verification,
         raw: nonempty(output.raw),
         raw_v2: nonempty(output.raw_v2),
+        // Preserve empty part values so the rewrite planner can fail safe by
+        // removing the affected path instead of assuming a partial credential
+        // is complete.
+        secret_parts: output.secret_parts.into_values().collect(),
     })
 }
 
@@ -439,6 +444,8 @@ struct TruffleHogOutput {
     raw: Option<String>,
     #[serde(default)]
     raw_v2: Option<String>,
+    #[serde(default)]
+    secret_parts: BTreeMap<String, String>,
     source_metadata: TruffleSourceMetadata,
 }
 
@@ -494,11 +501,15 @@ mod tests {
     #[test]
     fn parser_classifies_verification_errors_as_unknown() {
         let finding = parse_truffle_finding(
-            br#"{"DetectorName":"AWS","Verified":false,"VerificationError":"timeout","Raw":"token","SourceMetadata":{"Data":{"Git":{"file":"secrets.env"}}}}"#,
+            br#"{"DetectorName":"AWS","Verified":false,"VerificationError":"timeout","Raw":"token","SecretParts":{"access_key":"token","secret_key":"value"},"SourceMetadata":{"Data":{"Git":{"file":"secrets.env"}}}}"#,
         )
         .expect("valid finding");
         assert_eq!(finding.verification, SecretVerification::Unknown);
         assert_eq!(finding.raw.as_deref(), Some("token"));
+        assert_eq!(
+            finding.secret_parts,
+            vec!["token".to_string(), "value".to_string()]
+        );
     }
 
     #[test]

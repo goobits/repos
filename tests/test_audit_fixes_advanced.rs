@@ -13,17 +13,15 @@ fn history_rewrite_tools_available() -> bool {
         .args(["filter-repo", "--version"])
         .output()
         .is_ok_and(|output| output.status.success());
-    let git_is_compatible = Command::new("git")
-        .args(["cat-file", "-h"])
-        .output()
-        .is_ok_and(|output| {
-            String::from_utf8_lossy(&output.stdout).contains("--batch-command")
-                || String::from_utf8_lossy(&output.stderr).contains("--batch-command")
-        });
-    if !filter_repo || !git_is_compatible {
-        eprintln!("Git 2.36+ and git-filter-repo are unavailable; skipping destructive test");
+    if !filter_repo {
+        assert_ne!(
+            std::env::var("REPOS_REQUIRE_HISTORY_REWRITE_TOOLS").as_deref(),
+            Ok("1"),
+            "destructive history tests require git-filter-repo"
+        );
+        eprintln!("git-filter-repo is unavailable; skipping destructive test");
     }
-    filter_repo && git_is_compatible
+    filter_repo
 }
 
 #[tokio::test]
@@ -197,10 +195,13 @@ async fn test_secret_rewrite_preserves_same_text_in_unrelated_file() -> Result<(
     std::fs::create_dir_all(&repo_path)?;
     std::fs::create_dir_all(&mock_bin)?;
     setup_git_repo(&repo_path)?;
-    std::fs::write(repo_path.join("secret.env"), "token=shared-value\n")?;
+    std::fs::write(
+        repo_path.join("secret.env"),
+        "access_key=AKIAEXAMPLE\nsecret_key=super-secret\n",
+    )?;
     std::fs::write(
         repo_path.join("unrelated.txt"),
-        "shared-value is ordinary text here\n",
+        "AKIAEXAMPLE and super-secret are ordinary text here\n",
     )?;
     for args in [vec!["add", "--", "."], vec!["commit", "-m", "Add fixture"]] {
         let output = Command::new("git")
@@ -217,7 +218,7 @@ async fn test_secret_rewrite_preserves_same_text_in_unrelated_file() -> Result<(
     let trufflehog = mock_bin.join("trufflehog");
     std::fs::write(
         &trufflehog,
-        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nif git show HEAD:secret.env 2>/dev/null | grep -q 'shared-value'; then\n  printf '%s\\n' '{\"DetectorName\":\"Test\",\"Verified\":false,\"Raw\":\"shared-value\",\"SecretParts\":{\"host\":\"ordinary\"},\"SourceMetadata\":{\"Data\":{\"Git\":{\"file\":\"secret.env\"}}}}'\nfi\n",
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nif git show HEAD:secret.env 2>/dev/null | grep -Eq 'AKIAEXAMPLE|super-secret'; then\n  printf '%s\\n' '{\"DetectorName\":\"AWS\",\"Verified\":false,\"Raw\":\"AKIAEXAMPLE\",\"RawV2\":\"AKIAEXAMPLE:super-secret\",\"SecretParts\":{\"access_key\":\"AKIAEXAMPLE\",\"secret_key\":\"super-secret\"},\"SourceMetadata\":{\"Data\":{\"Git\":{\"file\":\"secret.env\"}}}}'\nfi\n",
     )?;
     let mut permissions = std::fs::metadata(&trufflehog)?.permissions();
     permissions.set_mode(0o755);
@@ -255,14 +256,17 @@ async fn test_secret_rewrite_preserves_same_text_in_unrelated_file() -> Result<(
     assert!(unrelated.status.success());
     assert_eq!(
         String::from_utf8(unrelated.stdout)?,
-        "shared-value is ordinary text here\n"
+        "AKIAEXAMPLE and super-secret are ordinary text here\n"
     );
     let redacted = Command::new("git")
         .args(["show", "HEAD:secret.env"])
         .current_dir(&repo_path)
         .output()?;
     assert!(redacted.status.success());
-    assert_eq!(String::from_utf8(redacted.stdout)?, "token=REDACTED\n");
+    assert_eq!(
+        String::from_utf8(redacted.stdout)?,
+        "access_key=REDACTED\nsecret_key=REDACTED\n"
+    );
 
     Ok(())
 }
