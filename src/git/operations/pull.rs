@@ -281,13 +281,23 @@ pub(crate) async fn pull_if_needed_with_context(
     if uses_lfs {
         let _ = run_git(path, &["lfs", "fetch"]).await;
     }
-    let pull_args = if use_rebase {
-        vec!["pull", "--rebase"]
+    let Some(upstream_name) = fetch_result.upstream_name.as_deref() else {
+        return GitOperationResult::new(
+            Status::PullError,
+            "pull integration requires a configured upstream".to_string(),
+            fetch_result.has_uncommitted,
+        );
+    };
+    // The inspection phase already fetched the selected remote. Integrate the
+    // exact upstream snapshot it analyzed instead of letting `git pull` fetch a
+    // second time and race with a moving remote.
+    let integration_args = if use_rebase {
+        vec!["rebase", "--", upstream_name]
     } else {
-        vec!["pull", "--ff-only"]
+        vec!["merge", "--ff-only", "--", upstream_name]
     };
 
-    match run_git(path, &pull_args).await {
+    match run_git(path, &integration_args).await {
         Ok((true, _, _)) => {
             let commits_word = if fetch_result.behind_count == 1 {
                 "commit"
