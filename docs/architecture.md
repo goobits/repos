@@ -138,8 +138,9 @@ large fleets do not create unbounded GitHub CLI or filesystem work.
 - Push and pull inspect remotes, branches, upstreams, and worktree state before
   mutation.
 - Upstream-aware transfers fetch the selected remote explicitly. Pull and sync
-  integrate the analyzed upstream ref directly, without a second fetch.
-  Automatic upstream creation checks `branch.<name>.pushRemote`,
+  pin the analyzed local and upstream commits, then revalidate the branch,
+  `HEAD`, and worktree immediately before direct integration without a second
+  fetch. Automatic upstream creation checks `branch.<name>.pushRemote`,
   `remote.pushDefault`, and `branch.<name>.remote`, then uses `origin` or a sole
   remote; ambiguous multi-remote repositories fail before network mutation.
 - A push without an upstream returns before push-transport and LFS side effects

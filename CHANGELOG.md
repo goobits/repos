@@ -51,9 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
-- Pull and sync integrate the upstream ref from their explicit fetch instead of
-  fetching a second time, avoiding an extra network round trip and a moving-ref
-  race between inspection and integration.
+- Pull and sync pin the local and upstream commits from their explicit fetch,
+  revalidate the branch, HEAD, and worktree before integration, and avoid a
+  second network round trip or moving-ref race.
 - `repos save` now rejects conflicts before staging, publishes clean branches that are already ahead, leaves untracked-only work untouched, and blocks parent publication after a child failure.
 - `repos sync` never pushes a dirty repository. Missing-upstream pushes return before transport or LFS side effects, LFS uses the local source ref, and failures cannot be hidden by later skips.
 - Package publishing now rejects missing requested targets, accepts only exact detached release-tag provenance, uploads only invocation-produced PyPI artifacts, and reports timed-out registry outcomes as unknown after cancelling the command (and its process group on Unix).
