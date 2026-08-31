@@ -78,6 +78,17 @@ pub(crate) async fn push_if_needed_with_context(
     }
 
     let uses_lfs = check_uses_git_lfs(path).await;
+    if uses_lfs {
+        if let Some(message) = super::lfs::option_like_lfs_remote_error(&remote_name) {
+            let failure =
+                GitFailure::from_message(GitOperationPhase::LfsPush, message, push_context);
+            return GitOperationResult::failed(
+                Status::Error,
+                failure,
+                fetch_result.has_uncommitted,
+            );
+        }
+    }
     if uses_lfs && has_pending_lfs_objects(path).await {
         let branch = lfs_source_ref(&fetch_result.current_branch);
 
@@ -335,5 +346,53 @@ mod tests {
             "{}",
             second_push.message
         );
+    }
+
+    #[tokio::test]
+    async fn lfs_push_rejects_an_option_like_remote_before_transfer() {
+        if !Command::new("git")
+            .args(["lfs", "version"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return;
+        }
+
+        let directory = tempfile::tempdir().expect("temporary root");
+        let repository = directory.path().join("repository");
+        let remote = directory.path().join("remote.git");
+        std::fs::create_dir(&repository).expect("create repository");
+        git(&repository, &["init"]);
+        git(&repository, &["config", "user.name", "repos test"]);
+        git(
+            &repository,
+            &["config", "user.email", "repos@example.invalid"],
+        );
+        git(
+            directory.path(),
+            &["init", "--bare", remote.to_str().unwrap()],
+        );
+        git(
+            &repository,
+            &["remote", "add", "--", "--all", remote.to_str().unwrap()],
+        );
+        git(&repository, &["lfs", "install", "--local"]);
+        git(&repository, &["lfs", "track", "*.bin"]);
+        std::fs::write(repository.join("asset.bin"), "LFS content").expect("write fixture");
+        git(&repository, &["add", ".gitattributes", "asset.bin"]);
+        git(&repository, &["commit", "-m", "Initial"]);
+
+        let fetch = fetch_and_analyze(&repository, true).await;
+        assert_eq!(fetch.status, Status::NoUpstream);
+        let result = push_if_needed_with_context(&repository, &fetch, true).await;
+        assert_eq!(result.status, Status::Error);
+        assert!(result.message.contains("rename it without a leading '-'"));
+
+        let refs = Command::new("git")
+            .args(["show-ref"])
+            .current_dir(&remote)
+            .output()
+            .expect("inspect remote refs");
+        assert!(!refs.status.success());
     }
 }

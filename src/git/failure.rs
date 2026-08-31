@@ -177,7 +177,7 @@ fn ssh_remote_fix(repo_path: &str, remote: &RemoteContext) -> String {
     };
     let ssh_url = remote.ssh_url.as_deref().unwrap_or("<SSH clone URL>");
     format!(
-        "git -C {} remote set-url{push_flag} {} {}",
+        "git -C {} remote set-url{push_flag} -- {} {}",
         shell_quote(repo_path),
         shell_quote(&remote.remote),
         shell_quote(ssh_url)

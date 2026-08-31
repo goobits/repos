@@ -106,6 +106,12 @@ pub(crate) async fn fetch_lfs_for_commit(path: &Path, remote: &str, commit: &str
     Ok(true)
 }
 
+pub(crate) fn option_like_lfs_remote_error(remote: &str) -> Option<String> {
+    remote.starts_with('-').then(|| {
+        format!("Git LFS cannot safely use remote name '{remote}'; rename it without a leading '-'")
+    })
+}
+
 pub async fn push_lfs_objects(path: &Path, remote: &str, branch: &str) -> (bool, String) {
     match run_git(path, &["lfs", "push", "--all", "--", remote, branch]).await {
         Ok((true, _, _)) => (true, String::new()),

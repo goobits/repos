@@ -345,7 +345,7 @@ async fn diagnose_remote(
         Ok((false, _, stderr)) => diagnosis.blockers.push(DoctorFinding::new(
             format!("{remote} access failed: {}", clean_error_message(&stderr)),
             format!(
-                "git -C {} ls-remote --heads {}",
+                "git -C {} ls-remote --heads -- {}",
                 shell_quote(display_path),
                 shell_quote(remote)
             ),
@@ -356,7 +356,7 @@ async fn diagnose_remote(
                 clean_error_message(&error.to_string())
             ),
             format!(
-                "git -C {} ls-remote --heads {}",
+                "git -C {} ls-remote --heads -- {}",
                 shell_quote(display_path),
                 shell_quote(remote)
             ),
@@ -423,7 +423,7 @@ fn remote_get_url_action(display_path: &str, remote: &str, direction: RemoteDire
         ""
     };
     format!(
-        "git -C {} remote get-url{push_flag} --all {}",
+        "git -C {} remote get-url{push_flag} --all -- {}",
         shell_quote(display_path),
         shell_quote(remote)
     )

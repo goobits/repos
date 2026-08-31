@@ -160,6 +160,11 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
             );
         }
     }
+    if check_uses_git_lfs(path).await {
+        if let Some(error) = super::lfs::option_like_lfs_remote_error(&remote_name) {
+            return (false, format!("tag created locally; {error}"));
+        }
+    }
 
     let tag_refspec = format!("refs/tags/{tag_name}:refs/tags/{tag_name}");
     match run_git(path, &["push", "--", &remote_name, &tag_refspec]).await {
@@ -173,5 +178,74 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
             ),
         ),
         Err(error) => (false, format!("tag exists locally; push failed: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::create_and_push_tag;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn git(path: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("git should run");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn lfs_tag_push_rejects_an_option_like_remote_before_transfer() {
+        if !Command::new("git")
+            .args(["lfs", "version"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return;
+        }
+
+        let directory = tempfile::tempdir().expect("temporary root");
+        let repository = directory.path().join("repository");
+        let remote = directory.path().join("remote.git");
+        std::fs::create_dir(&repository).expect("create repository");
+        git(&repository, &["init"]);
+        git(&repository, &["config", "user.name", "repos test"]);
+        git(
+            &repository,
+            &["config", "user.email", "repos@example.invalid"],
+        );
+        git(
+            directory.path(),
+            &["init", "--bare", remote.to_str().unwrap()],
+        );
+        git(
+            &repository,
+            &["remote", "add", "--", "--all", remote.to_str().unwrap()],
+        );
+        git(&repository, &["lfs", "install", "--local"]);
+        git(&repository, &["lfs", "track", "*.bin"]);
+        std::fs::write(repository.join("asset.bin"), "LFS content").expect("write fixture");
+        git(&repository, &["add", ".gitattributes", "asset.bin"]);
+        git(&repository, &["commit", "-m", "Initial"]);
+
+        let (success, message) = create_and_push_tag(&repository, "v1.0.0").await;
+        assert!(!success);
+        assert!(message.contains("rename it without a leading '-'"));
+        assert_eq!(git(&repository, &["tag", "--list", "v1.0.0"]), "v1.0.0");
+
+        let refs = Command::new("git")
+            .args(["show-ref", "--tags"])
+            .current_dir(&remote)
+            .output()
+            .expect("inspect remote tags");
+        assert!(!refs.status.success());
     }
 }
