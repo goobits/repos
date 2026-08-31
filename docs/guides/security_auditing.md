@@ -301,7 +301,7 @@ selection prompts for that run.
 ### JSON Output
 
 ```bash
-repos audit --json
+repos audit --verify --json
 ```
 
 Standard output contains exactly one JSON document. Progress and fix diagnostics
