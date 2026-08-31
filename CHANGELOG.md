@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CI now gates formatting, strict linting and tests across every target,
+  feature, and doctest, Rust 1.78 compatibility, destructive audit rewrites
+  with a pinned `git-filter-repo`, and the locked dependency graph against
+  RustSec advisories and warnings.
 - **SSH-only Git transport policy:** `git config --global repos.transportPolicy ssh-only` blocks effective HTTP(S) fetch and push URLs before credential helpers run, including macOS Keychain helpers. Transfer failures now name the repository and sanitized remote, provide an exact SSH conversion command for common hosts, and distinguish SSH key failures from transport fixes.
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
@@ -41,10 +45,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Push progress:** Concise mode names a repository when its operation is still running after 10 seconds instead of leaving only the last completed repository visible.
 - Commit, save, push, pull, sync, and audit fixes now use dependency waves: children run before parent commits/pushes, while parents run before child pulls. Independent repositories within each wave remain concurrent.
 - Parent commits refresh gitlinks after child commits, and parent pushes verify that each exact gitlink commit is reachable from fetched child remote refs.
-- Package publishing now verifies a clean, fully pushed release commit and publishes local package dependencies in topological waves. Duplicate identities and dependency cycles fail before registry mutation.
+- Real package publishing now verifies attached releases against their upstream or detached releases against the exact published version tag. Dirty worktrees still require `--allow-dirty`; local package dependencies publish in topological waves.
+- Development checks now cover every target, feature, and doctest locally, and
+  Criterion stays on the Rust-1.78-compatible 0.5 release line.
 - Nested sync/update preflight every copy before mutation and use one immutable target commit across the batch. Interactive config prompts are serialized.
 
 ### Fixed
+- Pull and sync integrate the upstream ref from their explicit fetch instead of
+  fetching a second time, avoiding an extra network round trip and a moving-ref
+  race between inspection and integration.
+- `repos save` now rejects conflicts before staging, publishes clean branches that are already ahead, leaves untracked-only work untouched, and blocks parent publication after a child failure.
+- `repos sync` never pushes a dirty repository. Missing-upstream pushes return before transport or LFS side effects, LFS uses the local source ref, and failures cannot be hidden by later skips.
+- Package publishing now rejects missing requested targets, accepts only exact detached release-tag provenance, uploads only invocation-produced PyPI artifacts, and reports timed-out registry outcomes as unknown after cancelling the command (and its process group on Unix).
+- Secret audits now scan offline without verifier calls by default, retain every verification class when requested, fail on missing targets or incomplete scans, and include secret-only repositories in fixes.
+- Audit history fixes now combine selected removals and redactions, retain all large paths, redact multipart credential parts longest-first within matching historical blobs, and remove the affected path when safe replacement is impossible.
 - npm’s nonzero “version already exists” responses are now treated as idempotent publish success while genuine authentication, permission, and registry failures remain errors.
 - Fleet commands now fail explicitly when filesystem traversal is incomplete or the discovery worker fails instead of operating on a partial or falsely empty repository list.
 - `push --auto-upstream` now honors `branch.<name>.pushRemote` and `remote.pushDefault`, otherwise prefers `origin` or a sole remote, and refuses ambiguous multi-remote repositories instead of pushing to the alphabetically first remote.
@@ -63,9 +77,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested drift commands classify independent embedded repositories, Git submodules, and linked worktrees without conflating or excluding them.
 
 ### Security
+- Patched `anyhow`, `bytes`, and `crossbeam-epoch` releases replace the advisory-affected lockfile entries, and the RustSec audit is clean.
 - Audit history fixes now refresh and enforce the configured upstream fetch
-  transport before rebuilding the rewrite plan, require a Git version compatible
-  with `git-filter-repo`, create a verified private full-ref recovery bundle,
+  transport before rebuilding the rewrite plan, require `git-filter-repo`,
+  create a verified private full-ref recovery bundle,
   scope redaction to the reported historical blobs, and verify the selected scans
   after rewriting. Rewritten refs are never published automatically, and the CLI
   warns that every affected branch and tag needs coordinated publication.
@@ -73,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Installer-generated PATH configuration now quotes custom installation directories safely, and default build artifacts live in a private user cache instead of a predictable shared `/tmp` directory.
 - HTTP credentials, URL user information, and query strings are redacted from Git failure reports.
 - Secret and hygiene reports retain repository and file attribution, while `repos audit --json` emits one redirect-safe JSON document even with dry-run fixes.
-- Audit safety is rechecked immediately before each mutation, and bulk history rewrites across parent/submodule dependency sets are refused.
+- Audit safety is rechecked before processing each repository, and bulk history rewrites across parent/submodule dependency sets are refused.
 
 ## [4.0.0] - 2026-05-05
 

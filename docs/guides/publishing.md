@@ -30,63 +30,52 @@ repos publish --tag             # 3. Publish + tag
 | `--public-only` | Only public repos (default) |
 | `--private-only` | Only private repos |
 
-**Safety:** By default, only public repositories are selected. Real publishes
-require a clean working directory and a release commit that is fully pushed and
-not behind its configured upstream.
+**Safety:** By default, only public repositories are selected. On an attached
+branch, a real publish requires a fully pushed release commit that is not behind
+its upstream; the worktree must also be clean unless `--allow-dirty` is used. A
+detached release is allowed only when the exact local and remote
+`v<manifest-version>` tag both point to `HEAD`. That provenance check applies
+with or without `--tag`; the flag controls only tag creation/push afterward.
 
 ## Example Output
 
 ```
-📦 Publishing 5 packages
+repos publish
+✓ Completed in 8.2s
 
-🟢 my-app        published           published, tagged & pushed v1.2.3
-🟢 my-lib        published           published, tagged & pushed v2.0.1
-🟠 my-cli        already-published   already published
-🔴 broken-pkg    failed              not authenticated (run: npm login)
-🟢 my-util       published           published, tagged & pushed v1.1.0
+▌ Summary
+  ✓ Published         2
+  ✓ Already published 1
+  ! Failed            1
+  · Checked           4
 
-✅ 3 published  ⚠️  1 already published  ❌ 1 failed
+▌ Published
+  ✓ my-app                   published v1.2.3
+    ↳ path: ./my-app
+
+▌ Failed
+  ! broken-pkg              not authenticated
+    ↳ path: ./broken-pkg
+    ↳ next: inspect registry credentials/version, then retry `repos publish broken-pkg`
 ```
 
-**Status indicators:** 🟢 success | 🟠 skipped | 🔴 failed
+The final report groups named outcomes, paths, and failure-specific next steps.
 
 ## How It Works
-
-```mermaid
-graph TD
-    A[repos publish] --> B[Discover Repos]
-    B --> C{Has package.json?}
-    B --> D{Has Cargo.toml?}
-    B --> E{Has pyproject.toml?}
-    C -->|Yes| F[NPM Package]
-    D -->|Yes| G[Cargo Crate]
-    E -->|Yes| H[Python Package]
-    F --> I{Check Visibility}
-    G --> I
-    H --> I
-    I --> J{Public/Private Match?}
-    J -->|Yes| K{--dry-run?}
-    J -->|No| L[Skip]
-    K -->|Yes| M[Preview Only]
-    K -->|No| N[Publish to Registry]
-    N --> O{Success?}
-    O -->|Yes| P{--tag?}
-    O -->|No| Q[Report Error]
-    P -->|Yes| R[Create Git Tag]
-    P -->|No| S[Done]
-    R --> T[Push Tag]
-    T --> S
-    L --> S
-    M --> S
-    Q --> S
-```
 
 - Auto-detects package type (npm/Cargo/PyPI) per repo
 - Checks visibility via `gh` CLI (GitHub only; unknown visibility is treated as private)
 - Uses existing credentials (`~/.npmrc`, `~/.cargo/credentials.toml`, `~/.pypirc`)
+- Rejects any missing requested repository name before package inspection
+- Runs clean/release provenance preflight before any real registry mutation
 - Reads local manifest dependencies and publishes dependency waves in order
 - Parses each static manifest once; malformed manifests and dynamic-only `setup.py` metadata are reported as inspection failures
 - Rejects duplicate package identities and dependency cycles before publishing
+- Builds Python packages in a private output directory and uploads only the
+  exact artifacts created by that invocation, never stale `dist/` files
+- Terminates the package-manager command on timeout, including its process group
+  on Unix. Because a registry may already have accepted an upload, the result
+  says the outcome is unknown and requires a registry check before retrying
 - Creates or pushes matching git tags after a successful or already-published registry result (if `--tag`)
 - Processes up to 8 independent packages concurrently
 
@@ -99,6 +88,9 @@ Learn more about [credential configuration](credentials_setup.md).
 | **"uncommitted changes"** | Commit first: `repos save "Release v1.2.3"` or stage explicitly |
 | **"not authenticated"** | Configure [publishing credentials](credentials_setup.md) |
 | **"tag already exists"** | Inspect `git rev-parse v1.2.3` and `git rev-parse HEAD`. If they differ, bump the package version and publish a new immutable tag. |
+| **"release tag ... is not published"** | For detached `HEAD`, publish the exact `v<manifest-version>` tag to the selected remote before retrying. |
+| **"requested repositories were not found"** | Use exact discovery names from `repos status`; the command will not publish a partial target list. |
+| **"registry outcome is unknown"** | Check the package/version in the registry before retrying; the server may have accepted the timed-out upload. |
 
 ---
 

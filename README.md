@@ -55,10 +55,13 @@ Use `repos <command> --help` for exact options.
 
 Status and dry-run paths are the preview surfaces. `save` stages tracked files
 by default; `--all` explicitly widens that scope to all non-ignored files. It
-then commits and pushes according to the selected mode. `sync` pulls safe remote
-changes, pushes local commits, and reports nested drift. Missing remotes,
-upstreams, conflicts, dirty state, and failed inspection remain visible rather
-than being silently repaired.
+rejects unresolved conflicts before staging, then commits new work and can push
+commits that were already locally ahead. Untracked-only files stay untouched by
+the default save without preventing an existing commit from being published.
+`sync` pulls safe remote changes, pushes local commits, and reports nested drift;
+a dirty repository is neither pulled nor pushed. Missing remotes, upstreams,
+conflicts, dirty state, and failed inspection remain visible rather than being
+silently repaired.
 
 Repository discovery does not authorize mutation. Review the selected targets
 and dry-run output before fleet-wide commands, especially when nested
@@ -76,9 +79,10 @@ repositories or submodules are present.
 
 ## Development
 
-Use `cargo fmt`, `cargo clippy`, and the repository's Rust test commands as
-documented in [AGENTS.md](AGENTS.md). Keep generated Cargo state outside the
-checkout.
+The project gates formatting, locked Clippy and tests across all targets,
+features, and doctests, Rust 1.78 compatibility, and the locked dependency set
+against RustSec advisories and warnings. See [AGENTS.md](AGENTS.md) for the
+local commands. Keep generated Cargo state outside the checkout.
 
 ## License
 

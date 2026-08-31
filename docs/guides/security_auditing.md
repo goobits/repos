@@ -220,7 +220,7 @@ repos audit --fix-large --fix-secrets
 ```
 
 **Requirements:**
-- Git 2.36 or newer and `git-filter-repo` must be installed. On macOS, use
+- `git-filter-repo` must be installed. On macOS, use
   `brew install git-filter-repo`; otherwise use a trusted package source.
 - Repository must be clean (no uncommitted changes)
 - A repository with remotes must be on an attached branch with a configured,
@@ -236,10 +236,12 @@ repos audit --fix-large --fix-secrets
    tags, and refuses a checkout that is behind.
 2. Rebuilds one validated plan from the refreshed reachable history.
 3. Creates and verifies a full-ref backup at
-   `.git/repos-backups/.../before.bundle` (mode `0600` on Unix).
-4. Runs one `git filter-repo` rewrite. Complete secret values are redacted only
-   in historical blobs belonging to the reported path; findings without a safe
-   complete value remove that affected path instead.
+   `repos-backups/.../before.bundle` inside the Git common directory (mode
+   `0600` on Unix).
+4. Runs one `git filter-repo` rewrite. Safe complete values and multipart
+   components are redacted only in historical blobs resolved from the reported
+   path; an unlocatable or oversized component removes that affected path
+   instead.
 5. Re-runs the selected secret and large-object scans. A remaining finding is a
    failed fix and the error repeats the recovery-bundle path.
 6. Leaves all remote publication to the operator. The command never force-pushes

@@ -55,8 +55,9 @@ Most fleet commands follow the same sequence:
 6. Print a final report and return an error when hard failures occurred.
 
 `repos sync` runs the pull workflow first and the push workflow second. Both
-results are retained, so a push failure cannot hide a pull failure or vice
-versa.
+results are retained. Failures take precedence in the combined outcome, then a
+successful transfer, then a skip. Dirty repositories remain skipped through
+both phases, so sync never publishes commits from a dirty worktree.
 
 ## Repository Discovery
 
@@ -136,15 +137,30 @@ large fleets do not create unbounded GitHub CLI or filesystem work.
 
 - Push and pull inspect remotes, branches, upstreams, and worktree state before
   mutation.
+- Upstream-aware transfers fetch the selected remote explicitly. Pull and sync
+  integrate the analyzed upstream ref directly, without a second fetch.
+  Automatic upstream creation checks `branch.<name>.pushRemote`,
+  `remote.pushDefault`, and `branch.<name>.remote`, then uses `origin` or a sole
+  remote; ambiguous multi-remote repositories fail before network mutation.
+- A push without an upstream returns before push-transport and LFS side effects
+  unless automatic upstream creation was requested. LFS uploads use the local
+  source branch, with `HEAD` as the fallback when no branch name is available.
 - Pull uses fast-forward-only behavior unless the caller requests rebase.
 - Missing or inaccessible remotes are failures, not clean/synced results.
 - `repos doctor` probes every configured remote with `git ls-remote` and exits
   nonzero when it finds blockers. It batches raw configured URL inspection once
   per repository, then checks effective fetch and push URLs separately so Git
   rewrite rules and transport policy remain visible.
-- Audit scanners distinguish a clean scan from an inspection failure.
-- History-rewriting audit fixes require a clean repository and, when a remote
-  exists, a reachable configured upstream that is not ahead of local `HEAD`.
+- Audit target names are exact; a missing requested repository fails instead of
+  silently narrowing the scan. Secret findings distinguish verified,
+  unverified, and verification-unknown results. In verification mode, verified
+  or unknown findings fail, as does any incomplete secret or hygiene scan.
+- History-rewriting audit fixes recheck safety before processing each selected
+  repository. They require a clean repository and, when a remote exists, a
+  reachable configured upstream that is not ahead of local `HEAD`.
+- Each history rewrite creates and verifies a private full-ref `before.bundle`,
+  combines selected path removal and secret redaction in one rewrite, then
+  reruns the selected scans. Rewritten refs are never pushed automatically.
 - Parent pushes containing Git gitlinks require the exact indexed child commit
   to be reachable from freshly fetched remote-tracking refs. A normal detached
   submodule checkout is therefore safe when its commit is published, while a
@@ -178,14 +194,26 @@ commit, so divergent local commits stay checked out for manual review.
 ## Package Publishing
 
 `commands::publish::planner` discovers package managers, applies visibility and
-exact repository-name filters, and blocks unsafe dirty or uninspectable
-repositories. A real publish also requires the release commit to match its
-upstream after fetch. Each built-in adapter parses its static manifest once;
-malformed manifests and dynamic `setup.py` metadata fail closed. `executor`
-derives local registry dependencies from
-manifests, rejects duplicate identities/cycles before mutation, and publishes
-dependency waves in order. Tags are created or pushed only when they resolve to
-the planned release commit.
+exact repository-name filters, and rejects any missing requested name before
+package inspection. A real publish rejects dirty repositories unless
+`--allow-dirty` was requested. An attached release must match its upstream after
+fetch; a detached release is accepted only when the exact local and remote
+`v<manifest-version>` tag both resolve to `HEAD`. This provenance check is
+independent of `--tag`, which controls post-publish tag creation and push.
+
+Each built-in adapter parses its static manifest once; malformed manifests and
+dynamic `setup.py` metadata fail closed. `executor` derives local registry
+dependencies from manifests, rejects duplicate identities and dependency cycles
+before mutation, and publishes dependency waves in order. PyPI builds use an
+invocation-private output directory and pass only the exact artifacts produced
+there to Twine, so stale repository `dist/` files are not uploaded.
+
+Package subprocesses have bounded timeouts and cancellation-on-drop. On Unix,
+they run in a dedicated process group so cancellation reaches descendants; other
+platforms retain direct-child cancellation. A registry command timeout is
+reported as outcome unknown because the remote service may have accepted the
+publish before local cancellation, so users must check the registry before
+retrying.
 
 Package adapters implement the `PackageManager` trait for Cargo, npm, and PyPI.
 Registry credentials remain owned by those package-manager tools.
@@ -202,10 +230,18 @@ The repository uses unit tests for classification and formatting, integration
 tests with temporary Git repositories and local bare remotes, stress tests for
 discovery, and Criterion benchmarks for discovery/context hot paths.
 
-The standard verification gates are:
+Stable CI runs formatting plus locked verification across every target and
+feature:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all-targets
+cargo fmt --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets --all-features
+cargo test --locked --doc --all-features
+cargo audit --deny warnings
 ```
+
+A separate job runs all targets, features, and doctests on the declared Rust
+1.78 minimum. Criterion remains on the Rust-1.78-compatible 0.5 release line.
+`make lint` and `make test` use the same breadth for local checks; CI
+additionally enforces the lockfile and runs the RustSec audit.

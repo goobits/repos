@@ -16,9 +16,11 @@ Common issues and solutions for the repos tool.
 |-------|-------|----------|
 | `not authenticated` or `401 Unauthorized` | Missing registry credentials | Configure [publishing credentials](credentials_setup.md) |
 | `uncommitted changes` or `dirty working directory` | Uncommitted files in repo | Commit or stash changes: `git status` to review |
-| `tag already exists` | Version tag already published | Compare `git rev-parse v1.0.0` with `git rev-parse HEAD`; if they differ, bump the version and publish a new immutable tag |
+| `existing tag ... points to ..., not release commit ...` | The version tag belongs to a different commit | Do not move the tag. Bump the package version and publish a new immutable tag |
+| `requested publish repositories not found` | A requested name is not in the discovered fleet | Run from the intended scan root and use the exact repository name shown by `repos status` |
+| `release tag ... is not published` or `not detached HEAD` | A detached release lacks exact local and remote `v<manifest-version>` provenance | Check out its tracked branch, or verify that the exact version tag resolves to `HEAD` both locally and on `origin` (or the sole remote) |
+| `registry outcome is unknown` | A publish command timed out after the registry may have accepted it | Check that registry and version before retrying; the publish may already have completed |
 | `not a package` or `no manifest found` | Missing package manifest | Ensure repo has `package.json`, `Cargo.toml`, or `pyproject.toml` |
-| `version mismatch` | package.json version differs from git tag | Update package version to match git tag |
 
 ## Config Issues
 
@@ -43,7 +45,9 @@ Common issues and solutions for the repos tool.
 |-------|-------|----------|
 | `TruffleHog not found` | TruffleHog not installed | Run `repos audit --install-tools` to auto-install |
 | Suspected false positives | TruffleHog classified test/revoked data as a secret | Review the finding manually; `repos` does not maintain an ignore file |
-| Need to recover from history rewrite | Used history rewriting options (`--fix-large`, `--fix-secrets`, or `--fix-all`) | Use `git reflog` to find previous commit and reset: `git reset --hard HEAD@{N}` |
+| `verified secrets or inconclusive secret verification found` | A secret is active or its verification could not complete | Treat both as unsafe. Restore scanner/service access, review the finding, and rerun `repos audit --verify` |
+| `no repositories matched requested targets` | At least one `--repos` name was not discovered | Run from the intended scan root and correct every missing repository name before retrying |
+| Need to recover from history rewrite | Used history rewriting options (`--fix-large`, `--fix-secrets`, or `--fix-all`) | Clone the exact `before.bundle` path reported by `repos` into a clean directory, inspect its refs, and restore from that verified full-ref backup |
 | Scan takes too long | Large repository history | Narrow the run with `--repos` or inspect the repository history separately |
 | `audit incomplete` | A secret or hygiene scanner could not inspect one or more repositories | Fix the reported tool/repository error and rerun; an incomplete scan is never reported as clean |
 | `git fetch failed` before a history fix | Configured upstream is inaccessible | Restore access or correct the remote before rewriting history |

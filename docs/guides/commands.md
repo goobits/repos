@@ -108,13 +108,18 @@ repos save "Update docs"
 
 Safe default:
 
+- Rejects unresolved conflicts before staging anything.
 - Stages tracked modifications and deletions only.
-- Does not stage untracked files by default.
+- Leaves untracked files alone by default without suppressing an existing push.
 - Commits repositories with staged changes.
-- Pushes successful commits.
+- Pushes successful commits and clean branches that were already ahead.
 - Skips branches without upstream unless `--auto-upstream` is passed.
-- Saves nested children before parents so parent gitlinks record the new child commits.
-- Before pushing a parent gitlink, verifies that the exact child commit is reachable from fetched remote refs.
+- Saves nested children before parents; a failed child blocks its parent from
+  committing or publishing.
+- Refreshes and validates parent gitlinks from the parent's committed `HEAD`,
+  then verifies each exact child commit against fetched remote refs before push.
+- Plans direct-parent gitlink refreshes in dry-run output without changing the
+  index or worktree.
 
 Options:
 
@@ -144,14 +149,17 @@ repos sync
 
 Default behavior:
 
-- Fetches remotes.
-- Pulls with rebase.
+- Selects one deterministic remote; ambiguous multi-remote repositories fail
+  with guidance instead of guessing.
+- Pulls with rebase against the exact upstream ref fetched during inspection.
 - Pushes local commits after the pull phase.
 - Scans once and prints one final report with exclusive repo outcomes plus named pull/push transfers.
-- Skips dirty repositories instead of stashing implicitly.
+- Neither pulls nor pushes a dirty repository; no implicit stash is created.
 - Reports nested repository drift.
 - Leaves directional behavior available through `repos pull` and `repos push`.
 - Pulls parents before children, then pushes children before parents.
+- Reports failures before successful transfers and successful transfers before
+  skips, so a later no-op cannot hide work completed earlier in the run.
 
 Options:
 
@@ -241,6 +249,10 @@ Nested children are pushed before parents. Repositories at the same dependency
 level remain concurrent, even with `--jobs`. For Git submodules, a parent push
 is blocked unless the exact indexed child commit is reachable from freshly
 fetched child remote refs; a normal published detached checkout is allowed.
+Without an upstream, the command returns before inspecting push transport or
+uploading LFS objects unless `--auto-upstream` is explicitly supplied. LFS
+uploads use the local source branch (or `HEAD` for a detached checkout), even
+when the upstream branch has a different name.
 
 The final report uses exclusive `Pushed`, `Up to date`, `Failed`, and `Skipped`
 outcomes that add up to `Checked`. Pushed repositories are named; failures,
@@ -315,7 +327,7 @@ Options:
 | Option | Description |
 |---|---|
 | `--install-tools` | Install required tools without prompting |
-| `--verify` | Verify discovered secrets are active |
+| `--verify` | Verify findings; fail on active or inconclusive verification |
 | `--json` | Output JSON |
 | `--interactive` | Choose fixes interactively |
 | `--fix-gitignore` | Add missing `.gitignore` entries |
@@ -323,12 +335,25 @@ Options:
 | `--fix-secrets` | Remove secrets from history |
 | `--fix-all` | Apply all available fixes |
 | `--dry-run` | Preview fixes |
-| `--repos <repo1,repo2>` | Target specific repositories |
+| `--repos <repo1,repo2>` | Target exact repository names; fail if any name is missing |
 
-Fixes run children before parents and repeat safety checks immediately before
-mutation. Bulk history rewrites are refused when the selected repositories
-cross a parent/submodule dependency; rewrite and validate that dependency chain
-explicitly instead.
+Without `--verify`, secret detection is offline and includes unverified
+findings without making verifier/API calls. Verification mode reports verified,
+unverified, and verification-unknown findings; verified or unknown findings
+produce a nonzero exit. Scanner failures also make the audit incomplete rather
+than clean.
+
+Fixes are planned from the exact audited inventory, including repositories that
+have only secret findings. Each repository receives one combined history
+rewrite, preceded by a clean/upstream safety check and a verified full-ref
+`before.bundle` under the Git common directory's `repos-backups/`. Selected
+secret and large-object checks run again afterward. Bulk rewrites are refused
+when the selected set crosses a parent/submodule dependency; rewrite and
+validate that dependency chain explicitly instead. History fixes require
+`git-filter-repo`, honor the configured fetch transport policy, and never
+publish rewritten refs. Because `git-filter-repo` normally removes `origin`,
+record its reviewed URL first and publish every affected branch and tag through
+a coordinated procedure; an ordinary `git push` is insufficient.
 
 ### `repos publish`
 
@@ -341,12 +366,21 @@ repos publish --tag
 repos publish my-app my-lib
 ```
 
-Real publishes require each release commit to be clean, fully pushed, and not
-behind its upstream. Local package dependencies declared in Cargo, npm, or
-Python manifests publish first; independent packages in a dependency wave stay
-concurrent. Duplicate registry identities and dependency cycles fail before any
-registry mutation. With `--tag`, an existing tag must already point to the
-release commit.
+Real publishes on an attached branch require the release commit to be fully
+pushed and not behind its upstream; the worktree must also be clean unless
+`--allow-dirty` is supplied. A detached release is accepted only when the exact
+local and remote `v<manifest-version>` tag both resolve to that commit. This
+provenance check is independent of `--tag`, which only controls tag creation and
+push after publishing. Missing requested repository names, duplicate registry
+identities, and dependency cycles fail before registry mutation. Local Cargo,
+npm, and Python dependencies publish first; independent packages in a wave stay
+concurrent.
+
+Registry commands are terminated when they time out, including their process
+group on Unix, but the registry outcome is still reported as unknown because a
+server may already have accepted the upload. Check the registry before retrying.
+PyPI builds use an isolated output directory and upload only artifacts produced
+by that invocation.
 
 Options:
 
