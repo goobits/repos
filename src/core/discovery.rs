@@ -16,19 +16,18 @@ use super::config::{
 
 /// Check if a .git file (for submodules/worktrees) contains gitdir reference
 /// Only reads the first 5 lines for efficiency
-fn is_git_file(path: &Path) -> bool {
-    match fs::File::open(path) {
-        Ok(file) => {
-            let reader = BufReader::new(file);
-            // Only read first few lines - gitdir is typically in the first line
-            reader
-                .lines()
-                .take(5)
-                .filter_map(std::result::Result::ok)
-                .any(|line| line.trim_start().starts_with("gitdir:"))
+fn is_git_file(path: &Path) -> Result<bool> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("opening Git metadata file {}", path.display()))?;
+    let reader = BufReader::new(file);
+    // Only read first few lines - gitdir is typically in the first line.
+    for line in reader.lines().take(5) {
+        let line = line.with_context(|| format!("reading Git metadata file {}", path.display()))?;
+        if line.trim_start().starts_with("gitdir:") {
+            return Ok(true);
         }
-        Err(_) => false,
     }
+    Ok(false)
 }
 
 fn compare_repository_aliases(left: &Path, right: &Path) -> std::cmp::Ordering {
@@ -125,12 +124,49 @@ pub fn try_find_repos_from_path(search_path: impl AsRef<Path>) -> Result<Vec<(St
             // Check if this directory contains a .git entry
             let git_path = path.join(".git");
 
-            if git_path.exists() {
-                let is_git_repo = if git_path.is_dir() {
+            let git_metadata = match fs::symlink_metadata(&git_path) {
+                Ok(metadata) => Some(metadata),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    if let Ok(mut errors) = walk_errors.lock() {
+                        errors.push(format!(
+                            "inspecting Git metadata {}: {error}",
+                            git_path.display()
+                        ));
+                    }
+                    return WalkState::Continue;
+                }
+            };
+
+            if let Some(metadata) = git_metadata {
+                let metadata = if metadata.file_type().is_symlink() {
+                    match fs::metadata(&git_path) {
+                        Ok(metadata) => metadata,
+                        Err(error) => {
+                            if let Ok(mut errors) = walk_errors.lock() {
+                                errors.push(format!(
+                                    "resolving Git metadata {}: {error}",
+                                    git_path.display()
+                                ));
+                            }
+                            return WalkState::Continue;
+                        }
+                    }
+                } else {
+                    metadata
+                };
+                let is_git_repo = if metadata.is_dir() {
                     true
-                } else if git_path.is_file() {
-                    // Submodules and worktrees expose a .git file
-                    is_git_file(&git_path)
+                } else if metadata.is_file() {
+                    match is_git_file(&git_path) {
+                        Ok(is_git_repo) => is_git_repo,
+                        Err(error) => {
+                            if let Ok(mut errors) = walk_errors.lock() {
+                                errors.push(error.to_string());
+                            }
+                            return WalkState::Continue;
+                        }
+                    }
                 } else {
                     false
                 };
@@ -296,6 +332,33 @@ mod tests {
         let error = try_find_repos_from_path(&missing).unwrap_err();
 
         assert!(error.to_string().contains("discovery incomplete"));
+    }
+
+    #[test]
+    fn strict_discovery_rejects_unreadable_git_metadata_content() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repository = temp_dir.path().join("malformed-worktree");
+        fs::create_dir(&repository).unwrap();
+        fs::write(repository.join(".git"), [0xff, b'\n']).unwrap();
+
+        let error = try_find_repos_from_path(temp_dir.path()).unwrap_err();
+
+        assert!(error.to_string().contains("reading Git metadata file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn strict_discovery_rejects_a_dangling_git_metadata_link() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repository = temp_dir.path().join("dangling-worktree");
+        fs::create_dir(&repository).unwrap();
+        symlink("missing-gitdir", repository.join(".git")).unwrap();
+
+        let error = try_find_repos_from_path(temp_dir.path()).unwrap_err();
+
+        assert!(error.to_string().contains("resolving Git metadata"));
     }
 
     #[tokio::test]
