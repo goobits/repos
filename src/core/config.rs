@@ -82,11 +82,6 @@ pub const ERROR_MESSAGE_TRUNCATE_LENGTH: usize = 37;
 #[doc(hidden)] // Internal formatting detail
 pub const TIMEOUT_SECONDS_DISPLAY: u64 = 180;
 
-// Processing limits and chunk sizes
-#[doc(hidden)] // Internal processing detail
-#[doc(hidden)] // Internal display limit
-pub const LARGE_FILES_DISPLAY_LIMIT: usize = 10;
-
 // Directories to skip during repository search
 #[doc(hidden)] // Internal discovery configuration
 pub const SKIP_DIRECTORIES: &[&str] = &[

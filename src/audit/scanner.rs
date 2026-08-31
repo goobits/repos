@@ -9,15 +9,17 @@
 mod installer;
 mod report;
 
-use anyhow::{anyhow, Result};
-use serde_json;
+use anyhow::{anyhow, bail, Result};
+use serde::Deserialize;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 use installer::{ensure_trufflehog_installed, is_trufflehog_installed};
-pub use report::{ReportedSecretFinding, TruffleStatistics};
+pub use report::{ReportedSecretFinding, SecretVerification, TruffleStatistics};
 
 use super::hygiene::{process_hygiene_repositories, HygieneStatistics};
 use crate::core::{
@@ -36,48 +38,58 @@ pub struct SecretFinding {
     pub file_path: String,
 }
 
+/// One immutable repository inventory used by both audit scanning and fixes.
+#[derive(Clone)]
+pub struct AuditScanResult {
+    pub repositories: Vec<(String, PathBuf)>,
+    pub truffle_statistics: TruffleStatistics,
+    pub hygiene_statistics: HygieneStatistics,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum TruffleScanMode {
+    Offline,
+    Verify,
+}
+
+/// Full scanner output retained only long enough to construct a safe rewrite.
+///
+/// Do not derive `Debug` or `Serialize`: these fields can contain live secrets.
+pub(crate) struct ScannedSecret {
+    pub(crate) finding: SecretFinding,
+    pub(crate) verification: SecretVerification,
+    pub(crate) raw: Option<String>,
+    pub(crate) raw_v2: Option<String>,
+}
+
 /// Runs complete `TruffleHog` secret scanning and hygiene checking
-/// Returns (`truffle_stats`, `hygiene_stats`)
+/// Returns the exact repository inventory and both result sets.
 pub async fn run_truffle_scan(
     install_tools: bool,
     verify: bool,
     json: bool,
     target_repos: Option<Vec<String>>,
-) -> Result<(TruffleStatistics, HygieneStatistics)> {
+) -> Result<AuditScanResult> {
     let (start_time, repos) = if json {
         init_command_quiet().await?
     } else {
         init_command(SCANNING_MESSAGE).await?
     };
 
-    if repos.is_empty() {
+    let repos_to_scan = select_audit_repositories(repos, target_repos.as_deref())?;
+
+    if repos_to_scan.is_empty() {
         if !json {
             println!("\r{NO_REPOS_MESSAGE}");
         }
         if !json {
             set_terminal_title_and_flush("✅ repos");
         }
-        return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
-    }
-
-    // Filter repositories if specific targets are specified
-    let repos_to_scan = if let Some(targets) = target_repos {
-        repos
-            .into_iter()
-            .filter(|(name, _)| targets.contains(name))
-            .collect()
-    } else {
-        repos
-    };
-
-    if repos_to_scan.is_empty() {
-        if !json {
-            println!("\r❌ No matching repositories found");
-        }
-        if !json {
-            set_terminal_title_and_flush("✅ repos");
-        }
-        return Ok((TruffleStatistics::new(), HygieneStatistics::new()));
+        return Ok(AuditScanResult {
+            repositories: Vec::new(),
+            truffle_statistics: TruffleStatistics::new(),
+            hygiene_statistics: HygieneStatistics::new(),
+        });
     }
 
     let total_repos = repos_to_scan.len();
@@ -155,7 +167,40 @@ pub async fn run_truffle_scan(
         println!("{}", "═".repeat(70));
     }
 
-    Ok((final_truffle_stats, hygiene_stats))
+    Ok(AuditScanResult {
+        repositories: repos_arc.as_ref().clone(),
+        truffle_statistics: final_truffle_stats,
+        hygiene_statistics: hygiene_stats,
+    })
+}
+
+fn select_audit_repositories(
+    repositories: Vec<(String, PathBuf)>,
+    targets: Option<&[String]>,
+) -> Result<Vec<(String, PathBuf)>> {
+    let Some(targets) = targets else {
+        return Ok(repositories);
+    };
+
+    let requested = targets.iter().cloned().collect::<HashSet<_>>();
+    let matched = repositories
+        .iter()
+        .filter(|(name, _)| requested.contains(name))
+        .map(|(name, _)| name.clone())
+        .collect::<HashSet<_>>();
+    let mut missing = requested.difference(&matched).cloned().collect::<Vec<_>>();
+    missing.sort();
+    if !missing.is_empty() {
+        bail!(
+            "no repositories matched requested targets: {}",
+            missing.join(", ")
+        );
+    }
+
+    Ok(repositories
+        .into_iter()
+        .filter(|(name, _)| requested.contains(name))
+        .collect())
 }
 
 /// Process `TruffleHog` scanning across repositories
@@ -190,9 +235,17 @@ async fn run_truffle_scanning(
             pb.set_message("scanning secrets...");
 
             // Run TruffleHog scan
-            match scan_repository_secrets(repo_path, verify).await {
+            let mode = if verify {
+                TruffleScanMode::Verify
+            } else {
+                TruffleScanMode::Offline
+            };
+            match scan_repository_secrets(repo_path, mode).await {
                 Ok(secrets) => {
-                    let status_symbol = if secrets.iter().any(|s| s.verified) {
+                    let status_symbol = if secrets
+                        .iter()
+                        .any(|secret| secret.verification == SecretVerification::Verified)
+                    {
                         "🔴" // Verified secrets found
                     } else if !secrets.is_empty() {
                         "🟡" // Unverified secrets found
@@ -203,9 +256,22 @@ async fn run_truffle_scanning(
                     let message = if secrets.is_empty() {
                         "no secrets".to_string()
                     } else {
-                        let verified = secrets.iter().filter(|s| s.verified).count();
+                        let verified = secrets
+                            .iter()
+                            .filter(|secret| secret.verification == SecretVerification::Verified)
+                            .count();
+                        let unknown = secrets
+                            .iter()
+                            .filter(|secret| secret.verification == SecretVerification::Unknown)
+                            .count();
                         if verified > 0 {
                             format!("{} secrets ({} verified)", secrets.len(), verified)
+                        } else if unknown > 0 {
+                            format!(
+                                "{} secrets ({} verification unknown)",
+                                secrets.len(),
+                                unknown
+                            )
                         } else {
                             format!("{} secrets (unverified)", secrets.len())
                         }
@@ -217,7 +283,7 @@ async fn run_truffle_scanning(
 
                     // Update statistics
                     let mut stats = stats_clone.lock().expect("Failed to acquire stats lock");
-                    stats.add_repo_result(repo_name, &secrets);
+                    stats.add_scanned_repo_result(repo_name, repo_path, &secrets);
                 }
                 Err(e) => {
                     pb.set_prefix(format!("🟠 {repo_name:max_name_length$}"));
@@ -250,18 +316,12 @@ async fn run_truffle_scanning(
 }
 
 /// Scan a single repository for secrets using `TruffleHog`
-async fn scan_repository_secrets(
-    repo_path: &std::path::Path,
-    verify: bool,
-) -> Result<Vec<SecretFinding>> {
+pub(crate) async fn scan_repository_secrets(
+    repo_path: &Path,
+    mode: TruffleScanMode,
+) -> Result<Vec<ScannedSecret>> {
     let repo_url = format!("file://{}", repo_path.display());
-    let mut args = vec!["git", &repo_url, "--json", "--no-update"];
-
-    if verify {
-        args.push("--results=verified,unknown");
-    } else {
-        args.push("--results=unknown");
-    }
+    let args = trufflehog_args(repo_url, mode);
 
     let mut child = Command::new("trufflehog")
         .args(&args)
@@ -312,32 +372,157 @@ async fn scan_repository_secrets(
     Ok(findings)
 }
 
-fn parse_truffle_finding(line: &[u8]) -> Result<SecretFinding> {
-    let json = serde_json::from_slice::<serde_json::Value>(line)
+fn trufflehog_args(repo_url: String, mode: TruffleScanMode) -> Vec<String> {
+    let mut args = vec![
+        "git".to_string(),
+        repo_url,
+        "--json".to_string(),
+        "--no-update".to_string(),
+        "--fail-on-scan-errors".to_string(),
+    ];
+    match mode {
+        TruffleScanMode::Offline => {
+            args.push("--no-verification".to_string());
+            args.push("--results=unverified".to_string());
+        }
+        TruffleScanMode::Verify => {
+            args.push("--results=verified,unverified,unknown".to_string());
+        }
+    }
+    args
+}
+
+fn parse_truffle_finding(line: &[u8]) -> Result<ScannedSecret> {
+    let output = serde_json::from_slice::<TruffleHogOutput>(line)
         .map_err(|error| anyhow!("invalid TruffleHog JSON output: {error}"))?;
-    let detector_name = json["DetectorName"]
-        .as_str()
-        .unwrap_or("Unknown")
-        .to_string();
-    let verified = json["Verified"].as_bool().unwrap_or(false);
-    let file_path = json["SourceMetadata"]["Data"]["Git"]["file"]
-        .as_str()
-        .unwrap_or("unknown")
-        .to_string();
-    Ok(SecretFinding {
-        detector_name,
-        verified,
-        file_path,
+    if output.detector_name.trim().is_empty() {
+        bail!("invalid TruffleHog JSON output: DetectorName was empty");
+    }
+    if output.source_metadata.data.git.file.is_empty() {
+        bail!("invalid TruffleHog JSON output: Git file was empty");
+    }
+    let verification = if output.verified {
+        SecretVerification::Verified
+    } else if output
+        .verification_error
+        .as_deref()
+        .is_some_and(|error| !error.trim().is_empty())
+    {
+        SecretVerification::Unknown
+    } else {
+        SecretVerification::Unverified
+    };
+    Ok(ScannedSecret {
+        finding: SecretFinding {
+            detector_name: output.detector_name,
+            verified: output.verified,
+            file_path: output.source_metadata.data.git.file,
+        },
+        verification,
+        raw: nonempty(output.raw),
+        raw_v2: nonempty(output.raw_v2),
     })
+}
+
+fn nonempty(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.is_empty())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct TruffleHogOutput {
+    detector_name: String,
+    verified: bool,
+    #[serde(default)]
+    verification_error: Option<String>,
+    #[serde(default)]
+    raw: Option<String>,
+    #[serde(default)]
+    raw_v2: Option<String>,
+    source_metadata: TruffleSourceMetadata,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct TruffleSourceMetadata {
+    data: TruffleSourceData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct TruffleSourceData {
+    git: TruffleGitMetadata,
+}
+
+#[derive(Deserialize)]
+struct TruffleGitMetadata {
+    file: String,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_truffle_finding;
+    use super::{
+        parse_truffle_finding, select_audit_repositories, trufflehog_args, SecretVerification,
+        TruffleScanMode,
+    };
+    use std::path::PathBuf;
 
     #[test]
     fn rejects_malformed_trufflehog_output() {
         let result = parse_truffle_finding(b"not-json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn offline_scan_is_non_verifying_and_fail_closed() {
+        let args = trufflehog_args("file:///repo".to_string(), TruffleScanMode::Offline);
+        assert!(args.iter().any(|arg| arg == "--no-verification"));
+        assert!(args.iter().any(|arg| arg == "--results=unverified"));
+        assert!(args.iter().any(|arg| arg == "--fail-on-scan-errors"));
+    }
+
+    #[test]
+    fn verification_scan_retains_every_result_class() {
+        let args = trufflehog_args("file:///repo".to_string(), TruffleScanMode::Verify);
+        assert!(!args.iter().any(|arg| arg == "--no-verification"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "--results=verified,unverified,unknown"));
+        assert!(args.iter().any(|arg| arg == "--fail-on-scan-errors"));
+    }
+
+    #[test]
+    fn parser_classifies_verification_errors_as_unknown() {
+        let finding = parse_truffle_finding(
+            br#"{"DetectorName":"AWS","Verified":false,"VerificationError":"timeout","Raw":"token","SourceMetadata":{"Data":{"Git":{"file":"secrets.env"}}}}"#,
+        )
+        .expect("valid finding");
+        assert_eq!(finding.verification, SecretVerification::Unknown);
+        assert_eq!(finding.raw.as_deref(), Some("token"));
+    }
+
+    #[test]
+    fn parser_rejects_missing_required_fields() {
+        let result = parse_truffle_finding(br#"{"DetectorName":"AWS","Verified":false}"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn target_selection_reports_every_missing_name() {
+        let repos = vec![("present".to_string(), PathBuf::from("/present"))];
+        let targets = vec!["missing-b".to_string(), "missing-a".to_string()];
+        let error = select_audit_repositories(repos, Some(&targets)).expect_err("missing targets");
+        assert!(error.to_string().contains("missing-a, missing-b"));
+    }
+
+    #[test]
+    fn target_selection_keeps_duplicate_repository_names_once_per_path() {
+        let repos = vec![
+            ("same".to_string(), PathBuf::from("/one/same")),
+            ("same".to_string(), PathBuf::from("/two/same")),
+        ];
+        let targets = vec!["same".to_string(), "same".to_string()];
+        let selected = select_audit_repositories(repos, Some(&targets)).expect("matching targets");
+        assert_eq!(selected.len(), 2);
     }
 }

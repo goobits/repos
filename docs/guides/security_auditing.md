@@ -3,8 +3,8 @@
 Comprehensive security scanning and repository hygiene checking with automated fixes.
 
 History objects and secret-scanner JSON are processed as bounded streams. The
-large-file check still examines every reachable object and retains the exact
-largest results; streaming changes memory use, not audit coverage.
+large-file check examines every reachable object and retains the complete
+finding set; streaming changes memory use, not audit coverage.
 
 ## Table of Contents
 
@@ -41,7 +41,7 @@ repository as clean.
 ```bash
 repos audit                    # Scan all repos
 repos audit --install-tools    # Auto-install TruffleHog
-repos audit --verify           # Verify secrets are active
+repos audit --verify           # Verify findings; fail closed on active/unknown
 repos audit --fix-all          # Apply all fixes
 ```
 
@@ -71,15 +71,15 @@ release of `repos`.
 Scans git history for exposed credentials and API keys:
 
 ```bash
-repos audit                    # Detect unverified secrets
-repos audit --verify           # Verify active secrets and fail on findings
+repos audit                    # Offline detection; no verifier/API calls
+repos audit --verify           # Classify verified, unverified, and unknown
 ```
 
-**Verification mode** (`--verify`):
-- Tests if secrets are currently active
-- **Exits nonzero** if verified secrets are found
-- Use in CI/CD pipelines to fail builds
-- Slower due to API verification calls
+The default scan passes `--no-verification` to TruffleHog and reports its
+unverified detections. Verification mode can contact external services and is
+slower. It retains every result class and exits nonzero for either a verified
+secret or an inconclusive/unknown verification result. Any scanner failure also
+makes the audit incomplete and nonzero.
 
 ### Output
 
@@ -87,12 +87,16 @@ repos audit --verify           # Verify active secrets and fail on findings
 🟢 my-app      no secrets
 🟡 api-server  3 secrets (unverified)
 🔴 web-app     2 secrets (1 verified)
+🟡 worker      1 secret (1 verification unknown)
 
 ═══════════════════════════════════════════════════════════════════
 🔍 SECRET SCANNING RESULTS
 ═══════════════════════════════════════════════════════════════════
 🔴 VERIFIED SECRETS FOUND (1)
    These secrets are confirmed to be active and should be rotated immediately!
+
+🟠 UNKNOWN SECRET VERIFICATION (1)
+   Verification failed; treat these findings as unsafe until reviewed.
 
 📊 SECRETS BY TYPE
    2 × GitHub
@@ -141,12 +145,14 @@ Commonly ignored files that should never be committed:
 
 ### 3. Large Files
 
-Files exceeding **1MB threshold** in git history:
+Files exceeding the **1MB threshold** anywhere in reachable Git history:
 
 ```bash
-# Shows top 10 largest files
 git rev-list --objects --all | git cat-file --batch-check
 ```
+
+The audit retains every matching historical path; any display formatting limit
+is never reused as a fix limit.
 
 ### Hygiene Output
 
@@ -187,17 +193,21 @@ Adds missing patterns to `.gitignore`:
 - Creates commit: `chore: Update .gitignore`
 - **Does not untrack files** (they remain in git)
 
-#### Moderate: Untrack Files
+#### Destructive: Apply Every Fix
 
 ```bash
 repos audit --fix-all
 ```
 
-Adds patterns and untracks files:
+This combines `.gitignore` cleanup with every selected history rewrite:
+
 - Updates `.gitignore`
-- Runs `git rm --cached -r` on violating files
-- Files remain in working directory
-- Reversible with `git add`
+- Untracks affected files with literal pathspecs while keeping them locally
+- Removes large paths and secrets from history
+- Files untracked by the `.gitignore` step remain in the working directory
+
+Use `--interactive` when you want untracking without automatically selecting
+the history-rewrite fixes.
 
 #### Destructive: History Rewriting
 
@@ -210,22 +220,51 @@ repos audit --fix-large --fix-secrets
 ```
 
 **Requirements:**
-- `git-filter-repo` must be installed: `pip install git-filter-repo` or `brew install git-filter-repo`
+- Git 2.36 or newer and `git-filter-repo` must be installed. On macOS, use
+  `brew install git-filter-repo`; otherwise use a trusted package source.
 - Repository must be clean (no uncommitted changes)
-- A repository with remotes must have a configured, reachable upstream
+- A repository with remotes must be on an attached branch with a configured,
+  reachable upstream
 - Local `HEAD` must not be behind that upstream
-- All collaborators must re-clone after push
+- The upstream fetch URL must comply with `repos.transportPolicy`
+- Record the reviewed remote URL before starting because `git-filter-repo`
+  normally removes `origin`
+- All collaborators must re-clone after rewritten refs are published
 
 **What happens:**
-1. Creates backup refs: `refs/original/pre-fix-backup-<type>-<timestamp>`
-2. Rewrites git history to remove files/secrets
-3. Runs aggressive garbage collection
-4. Requires `git push --force-with-lease`
+1. Inspects the exact upstream fetch transport, refreshes its branches and
+   tags, and refuses a checkout that is behind.
+2. Rebuilds one validated plan from the refreshed reachable history.
+3. Creates and verifies a full-ref backup at
+   `.git/repos-backups/.../before.bundle` (mode `0600` on Unix).
+4. Runs one `git filter-repo` rewrite. Complete secret values are redacted only
+   in historical blobs belonging to the reported path; findings without a safe
+   complete value remove that affected path instead.
+5. Re-runs the selected secret and large-object scans. A remaining finding is a
+   failed fix and the error repeats the recovery-bundle path.
+6. Leaves all remote publication to the operator. The command never force-pushes
+   or restores a remote removed by `git-filter-repo`.
 
-**Rollback:**
+**Recovery:** clone the exact bundle path printed by the command into a clean
+directory. This recovers the pre-rewrite `HEAD`, branches, and tags without
+overwriting the rewritten checkout.
+
 ```bash
-git reset --hard refs/original/pre-fix-backup-large-20241101-143022
+git clone /path/from/output/before.bundle recovered-repository
 ```
+
+The bundle also contains the removed sensitive history. Keep its `0600`
+permissions, store it as sensitive material, and delete it only after the agreed
+recovery window.
+
+**Publication:** rotate exposed credentials first. Then inspect every local and
+remote ref from the pre-rewrite inventory, coordinate a maintenance window, and
+restore only a reviewed remote URL if `origin` was removed. Publish every
+rewritten branch and tag using your hosting provider's guarded force-update
+procedure. An ordinary `git push` or a force-push of only the current branch is
+incomplete; remote-only branches, tags, pull-request refs, and cached artifacts
+may need separate host-specific cleanup. Require collaborators to re-clone after
+publication.
 
 ### Interactive Mode
 
@@ -235,30 +274,15 @@ repos audit --interactive
 
 Prompts for each fix type:
 ```
-📋 Fix Summary
-
-Found violations in 3 repositories:
-  📝 8 files need .gitignore entries
-     → Will only add to .gitignore (files remain tracked)
-  📦 2 large files in history
-     → Will remove from Git history (requires force-push)
-
-═══════════════════════════════════════════════════════════════════
-⚠️  CONFIRMATION REQUIRED
-═══════════════════════════════════════════════════════════════════
-
-History Rewriting
-   • Git history will be rewritten to remove files/secrets
-   • Backups saved in refs/original/pre-fix-backup-*
-   • Requires force-push: git push --force-with-lease
-   • All collaborators must re-clone or reset their branches
-
-   ROLLBACK: git reset --hard refs/original/pre-fix-backup-<timestamp>
-
-═══════════════════════════════════════════════════════════════════
-
-Type 'yes' to proceed or anything else to cancel:
+Add missing .gitignore patterns? [y/N]: y
+Also untrack the affected files while keeping them locally? [y/N]: n
+Remove large files from Git history? [y/N]: y
+Remove secrets from Git history? [y/N]: n
 ```
+
+Only finding types present in the scan are offered. An EOF or any answer other
+than `y`/`yes` declines that choice. If a destructive choice is selected, the
+normal history-rewrite summary and final `yes` confirmation follow.
 
 ---
 
@@ -268,6 +292,9 @@ Type 'yes' to proceed or anything else to cancel:
 |------|-------------|
 | `--json` | Output results in JSON format |
 | `--repos <repo1,repo2>` | Target specific repositories (comma-separated) |
+
+`--interactive` cannot be combined with JSON or explicit fix flags; it owns the
+selection prompts for that run.
 
 ### JSON Output
 
@@ -286,7 +313,8 @@ use standard error, so redirecting stdout produces a parseable report.
       "repos_with_secrets": 2,
       "total_secrets": 3,
       "verified_secrets": 1,
-      "unverified_secrets": 2,
+      "unknown_secrets": 1,
+      "unverified_secrets": 1,
       "scan_duration_seconds": 12.4
     },
     "findings": [
@@ -294,6 +322,7 @@ use standard error, so redirecting stdout produces a parseable report.
         "repository": "web-app",
         "detector": "AWS",
         "verified": true,
+        "verification": "verified",
         "file": ".env"
       }
     ],
@@ -324,7 +353,7 @@ use standard error, so redirecting stdout produces a parseable report.
     ]
   },
   "fixes": null,
-  "message": "Completed audit summary"
+  "message": "✅ Completed in 12.4s • 5 repos • 1 VERIFIED secrets found"
 }
 ```
 
@@ -334,6 +363,9 @@ use standard error, so redirecting stdout produces a parseable report.
 repos audit --repos my-app,web-app
 repos audit --fix-gitignore --repos my-app
 ```
+
+Repository names are exact. If any requested name is absent, the command lists
+the missing names and exits before scanning or fixing a partial selection.
 
 ---
 
@@ -349,18 +381,19 @@ repos audit --verify
 
 ### 2. CI/CD Integration
 
-Fail builds on verified secrets:
+Fail builds on verified or verification-unknown findings and incomplete scans:
 ```yaml
 # GitHub Actions example
 - name: Security Audit
   run: repos audit --verify --install-tools
 ```
 
-The command exits nonzero for verified secrets or incomplete scans.
+Unverified findings remain visible in the report but do not by themselves make
+verification mode fail.
 
 ### 3. Pre-Push Hooks
 
-Prevent committing secrets:
+Prevent pushing secrets:
 ```bash
 # .git/hooks/pre-push
 #!/bin/bash
@@ -372,8 +405,9 @@ repos audit --verify || exit 1
 If secrets are found:
 1. **Rotate immediately** - assume compromised
 2. Remove from history: `repos audit --fix-secrets`
-3. Force-push: `git push --force-with-lease`
-4. Notify team to re-clone
+3. Inspect the rewritten history and preserve the reported recovery bundle
+4. Coordinate publication of every affected branch and tag
+5. Clean host-specific refs/caches as needed and tell collaborators to re-clone
 
 ### 5. Large File Prevention
 
@@ -412,8 +446,8 @@ repos audit --fix-large --fix-secrets --dry-run
 # 4. Apply all fixes with confirmation
 repos audit --fix-all
 
-# 5. Push changes
-cd ~/repos/my-app && git push --force-with-lease
+# 5. Inspect each rewritten repository and its recovery bundle, then coordinate
+#    publication of every affected branch and tag
 ```
 
 ### Targeted Cleanup

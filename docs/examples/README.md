@@ -58,12 +58,14 @@ ambiguous instead of updating both groups.
 
 ## Recovery
 
-Audit history fixes print the backup ref they create. Restore the printed ref
-from inside the affected repository:
+Audit history fixes print the verified full-ref bundle they create. Recover into
+a separate clean directory so the rewritten checkout remains available for
+comparison:
 
 ```bash
-git reset --hard refs/original/pre-fix-backup-large-YYYYMMDD-HHMMSS
+git clone /path/from-output/before.bundle recovered-repository
 ```
 
-History-reset and force-push commands are destructive. Review the backup ref and
-coordinate with collaborators before running them.
+Keep the bundle until the rewrite and its post-checks have been reviewed.
+History rewrites and force-pushes are destructive; coordinate any ref updates
+with collaborators.

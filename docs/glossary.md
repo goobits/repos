@@ -62,7 +62,7 @@ Quick reference for `repos` commands, flags, and concepts.
 
 **Upstream branch** - The remote branch a local branch tracks.
 
-**Force push** - Rewriting remote history. Use `git push --force-with-lease` manually when history rewrite tools require it.
+**Force push** - Rewriting remote history. Coordinate guarded updates for every affected branch and tag; updating only the current branch is incomplete.
 
 ## Output Indicators
 

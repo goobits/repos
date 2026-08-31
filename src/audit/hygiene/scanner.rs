@@ -2,7 +2,6 @@
 
 use super::report::{HygieneStatus, HygieneViolation, ViolationType};
 use super::rules::{LARGE_FILE_THRESHOLD, UNIVERSAL_BAD_PATTERNS};
-use crate::core::config::LARGE_FILES_DISPLAY_LIMIT;
 use anyhow::Result;
 use std::path::Path;
 use std::process::Stdio;
@@ -94,7 +93,7 @@ async fn check_universal_patterns(repo_path: &Path) -> Result<Vec<HygieneViolati
 }
 
 /// Checks for large files in git history
-async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
+pub(crate) async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     let mut rev_list = Command::new("git")
         .args(["rev-list", "--objects", "--all"])
         .current_dir(repo_path)
@@ -155,21 +154,17 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
     let mut lines = BufReader::new(cat_file_stdout).lines();
     while let Some(line) = lines.next_line().await? {
         let Some((size, file_path)) = line.split_once(' ') else {
-            continue;
+            anyhow::bail!("git object inspection returned malformed output");
         };
-        let Ok(size) = size.parse::<u64>() else {
-            continue;
-        };
+        let size = size
+            .parse::<u64>()
+            .map_err(|_| anyhow::anyhow!("git object inspection returned an invalid size"))?;
         if size > LARGE_FILE_THRESHOLD && !file_path.is_empty() {
             violations.push(HygieneViolation {
                 file_path: file_path.to_string(),
                 violation_type: ViolationType::LargeFile,
                 size_bytes: Some(size),
             });
-            violations.sort_by_key(|violation| {
-                std::cmp::Reverse(violation.size_bytes.unwrap_or_default())
-            });
-            violations.truncate(LARGE_FILES_DISPLAY_LIMIT);
         }
     }
 
@@ -191,6 +186,7 @@ async fn check_large_files(repo_path: &Path) -> Result<Vec<HygieneViolation>> {
         );
     }
 
+    violations.sort_by_key(|violation| std::cmp::Reverse(violation.size_bytes.unwrap_or_default()));
     Ok(violations)
 }
 

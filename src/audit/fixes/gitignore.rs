@@ -3,13 +3,13 @@
 use super::{ensure_command_success, FixOptions};
 use crate::audit::hygiene::{HygieneViolation, ViolationType};
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::Path;
 use tokio::process::Command;
 
 pub(super) async fn fix_gitignore_violations(
-    repo_path: &str,
+    repo_path: &Path,
     violations: &[HygieneViolation],
     options: &FixOptions,
 ) -> Result<String> {
@@ -47,43 +47,50 @@ pub(super) async fn fix_gitignore_violations(
         .filter(|pattern| !existing_patterns.contains(pattern.as_str()))
         .collect::<Vec<_>>();
 
-    if new_patterns.is_empty() {
-        return Ok("All patterns already in .gitignore".to_string());
-    }
+    if !new_patterns.is_empty() {
+        let mut gitignore_content = existing_content;
+        if !gitignore_content.ends_with('\n') && !gitignore_content.is_empty() {
+            gitignore_content.push('\n');
+        }
 
-    let mut gitignore_content = existing_content;
-    if !gitignore_content.ends_with('\n') && !gitignore_content.is_empty() {
-        gitignore_content.push('\n');
+        gitignore_content.push_str("\n# Added by repos audit --fix-gitignore\n");
+        for pattern in &new_patterns {
+            gitignore_content.push_str(pattern);
+            gitignore_content.push('\n');
+        }
+        fs::write(&gitignore_path, gitignore_content)?;
     }
-
-    gitignore_content.push_str("\n# Added by repos audit --fix-gitignore\n");
-    for pattern in &new_patterns {
-        gitignore_content.push_str(pattern);
-        gitignore_content.push('\n');
-    }
-
-    fs::write(&gitignore_path, gitignore_content)?;
 
     let mut untracked_count = 0;
     if options.untrack_files {
-        for violation in gitignore_violations {
-            let result = Command::new("git")
-                .args(["rm", "--cached", "-r", &violation.file_path])
-                .current_dir(repo_path)
-                .output()
-                .await?;
-
+        let paths = gitignore_violations
+            .iter()
+            .map(|violation| violation.file_path.as_str())
+            .collect::<BTreeSet<_>>();
+        if !paths.is_empty() {
+            let mut command = Command::new("git");
+            command.args(["rm", "--cached", "-r", "--ignore-unmatch", "--"]);
+            for path in &paths {
+                command.arg(format!(":(literal){path}"));
+            }
+            let result = command.current_dir(repo_path).output().await?;
             ensure_command_success(&result, "git rm --cached")?;
-            untracked_count += 1;
+            untracked_count = paths.len();
         }
     }
 
-    let add_output = Command::new("git")
-        .args(["add", ".gitignore"])
-        .current_dir(repo_path)
-        .output()
-        .await?;
-    ensure_command_success(&add_output, "staging .gitignore")?;
+    if new_patterns.is_empty() && untracked_count == 0 {
+        return Ok("All patterns already in .gitignore".to_string());
+    }
+
+    if !new_patterns.is_empty() {
+        let add_output = Command::new("git")
+            .args(["add", "--", ".gitignore"])
+            .current_dir(repo_path)
+            .output()
+            .await?;
+        ensure_command_success(&add_output, "staging .gitignore")?;
+    }
 
     let commit_message = if untracked_count > 0 {
         format!(
@@ -117,49 +124,44 @@ pub(super) async fn fix_gitignore_violations(
 }
 
 fn group_gitignore_patterns(violations: &[&HygieneViolation]) -> Vec<String> {
-    let mut patterns = HashMap::new();
+    let mut patterns = BTreeSet::new();
 
     for violation in violations {
         let path = &violation.file_path;
 
         if path.contains("node_modules/") {
-            patterns.insert("node_modules/", true);
+            patterns.insert("node_modules/");
         } else if path.contains("target/debug/") {
-            patterns.insert("target/debug/", true);
+            patterns.insert("target/debug/");
         } else if path.contains("target/release/") {
-            patterns.insert("target/release/", true);
+            patterns.insert("target/release/");
         } else if path.contains("dist/") {
-            patterns.insert("dist/", true);
+            patterns.insert("dist/");
         } else if path.contains("build/") {
-            patterns.insert("build/", true);
+            patterns.insert("build/");
         } else if path.contains("__pycache__/") {
-            patterns.insert("__pycache__/", true);
+            patterns.insert("__pycache__/");
         } else if path.contains(".venv/") {
-            patterns.insert(".venv/", true);
+            patterns.insert(".venv/");
         } else if path.ends_with(".log") {
-            patterns.insert("*.log", true);
+            patterns.insert("*.log");
         } else if path.ends_with(".tmp") {
-            patterns.insert("*.tmp", true);
+            patterns.insert("*.tmp");
         } else if path.ends_with(".cache") {
-            patterns.insert("*.cache", true);
+            patterns.insert("*.cache");
         } else if path == ".DS_Store" {
-            patterns.insert(".DS_Store", true);
+            patterns.insert(".DS_Store");
         } else if path == "Thumbs.db" {
-            patterns.insert("Thumbs.db", true);
+            patterns.insert("Thumbs.db");
         } else if path == ".env" {
-            patterns.insert(".env", true);
+            patterns.insert(".env");
         } else if path.ends_with(".key") || path.ends_with(".pem") {
-            patterns.insert("*.key", true);
-            patterns.insert("*.pem", true);
+            patterns.insert("*.key");
+            patterns.insert("*.pem");
         } else {
-            patterns.insert(path.as_str(), false);
+            patterns.insert(path.as_str());
         }
     }
 
-    let mut result = patterns
-        .keys()
-        .map(|pattern| (*pattern).to_string())
-        .collect::<Vec<_>>();
-    result.sort();
-    result
+    patterns.into_iter().map(str::to_string).collect()
 }

@@ -1,15 +1,25 @@
 //! Safe secret-finding models and human/JSON report generation.
 
-use super::SecretFinding;
+use super::{ScannedSecret, SecretFinding};
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretVerification {
+    Verified,
+    Unknown,
+    Unverified,
+}
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ReportedSecretFinding {
     pub repository: String,
     pub detector: String,
     pub verified: bool,
+    pub verification: SecretVerification,
     pub file: String,
 }
 
@@ -19,11 +29,13 @@ pub struct TruffleStatistics {
     pub repos_with_secrets: u32,
     pub total_secrets: u32,
     pub verified_secrets: u32,
+    pub unknown_secrets: u32,
     pub unverified_secrets: u32,
     pub secrets_by_detector: HashMap<String, u32>,
     pub findings: Vec<ReportedSecretFinding>,
     pub failed_repos: Vec<(String, String)>,
     pub scan_duration: Duration,
+    secret_repository_paths: HashSet<PathBuf>,
 }
 
 impl TruffleStatistics {
@@ -55,10 +67,54 @@ impl TruffleStatistics {
                     repository: repo_name.to_string(),
                     detector: secret.detector_name.clone(),
                     verified: secret.verified,
+                    verification: if secret.verified {
+                        SecretVerification::Verified
+                    } else {
+                        SecretVerification::Unverified
+                    },
                     file: secret.file_path.clone(),
                 });
             }
         }
+    }
+
+    pub(crate) fn add_scanned_repo_result(
+        &mut self,
+        repo_name: &str,
+        repo_path: &Path,
+        secrets: &[ScannedSecret],
+    ) {
+        self.total_repos_scanned += 1;
+        if secrets.is_empty() {
+            return;
+        }
+
+        self.repos_with_secrets += 1;
+        self.total_secrets += secrets.len() as u32;
+        self.secret_repository_paths.insert(repo_path.to_path_buf());
+        for secret in secrets {
+            match secret.verification {
+                SecretVerification::Verified => self.verified_secrets += 1,
+                SecretVerification::Unknown => self.unknown_secrets += 1,
+                SecretVerification::Unverified => self.unverified_secrets += 1,
+            }
+            *self
+                .secrets_by_detector
+                .entry(secret.finding.detector_name.clone())
+                .or_insert(0) += 1;
+            self.findings.push(ReportedSecretFinding {
+                repository: repo_name.to_string(),
+                detector: secret.finding.detector_name.clone(),
+                verified: secret.finding.verified,
+                verification: secret.verification,
+                file: secret.finding.file_path.clone(),
+            });
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn repository_has_secrets(&self, path: &Path) -> bool {
+        self.secret_repository_paths.contains(path)
     }
 
     pub fn add_repo_failure(&mut self, repo_name: &str, error: &str) {
@@ -75,6 +131,11 @@ impl TruffleStatistics {
             format!(
                 "✅ Completed in {:.1}s • {} repos • {} VERIFIED secrets found",
                 duration_secs, self.total_repos_scanned, self.verified_secrets
+            )
+        } else if self.unknown_secrets > 0 {
+            format!(
+                "✅ Completed in {:.1}s • {} repos • {} secrets with UNKNOWN verification",
+                duration_secs, self.total_repos_scanned, self.unknown_secrets
             )
         } else if self.total_secrets > 0 {
             format!(
@@ -101,7 +162,20 @@ impl TruffleStatistics {
                     self.verified_secrets
                 ));
                 report.push("   These secrets are confirmed to be active and should be rotated immediately!".to_string());
-                append_findings(&mut report, &self.findings, true);
+                append_findings(&mut report, &self.findings, SecretVerification::Verified);
+                report.push(String::new());
+            }
+
+            if self.unknown_secrets > 0 {
+                report.push(format!(
+                    "🟠 UNKNOWN SECRET VERIFICATION ({})",
+                    self.unknown_secrets
+                ));
+                report.push(
+                    "   Verification failed; treat these findings as unsafe until reviewed."
+                        .to_string(),
+                );
+                append_findings(&mut report, &self.findings, SecretVerification::Unknown);
                 report.push(String::new());
             }
 
@@ -113,7 +187,7 @@ impl TruffleStatistics {
                 report.push(
                     "   These appear to be secrets but couldn't be verified as active.".to_string(),
                 );
-                append_findings(&mut report, &self.findings, false);
+                append_findings(&mut report, &self.findings, SecretVerification::Unverified);
                 report.push(String::new());
             }
 
@@ -143,9 +217,8 @@ impl TruffleStatistics {
     pub fn to_json(&self) -> serde_json::Value {
         let mut findings = self.findings.clone();
         findings.sort_by(|left, right| {
-            right
-                .verified
-                .cmp(&left.verified)
+            left.verification
+                .cmp(&right.verification)
                 .then_with(|| left.repository.cmp(&right.repository))
                 .then_with(|| left.file.cmp(&right.file))
                 .then_with(|| left.detector.cmp(&right.detector))
@@ -160,6 +233,7 @@ impl TruffleStatistics {
                 "repos_with_secrets": self.repos_with_secrets,
                 "total_secrets": self.total_secrets,
                 "verified_secrets": self.verified_secrets,
+                "unknown_secrets": self.unknown_secrets,
                 "unverified_secrets": self.unverified_secrets,
                 "scan_duration_seconds": self.scan_duration.as_secs_f64()
             },
@@ -175,10 +249,14 @@ impl TruffleStatistics {
     }
 }
 
-fn append_findings(report: &mut Vec<String>, findings: &[ReportedSecretFinding], verified: bool) {
+fn append_findings(
+    report: &mut Vec<String>,
+    findings: &[ReportedSecretFinding],
+    verification: SecretVerification,
+) {
     let mut matching = findings
         .iter()
-        .filter(|finding| finding.verified == verified)
+        .filter(|finding| finding.verification == verification)
         .collect::<Vec<_>>();
     matching.sort_by(|left, right| {
         left.repository

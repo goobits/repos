@@ -749,7 +749,7 @@ fn test_hygiene_violation_types() {
 
 #[test]
 fn test_fix_options_fix_all() {
-    let options = FixOptions::fix_all(false, None);
+    let options = FixOptions::fix_all(false);
 
     assert!(!options.interactive, "fix_all should not be interactive");
     assert!(options.fix_gitignore, "fix_all should fix gitignore");
@@ -757,35 +757,18 @@ fn test_fix_options_fix_all() {
     assert!(options.fix_secrets, "fix_all should fix secrets");
     assert!(options.untrack_files, "fix_all should untrack files");
     assert!(!options.dry_run, "Should not be dry run by default");
-    assert!(
-        options.target_repos.is_none(),
-        "Should not have target repos by default"
-    );
 }
 
 #[test]
 fn test_fix_options_fix_all_with_dry_run() {
-    let options = FixOptions::fix_all(true, None);
+    let options = FixOptions::fix_all(true);
 
     assert!(options.dry_run, "Should enable dry run when requested");
 }
 
 #[test]
-fn test_fix_options_fix_all_with_target_repos() {
-    let targets = vec!["repo1".to_string(), "repo2".to_string()];
-    let options = FixOptions::fix_all(false, Some(targets.clone()));
-
-    assert!(options.target_repos.is_some(), "Should have target repos");
-    assert_eq!(
-        options.target_repos.unwrap(),
-        targets,
-        "Should store target repos"
-    );
-}
-
-#[test]
 fn test_fix_options_selective() {
-    let mut options = FixOptions::fix_all(false, None);
+    let mut options = FixOptions::fix_all(false);
     options.fix_gitignore = true;
     options.fix_large = false;
     options.fix_secrets = false;

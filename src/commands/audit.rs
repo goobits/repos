@@ -33,12 +33,13 @@ pub async fn handle_audit_command(
     }
 
     // Run TruffleHog secret scanning
-    let (truffle_stats, hygiene_stats) =
-        run_truffle_scan(install_tools, verify, json, target_repos.clone()).await?;
+    let scan = run_truffle_scan(install_tools, verify, json, target_repos).await?;
+    let truffle_stats = &scan.truffle_statistics;
+    let hygiene_stats = &scan.hygiene_statistics;
 
     if !truffle_stats.failed_repos.is_empty() || hygiene_stats.error_count() > 0 {
         if json {
-            print_audit_json(&truffle_stats, &hygiene_stats, None, dry_run)?;
+            print_audit_json(truffle_stats, hygiene_stats, None, dry_run)?;
         }
         anyhow::bail!(
             "audit incomplete: {} secret scans and {} hygiene scans failed",
@@ -51,7 +52,7 @@ pub async fn handle_audit_command(
     let mut fix_results = None;
     if interactive || fix_gitignore || fix_large || fix_secrets || fix_all {
         let fix_options = if fix_all {
-            crate::audit::fixes::FixOptions::fix_all(dry_run, target_repos.clone())
+            crate::audit::fixes::FixOptions::fix_all(dry_run)
         } else {
             crate::audit::fixes::FixOptions {
                 interactive,
@@ -61,11 +62,16 @@ pub async fn handle_audit_command(
                 untrack_files: false,
                 dry_run,
                 skip_confirm: false,
-                target_repos: target_repos.clone(),
             }
         };
 
-        let results = apply_fixes(&hygiene_stats, fix_options).await?;
+        let results = apply_fixes(
+            &scan.repositories,
+            truffle_stats,
+            hygiene_stats,
+            fix_options,
+        )
+        .await?;
         let failed_fixes = results
             .iter()
             .filter(|result| !result.errors.is_empty())
@@ -74,8 +80,8 @@ pub async fn handle_audit_command(
         if failed_fixes > 0 {
             if json {
                 print_audit_json(
-                    &truffle_stats,
-                    &hygiene_stats,
+                    truffle_stats,
+                    hygiene_stats,
                     fix_results.as_deref(),
                     dry_run,
                 )?;
@@ -86,8 +92,8 @@ pub async fn handle_audit_command(
 
     if json {
         print_audit_json(
-            &truffle_stats,
-            &hygiene_stats,
+            truffle_stats,
+            hygiene_stats,
             fix_results.as_deref(),
             dry_run,
         )?;
@@ -98,8 +104,8 @@ pub async fn handle_audit_command(
     }
 
     // Exit with error code if secrets were found and verify flag is set
-    if verify && truffle_stats.verified_secrets > 0 {
-        anyhow::bail!("verified secrets found");
+    if verify && (truffle_stats.verified_secrets > 0 || truffle_stats.unknown_secrets > 0) {
+        anyhow::bail!("verified secrets or inconclusive secret verification found");
     }
 
     Ok(())

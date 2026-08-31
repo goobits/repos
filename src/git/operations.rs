@@ -145,7 +145,7 @@ fn result_from_fetch_state(
 }
 
 /// Resolve the configured upstream remote + branch for the current branch.
-async fn get_upstream_push_target(
+pub(crate) async fn get_upstream_push_target(
     path: &Path,
     current_branch: &str,
 ) -> Result<Option<(String, String)>> {

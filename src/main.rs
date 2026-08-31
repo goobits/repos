@@ -211,7 +211,10 @@ enum Commands {
         #[arg(long)]
         json: bool,
         /// Interactive mode - choose fixes interactively
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with_all = ["json", "fix_gitignore", "fix_large", "fix_secrets", "fix_all"]
+        )]
         interactive: bool,
         /// Fix .gitignore violations by adding entries
         #[arg(long)]
@@ -228,7 +231,7 @@ enum Commands {
         /// Preview changes without applying them
         #[arg(long)]
         dry_run: bool,
-        /// Only fix specific repositories (comma-separated)
+        /// Only audit and fix specific repositories (comma-separated)
         #[arg(long, value_delimiter = ',')]
         repos: Option<Vec<String>>,
     },
