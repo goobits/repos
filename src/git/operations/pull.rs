@@ -1,6 +1,7 @@
 //! Pull-side repository inspection and fast-forward mutation.
 
 use super::*;
+use anyhow::bail;
 
 #[derive(Clone)]
 pub struct PullFetchResult {
@@ -8,6 +9,7 @@ pub struct PullFetchResult {
     pub ahead_count: u32,
     pub behind_count: u32,
     pub upstream_name: Option<String>,
+    upstream_commit: Option<String>,
     pub status: Status,
     pub message: String,
     pub(crate) failure: Option<GitFailure>,
@@ -21,6 +23,7 @@ impl PullFetchResult {
             ahead_count: 0,
             behind_count: 0,
             upstream_name: None,
+            upstream_commit: None,
             status: Status::Error,
             message,
             failure: None,
@@ -34,6 +37,7 @@ impl PullFetchResult {
             ahead_count: 0,
             behind_count: 0,
             upstream_name: None,
+            upstream_commit: None,
             status: Status::Error,
             message: failure.message.clone(),
             failure: Some(failure),
@@ -70,6 +74,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
                 ahead_count: 0,
                 behind_count: 0,
                 upstream_name: None,
+                upstream_commit: None,
                 status: Status::Skip,
                 message: STATUS_DETACHED_HEAD.to_string(),
                 failure: None,
@@ -106,6 +111,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count: 0,
             behind_count: 0,
             upstream_name: None,
+            upstream_commit: None,
             status: Status::NoRemote,
             message: STATUS_NO_REMOTE.to_string(),
             failure: None,
@@ -177,6 +183,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count: 0,
             behind_count: 0,
             upstream_name: None,
+            upstream_commit: None,
             status: Status::NoUpstream,
             message: STATUS_NO_UPSTREAM.to_string(),
             failure: None,
@@ -192,6 +199,19 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
     };
     let ahead_count = counts.ahead;
     let behind_count = counts.behind;
+    let upstream_commit = if behind_count > 0 {
+        match resolve_upstream_commit(path).await {
+            Ok(commit) => Some(commit),
+            Err(error) => {
+                return PullFetchResult::error(
+                    clean_error_message(&error.to_string()),
+                    has_uncommitted,
+                );
+            }
+        }
+    } else {
+        None
+    };
 
     if ahead_count > 0 && behind_count > 0 {
         return PullFetchResult {
@@ -199,6 +219,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count,
             behind_count,
             upstream_name,
+            upstream_commit,
             status: Status::PullError,
             message: format!(
                 "diverged: {ahead_count} ahead, {behind_count} behind (run repos sync or resolve manually)"
@@ -214,6 +235,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count,
             behind_count: 0,
             upstream_name,
+            upstream_commit,
             status: Status::Synced,
             message: STATUS_SYNCED.to_string(),
             failure: None,
@@ -225,12 +247,28 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count,
             behind_count,
             upstream_name,
+            upstream_commit,
             status: Status::Synced,
             message: format!("{behind_count} commits behind"),
             failure: None,
             remote: fetch_context,
         }
     }
+}
+
+async fn resolve_upstream_commit(path: &Path) -> Result<String> {
+    let (success, stdout, stderr) =
+        run_git(path, &["rev-parse", "--verify", "@{upstream}^{commit}"]).await?;
+    if !success {
+        bail!(command_error(
+            &stderr,
+            "configured upstream commit could not be resolved"
+        ));
+    }
+    if !matches!(stdout.len(), 40 | 64) || !stdout.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("configured upstream resolved to an invalid commit identifier");
+    }
+    Ok(stdout)
 }
 
 pub async fn pull_if_needed(
@@ -281,10 +319,10 @@ pub(crate) async fn pull_if_needed_with_context(
     if uses_lfs {
         let _ = run_git(path, &["lfs", "fetch"]).await;
     }
-    let Some(upstream_name) = fetch_result.upstream_name.as_deref() else {
+    let Some(upstream_commit) = fetch_result.upstream_commit.as_deref() else {
         return GitOperationResult::new(
             Status::PullError,
-            "pull integration requires a configured upstream".to_string(),
+            "pull integration requires an inspected upstream commit".to_string(),
             fetch_result.has_uncommitted,
         );
     };
@@ -292,9 +330,9 @@ pub(crate) async fn pull_if_needed_with_context(
     // exact upstream snapshot it analyzed instead of letting `git pull` fetch a
     // second time and race with a moving remote.
     let integration_args = if use_rebase {
-        vec!["rebase", "--", upstream_name]
+        vec!["rebase", "--", upstream_commit]
     } else {
-        vec!["merge", "--ff-only", "--", upstream_name]
+        vec!["merge", "--ff-only", "--", upstream_commit]
     };
 
     match run_git(path, &integration_args).await {

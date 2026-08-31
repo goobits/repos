@@ -103,6 +103,49 @@ async fn test_rebase_conflict_restores_original_checkout() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_pull_integrates_the_analyzed_upstream_snapshot() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "base.txt", "base", "Init")?;
+
+    let local_path = root.join("local");
+    Command::new("git")
+        .args([
+            "clone",
+            remote_path
+                .to_str()
+                .expect("temporary path should be UTF-8"),
+            local_path.to_str().expect("temporary path should be UTF-8"),
+        ])
+        .output()?;
+    setup_git_repo(&local_path)?;
+
+    create_test_commit(&remote_path, "first.txt", "first", "First remote update")?;
+    let analyzed_commit = git_output(&remote_path, &["rev-parse", "HEAD"])?;
+    let fetch_result = fetch_and_analyze_for_pull(&local_path).await;
+    assert_eq!(fetch_result.status, Status::Synced);
+    assert_eq!(fetch_result.behind_count, 1);
+
+    create_test_commit(&remote_path, "second.txt", "second", "Second remote update")?;
+    let newer_remote_commit = git_output(&remote_path, &["rev-parse", "HEAD"])?;
+    assert_ne!(newer_remote_commit, analyzed_commit);
+
+    let (status, _, _) = pull_if_needed(&local_path, &fetch_result, false).await;
+    assert_eq!(status, Status::Pulled);
+    assert_eq!(
+        git_output(&local_path, &["rev-parse", "HEAD"])?,
+        analyzed_commit
+    );
+    assert!(local_path.join("first.txt").is_file());
+    assert!(!local_path.join("second.txt").exists());
+
+    Ok(())
+}
+
 fn git_output(path: &std::path::Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git").args(args).current_dir(path).output()?;
     if !output.status.success() {
