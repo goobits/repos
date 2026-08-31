@@ -45,10 +45,13 @@ pub(crate) async fn run_git_raw(path: &Path, args: &[&str]) -> Result<GitCommand
         if is_network && transport_policy()? == TransportPolicy::SshOnly {
             command.args([
                 "-c",
+                "core.askPass=",
+                "-c",
                 "credential.helper=",
                 "-c",
                 "credential.interactive=false",
             ]);
+            command.env_remove("GIT_ASKPASS").env_remove("SSH_ASKPASS");
         }
         if std::env::var_os("GIT_SSH_COMMAND").is_none() {
             command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");

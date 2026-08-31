@@ -160,14 +160,58 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
             );
         }
     }
-    if check_uses_git_lfs(path).await {
+    let uses_lfs = match super::lfs::check_may_push_git_lfs(path).await {
+        Ok(uses_lfs) => uses_lfs,
+        Err(error) => {
+            return (
+                false,
+                format!("tag created locally; Git LFS inspection failed: {error}"),
+            );
+        }
+    };
+    if uses_lfs {
         if let Some(error) = super::lfs::option_like_lfs_remote_error(&remote_name) {
             return (false, format!("tag created locally; {error}"));
         }
     }
+    let lfs_endpoint = if uses_lfs {
+        match super::lfs::inspect_lfs_endpoint(
+            path,
+            &remote_name,
+            super::lfs::LfsEndpointOperation::Upload,
+        )
+        .await
+        {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => return (false, format!("tag created locally; {error}")),
+        }
+    } else {
+        None
+    };
 
     let tag_refspec = format!("refs/tags/{tag_name}:refs/tags/{tag_name}");
-    match run_git(path, &["push", "--", &remote_name, &tag_refspec]).await {
+    if let Some(expected) = lfs_endpoint {
+        match super::lfs::inspect_lfs_endpoint(
+            path,
+            &remote_name,
+            super::lfs::LfsEndpointOperation::Upload,
+        )
+        .await
+        {
+            Ok(current) if current == expected => {}
+            Ok(_) => {
+                return (
+                    false,
+                    "tag created locally; Git LFS upload endpoint changed; rerun the command"
+                        .to_string(),
+                );
+            }
+            Err(error) => return (false, format!("tag created locally; {error}")),
+        }
+    }
+    let mut push_args = Vec::from(super::lfs::LFS_REMOTE_SELECTION_ARGS);
+    push_args.extend(["push", "--", &remote_name, &tag_refspec]);
+    match run_git(path, &push_args).await {
         Ok((true, _, _)) if existed => (true, format!("existing tag pushed {tag_name}")),
         Ok((true, _, _)) => (true, format!("tagged & pushed {tag_name}")),
         Ok((false, _, stderr)) => (

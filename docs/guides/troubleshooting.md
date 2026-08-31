@@ -94,6 +94,13 @@ GitHub, GitLab, or Bitbucket. A separate HTTPS `pushurl` is reported with a
 `git remote set-url --push` fix. URL credentials and query strings are never
 included in the report.
 
+Explicit HTTP(S) Git LFS overrides (`lfs.url`, `lfs.pushurl`, and per-remote
+LFS URLs in Git config or `.lfsconfig`) are also blocked before transfer and
+their raw values are never printed. Git LFS may still negotiate an HTTPS data
+endpoint through an inspected SSH remote, which is the normal flow on hosts
+such as GitHub; configured credential helpers and Git/SSH askpass programs stay
+disabled for that transfer.
+
 For a temporary exception that keeps a repository's configured transport:
 
 ```bash

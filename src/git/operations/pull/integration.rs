@@ -109,11 +109,17 @@ pub(crate) async fn pull_if_needed_with_context(
             anyhow::anyhow!("fetch remote URL changed after pull analysis; rerun the command");
         return pull_snapshot_changed(fetch_result, &error);
     }
-    let uses_lfs =
-        match super::super::lfs::fetch_lfs_for_commit(path, fetch_remote, upstream_commit).await {
-            Ok(uses_lfs) => uses_lfs,
-            Err(error) => return pull_snapshot_changed(fetch_result, &error),
-        };
+    let uses_lfs = match super::super::lfs::fetch_lfs_for_commit(
+        path,
+        fetch_remote,
+        upstream_commit,
+        fetch_result.lfs_endpoint_fingerprint,
+    )
+    .await
+    {
+        Ok(uses_lfs) => uses_lfs,
+        Err(error) => return pull_lfs_failure(fetch_result, &error),
+    };
     if let Err(error) = validate_pull_snapshot(path, fetch_result).await {
         return pull_snapshot_changed(fetch_result, &error);
     }
@@ -193,6 +199,12 @@ pub(crate) async fn pull_if_needed_with_context(
             GitOperationResult::failed(Status::PullError, failure, fetch_result.has_uncommitted)
         }
     }
+}
+
+fn pull_lfs_failure(fetch_result: &PullFetchResult, error: &anyhow::Error) -> GitOperationResult {
+    let message = crate::core::clean_error_message(&error.to_string());
+    let failure = GitFailure::from_message(GitOperationPhase::Pull, message, None);
+    GitOperationResult::failed(Status::PullError, failure, fetch_result.has_uncommitted)
 }
 
 fn pull_snapshot_changed(

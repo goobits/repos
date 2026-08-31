@@ -426,7 +426,8 @@ drift; every warning/blocker includes a path and next action. HTTP(S) access
 checks are skipped under the default policy so credential helpers such as
 macOS Keychain are not invoked merely to diagnose the repository.
 
-To guarantee that fleet commands do not consult HTTP credential helpers such as
+To block HTTP(S) Git remotes and explicit HTTP(S) Git LFS endpoint overrides,
+and to prevent fleet commands from consulting HTTP credential helpers such as
 macOS Keychain, enable SSH-only policy once:
 
 ```bash
@@ -436,8 +437,11 @@ repos doctor
 
 The policy blocks effective HTTP(S) fetch and push URLs before access checks
 and reports the repository, sanitized remote identity, and exact
-`git remote set-url` command. Use `REPOS_TRANSPORT_POLICY=preserve` for a
-one-command exception.
+`git remote set-url` command. It also blocks explicit HTTP(S) `lfs.url`,
+`lfs.pushurl`, and per-remote LFS overrides from Git config or `.lfsconfig`.
+Git LFS may still negotiate an HTTPS data endpoint through an inspected SSH
+remote; configured credential helpers and askpass programs remain disabled.
+Use `REPOS_TRANSPORT_POLICY=preserve` for a one-command exception.
 
 ## Advanced
 

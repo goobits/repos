@@ -77,7 +77,21 @@ pub(crate) async fn push_if_needed_with_context(
         return GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted);
     }
 
-    let uses_lfs = check_uses_git_lfs(path).await;
+    let uses_lfs = match super::lfs::check_may_push_git_lfs(path).await {
+        Ok(uses_lfs) => uses_lfs,
+        Err(error) => {
+            let failure = GitFailure::from_message(
+                GitOperationPhase::LfsPush,
+                clean_error_message(&error.to_string()),
+                push_context,
+            );
+            return GitOperationResult::failed(
+                Status::Error,
+                failure,
+                fetch_result.has_uncommitted,
+            );
+        }
+    };
     if uses_lfs {
         if let Some(message) = super::lfs::option_like_lfs_remote_error(&remote_name) {
             let failure =
@@ -89,8 +103,46 @@ pub(crate) async fn push_if_needed_with_context(
             );
         }
     }
+    let lfs_endpoint = if uses_lfs {
+        match super::lfs::inspect_lfs_endpoint(
+            path,
+            &remote_name,
+            super::lfs::LfsEndpointOperation::Upload,
+        )
+        .await
+        {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                let failure = GitFailure::from_message(
+                    GitOperationPhase::LfsPush,
+                    clean_error_message(&error.to_string()),
+                    None,
+                );
+                return GitOperationResult::failed(
+                    Status::Error,
+                    failure,
+                    fetch_result.has_uncommitted,
+                );
+            }
+        }
+    } else {
+        None
+    };
     if uses_lfs && has_pending_lfs_objects(path).await {
         let branch = lfs_source_ref(&fetch_result.current_branch);
+
+        if let Err(error) = revalidate_lfs_upload_endpoint(path, &remote_name, lfs_endpoint).await {
+            let failure = GitFailure::from_message(
+                GitOperationPhase::LfsPush,
+                clean_error_message(&error.to_string()),
+                None,
+            );
+            return GitOperationResult::failed(
+                Status::Error,
+                failure,
+                fetch_result.has_uncommitted,
+            );
+        }
 
         let (lfs_success, lfs_error) = push_lfs_objects(path, &remote_name, branch).await;
         if !lfs_success {
@@ -103,6 +155,18 @@ pub(crate) async fn push_if_needed_with_context(
                 GitOperationPhase::LfsPush,
                 error_msg,
                 push_context.clone(),
+            );
+            return GitOperationResult::failed(
+                Status::Error,
+                failure,
+                fetch_result.has_uncommitted,
+            );
+        }
+        if let Err(error) = revalidate_lfs_upload_endpoint(path, &remote_name, lfs_endpoint).await {
+            let failure = GitFailure::from_message(
+                GitOperationPhase::LfsPush,
+                clean_error_message(&error.to_string()),
+                None,
             );
             return GitOperationResult::failed(
                 Status::Error,
@@ -130,13 +194,26 @@ pub(crate) async fn push_if_needed_with_context(
                 );
             }
         };
-        let push_args = vec![
+        let mut push_args = Vec::from(super::lfs::LFS_REMOTE_SELECTION_ARGS);
+        push_args.extend([
             "push",
             "-u",
             "--",
             &remote_name,
             &fetch_result.current_branch,
-        ];
+        ]);
+        if let Err(error) = revalidate_lfs_upload_endpoint(path, &remote_name, lfs_endpoint).await {
+            let failure = GitFailure::from_message(
+                GitOperationPhase::LfsPush,
+                clean_error_message(&error.to_string()),
+                None,
+            );
+            return GitOperationResult::failed(
+                Status::Error,
+                failure,
+                fetch_result.has_uncommitted,
+            );
+        }
         return match run_git(path, &push_args).await {
             Ok((true, _, _)) => {
                 let msg = if uses_lfs {
@@ -175,7 +252,16 @@ pub(crate) async fn push_if_needed_with_context(
     } else {
         format!("{}:{}", fetch_result.current_branch, target_branch)
     };
-    let push_args = vec!["push", "--", &remote_name, &push_refspec];
+    let mut push_args = Vec::from(super::lfs::LFS_REMOTE_SELECTION_ARGS);
+    push_args.extend(["push", "--", &remote_name, &push_refspec]);
+    if let Err(error) = revalidate_lfs_upload_endpoint(path, &remote_name, lfs_endpoint).await {
+        let failure = GitFailure::from_message(
+            GitOperationPhase::LfsPush,
+            clean_error_message(&error.to_string()),
+            None,
+        );
+        return GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted);
+    }
     match run_git(path, &push_args).await {
         Ok((true, _, _)) => {
             let commits_word = if fetch_result.ahead_count == 1 {
@@ -217,6 +303,23 @@ pub(crate) async fn push_if_needed_with_context(
             GitOperationResult::failed(Status::Error, failure, fetch_result.has_uncommitted)
         }
     }
+}
+
+async fn revalidate_lfs_upload_endpoint(
+    path: &Path,
+    remote: &str,
+    expected: Option<super::lfs::LfsEndpointSnapshot>,
+) -> Result<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let current =
+        super::lfs::inspect_lfs_endpoint(path, remote, super::lfs::LfsEndpointOperation::Upload)
+            .await?;
+    if current != expected {
+        anyhow::bail!("Git LFS upload endpoint changed during push; rerun the command");
+    }
+    Ok(())
 }
 
 fn lfs_source_ref(current_branch: &str) -> &str {

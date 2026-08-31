@@ -90,8 +90,12 @@ command targets stable across runs even though walking is concurrent.
 
 With `repos.transportPolicy=ssh-only`, fetch and push inspect Git's effective
 URL, including `pushurl` and `insteadOf` rewrites, before any network command.
-HTTP(S) is rejected with safe remote context, and network commands clear Git
-credential helpers so helpers such as macOS `osxkeychain` cannot open UI.
+HTTP(S) Git URLs are rejected with safe remote context. Explicit Git LFS URL
+overrides from Git config or `.lfsconfig` are resolved with `insteadOf` and
+`pushInsteadOf`, fingerprinted across pull analysis, and rejected when they use
+HTTP(S). The normal data endpoint negotiated through an inspected SSH remote
+may still use HTTPS. Strict network commands clear credential helpers and Git
+and SSH askpass sources so helpers such as macOS `osxkeychain` cannot open UI.
 
 Network commands retry transient failures with bounded backoff. Normal Git
 nonzero statuses are classified by callers and become repository failures when

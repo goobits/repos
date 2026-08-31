@@ -1,6 +1,12 @@
 use anyhow::Result;
 use goobits_repos::git::{fetch_and_analyze_for_pull, pull_if_needed, Status};
+use std::io::Write;
+use std::net::TcpListener;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+use std::thread;
+use std::time::Duration;
 use tempfile::TempDir;
 
 mod common;
@@ -482,6 +488,176 @@ async fn test_changed_lfs_remote_url_is_rejected_before_checkout() -> Result<()>
         original_head
     );
     assert!(!local_path.join("asset.bin").exists());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_changed_lfs_endpoint_is_rejected_before_checkout() -> Result<()> {
+    if !git_lfs_available() {
+        return Ok(());
+    }
+
+    let temp_dir = TempDir::new()?;
+    let remote_path = temp_dir.path().join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "base.txt", "base", "Init")?;
+
+    let local_path = temp_dir.path().join("local");
+    clone_repo(&remote_path, &local_path)?;
+    run_git_ok(&local_path, &["lfs", "install", "--local"]);
+    commit_lfs_file(&remote_path, "large object")?;
+
+    let original_head = git_output(&local_path, &["rev-parse", "HEAD"])?;
+    let fetch_result = fetch_and_analyze_for_pull(&local_path).await;
+    assert_eq!(fetch_result.behind_count, 1);
+    run_git_ok(
+        &local_path,
+        &["config", "lfs.url", "file:///changed-lfs-endpoint"],
+    );
+
+    let (status, message, _) = pull_if_needed(&local_path, &fetch_result, false).await;
+    assert_eq!(status, Status::PullError);
+    assert!(message.contains("Git LFS endpoint changed"), "{message}");
+    assert_eq!(
+        git_output(&local_path, &["rev-parse", "HEAD"])?,
+        original_head
+    );
+    assert!(!local_path.join("asset.bin").exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_ssh_only_pull_blocks_http_lfs_endpoint_before_contact() -> Result<()> {
+    if !git_lfs_available() {
+        return Ok(());
+    }
+
+    let temp_dir = TempDir::new()?;
+    let remote_path = temp_dir.path().join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "base.txt", "base", "Init")?;
+
+    let local_path = temp_dir.path().join("local");
+    clone_repo(&remote_path, &local_path)?;
+    run_git_ok(&local_path, &["lfs", "install", "--local"]);
+    commit_lfs_file(&remote_path, "large object")?;
+    let original_head = git_output(&local_path, &["rev-parse", "HEAD"])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let endpoint = format!("http://{}/lfs", listener.local_addr()?);
+    run_git_ok(&local_path, &["config", "lfs.url", &endpoint]);
+
+    let contacted = Arc::new(AtomicBool::new(false));
+    let server_contacted = Arc::clone(&contacted);
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let server = thread::spawn(move || loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                server_contacted.store(true, Ordering::SeqCst);
+                let _ = stream
+                    .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => break,
+        }
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["pull", "--sequential", "--no-drift-check"])
+        .env("REPOS_TRANSPORT_POLICY", "ssh-only")
+        .current_dir(&local_path)
+        .output()?;
+    let _ = stop_tx.send(());
+    server.join().expect("HTTP probe server should stop");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(!output.status.success(), "{stdout}");
+    assert!(stdout.contains("SSH-only policy blocked pull"), "{stdout}");
+    assert!(!contacted.load(Ordering::SeqCst));
+    assert_eq!(
+        git_output(&local_path, &["rev-parse", "HEAD"])?,
+        original_head
+    );
+    assert!(!local_path.join("asset.bin").exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_ssh_only_push_blocks_http_lfs_endpoint_before_contact() -> Result<()> {
+    if !git_lfs_available() {
+        return Ok(());
+    }
+
+    let temp_dir = TempDir::new()?;
+    let remote_path = temp_dir.path().join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "base.txt", "base", "Init")?;
+    let remote_head = git_output(&remote_path, &["rev-parse", "HEAD"])?;
+
+    let local_path = temp_dir.path().join("local");
+    clone_repo(&remote_path, &local_path)?;
+    commit_lfs_file(&local_path, "large object")?;
+    std::fs::remove_file(local_path.join("asset.bin"))?;
+    std::fs::remove_file(local_path.join(".gitattributes"))?;
+    run_git_ok(&local_path, &["add", "-u"]);
+    run_git_ok(&local_path, &["commit", "-m", "Remove LFS object"]);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let endpoint = format!("http://{}/lfs", listener.local_addr()?);
+    run_git_ok(&local_path, &["config", "lfs.pushurl", &endpoint]);
+
+    let contacted = Arc::new(AtomicBool::new(false));
+    let server_contacted = Arc::clone(&contacted);
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let server = thread::spawn(move || loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                server_contacted.store(true, Ordering::SeqCst);
+                let _ = stream
+                    .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => break,
+        }
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["push", "--sequential", "--no-drift-check"])
+        .env("REPOS_TRANSPORT_POLICY", "ssh-only")
+        .current_dir(&local_path)
+        .output()?;
+    let _ = stop_tx.send(());
+    server.join().expect("HTTP probe server should stop");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(!output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("SSH-only policy blocked LFS push"),
+        "{stdout}"
+    );
+    assert!(!contacted.load(Ordering::SeqCst));
+    assert_eq!(
+        git_output(&remote_path, &["rev-parse", "HEAD"])?,
+        remote_head
+    );
 
     Ok(())
 }

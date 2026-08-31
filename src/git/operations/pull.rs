@@ -20,6 +20,7 @@ pub struct PullFetchResult {
     pre_fetch_upstream_commit: Option<String>,
     upstream_commit: Option<String>,
     remote_fingerprint: Option<[u8; 32]>,
+    lfs_endpoint_fingerprint: Option<[u8; 32]>,
     pub status: Status,
     pub message: String,
     pub(crate) failure: Option<GitFailure>,
@@ -38,6 +39,7 @@ impl PullFetchResult {
             pre_fetch_upstream_commit: None,
             upstream_commit: None,
             remote_fingerprint: None,
+            lfs_endpoint_fingerprint: None,
             status: Status::Error,
             message,
             failure: None,
@@ -56,6 +58,7 @@ impl PullFetchResult {
             pre_fetch_upstream_commit: None,
             upstream_commit: None,
             remote_fingerprint: None,
+            lfs_endpoint_fingerprint: None,
             status: Status::Error,
             message: failure.message.clone(),
             failure: Some(failure),
@@ -97,6 +100,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
                 pre_fetch_upstream_commit: None,
                 upstream_commit: None,
                 remote_fingerprint: None,
+                lfs_endpoint_fingerprint: None,
                 status: Status::Skip,
                 message: STATUS_DETACHED_HEAD.to_string(),
                 failure: None,
@@ -161,6 +165,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             pre_fetch_upstream_commit,
             upstream_commit: None,
             remote_fingerprint: None,
+            lfs_endpoint_fingerprint: None,
             status: Status::NoRemote,
             message: STATUS_NO_REMOTE.to_string(),
             failure: None,
@@ -260,6 +265,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             pre_fetch_upstream_commit,
             upstream_commit: None,
             remote_fingerprint,
+            lfs_endpoint_fingerprint: None,
             status: Status::NoUpstream,
             message: STATUS_NO_UPSTREAM.to_string(),
             failure: None,
@@ -310,6 +316,21 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
     let analyzed_branch = Some(current_branch);
     let analyzed_head_commit = Some(analyzed_head_commit);
     let upstream_commit = Some(upstream_commit);
+    let lfs_endpoint_fingerprint = match super::lfs::snapshot_lfs_endpoint(
+        path,
+        &fetch_remote,
+        super::lfs::LfsEndpointOperation::Download,
+    )
+    .await
+    {
+        Ok(snapshot) => Some(snapshot.fingerprint),
+        Err(error) => {
+            return PullFetchResult::error(
+                clean_error_message(&error.to_string()),
+                has_uncommitted,
+            );
+        }
+    };
 
     if ahead_count > 0 && behind_count > 0 {
         return PullFetchResult {
@@ -322,6 +343,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             pre_fetch_upstream_commit,
             upstream_commit,
             remote_fingerprint,
+            lfs_endpoint_fingerprint,
             status: Status::PullError,
             message: format!(
                 "diverged: {ahead_count} ahead, {behind_count} behind (run repos sync or resolve manually)"
@@ -342,6 +364,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             pre_fetch_upstream_commit,
             upstream_commit,
             remote_fingerprint,
+            lfs_endpoint_fingerprint,
             status: Status::Synced,
             message: STATUS_SYNCED.to_string(),
             failure: None,
@@ -358,6 +381,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             pre_fetch_upstream_commit,
             upstream_commit,
             remote_fingerprint,
+            lfs_endpoint_fingerprint,
             status: Status::Synced,
             message: format!("{behind_count} commits behind"),
             failure: None,

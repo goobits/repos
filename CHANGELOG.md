@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feature, and doctest, Rust 1.78 compatibility, destructive audit rewrites
   with a pinned `git-filter-repo`, and the locked dependency graph against
   RustSec advisories and warnings.
-- **SSH-only Git transport policy:** `git config --global repos.transportPolicy ssh-only` blocks effective HTTP(S) fetch and push URLs before credential helpers run, including macOS Keychain helpers. Transfer failures now name the repository and sanitized remote, provide an exact SSH conversion command for common hosts, and distinguish SSH key failures from transport fixes.
+- **SSH-only Git transport policy:** `git config --global repos.transportPolicy ssh-only` blocks effective HTTP(S) fetch and push URLs plus explicit HTTP(S) Git LFS endpoint overrides before credential helpers run, including macOS Keychain helpers. Transfer failures name the repository and sanitized remote, provide an exact SSH conversion command for common hosts, and distinguish SSH key failures from transport fixes. Normal HTTPS data endpoints negotiated through an inspected SSH LFS remote remain supported without configured credential helpers or askpass programs.
 - **Fetch command:** `repos fetch` refreshes every configured remote without changing local branches or worktrees and uses the same attributable, exclusive report contract as push/pull.
 
 ### Changed
@@ -54,7 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pull and sync pin the local and upstream commits from their explicit fetch,
   revalidate the branch, HEAD, and worktree before integration, preserve the
   pre-fetch rebase fork point, fetch LFS objects for the pinned target from the
-  inspected remote, and avoid a second Git fetch or moving-ref race.
+  inspected remote, fingerprint explicit LFS endpoint configuration, and avoid
+  a second Git fetch or moving-ref race.
 - Git remote names are passed after option terminators across fetch, push,
   doctor, release-tag verification, LFS, and nested publication paths. Because
   Git LFS's generated pre-push hook cannot parse a leading `-` in a remote name,
