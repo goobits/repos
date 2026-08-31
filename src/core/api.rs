@@ -51,5 +51,6 @@ pub(crate) use super::progress::{
 };
 pub(crate) use super::stats::{clean_error_message, format_relative_repo_path, truncate_text};
 pub(crate) use super::topology::{
-    GitlinkPrerequisite, RepositoryOrder, RepositoryTopology, TopologySnapshot,
+    gitlink_prerequisites_at_head, GitlinkPrerequisite, RepositoryOrder, RepositoryTopology,
+    TopologySnapshot,
 };

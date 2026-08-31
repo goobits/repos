@@ -8,9 +8,10 @@ use anyhow::Result;
 use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::core::{
-    acquire_semaphore_permit, clean_error_message, create_processing_context, init_command,
-    set_terminal_title, set_terminal_title_and_flush, BatchOperation, GitlinkPrerequisite,
-    RepositoryOrder, RepositoryTopology, GIT_CONCURRENT_CAP, NO_REPOS_MESSAGE,
+    acquire_semaphore_permit, clean_error_message, create_processing_context,
+    gitlink_prerequisites_at_head, init_command, set_terminal_title, set_terminal_title_and_flush,
+    BatchOperation, GitlinkPrerequisite, RepositoryOrder, RepositoryTopology, GIT_CONCURRENT_CAP,
+    NO_REPOS_MESSAGE,
 };
 use crate::git::worktree::{inspect_refreshed_repository_state, HeadState};
 use crate::git::{
@@ -93,6 +94,7 @@ async fn process_save_repositories(
     let total_repos = context.total_repos;
 
     let topology = RepositoryTopology::new(&context.repositories);
+    let mut completed = vec![None; context.total_repos];
     for wave in topology.waves(RepositoryOrder::ChildrenFirst) {
         let mut futures = FuturesUnordered::new();
         for index in wave {
@@ -102,6 +104,20 @@ async fn process_save_repositories(
                 topology.gitlink_prerequisites(index, &context.repositories);
             let gitlink_inspection_error =
                 topology.gitlink_inspection_error(index).map(str::to_string);
+            let failed_gitlink_children = topology
+                .gitlink_children(index)
+                .iter()
+                .filter_map(|child| {
+                    completed[*child]
+                        .filter(|status| is_save_failure(*status))
+                        .map(|_| context.repositories[*child].0.clone())
+                })
+                .collect::<Vec<_>>();
+            let planned_gitlink_change = dry_run
+                && topology
+                    .gitlink_children(index)
+                    .iter()
+                    .any(|child| completed[*child] == Some(Status::Staged));
             let semaphore = std::sync::Arc::clone(&context.semaphore);
             let stats = std::sync::Arc::clone(&context.statistics);
             let footer = footer_pb.clone();
@@ -116,8 +132,12 @@ async fn process_save_repositories(
                     include_untracked,
                     auto_upstream,
                     dry_run,
-                    &gitlink_prerequisites,
-                    gitlink_inspection_error.as_deref(),
+                    SaveDependencies {
+                        prerequisites: &gitlink_prerequisites,
+                        inspection_error: gitlink_inspection_error.as_deref(),
+                        failed_children: &failed_gitlink_children,
+                        planned_change: planned_gitlink_change,
+                    },
                 )
                 .await;
 
@@ -138,12 +158,15 @@ async fn process_save_repositories(
                     has_uncommitted,
                 );
                 footer.set_message(stats.generate_batch_live_summary(operation, total_repos));
+                (index, status)
             };
 
             futures.push(future);
         }
 
-        while futures.next().await.is_some() {}
+        while let Some((index, status)) = futures.next().await {
+            completed[index] = Some(status);
+        }
     }
 
     footer_pb.finish();
@@ -164,16 +187,33 @@ async fn process_save_repositories(
     Ok(())
 }
 
+fn is_save_failure(status: Status) -> bool {
+    matches!(
+        status,
+        Status::Error
+            | Status::ConfigError
+            | Status::StagingError
+            | Status::CommitError
+            | Status::PullError
+    )
+}
+
+struct SaveDependencies<'a> {
+    prerequisites: &'a [GitlinkPrerequisite],
+    inspection_error: Option<&'a str>,
+    failed_children: &'a [String],
+    planned_change: bool,
+}
+
 async fn save_one_repo(
     repo_path: &std::path::Path,
     commit_message: &str,
     include_untracked: bool,
     auto_upstream: bool,
     dry_run: bool,
-    gitlink_prerequisites: &[GitlinkPrerequisite],
-    gitlink_inspection_error: Option<&str>,
+    dependencies: SaveDependencies<'_>,
 ) -> (Status, String, bool) {
-    if let Some(error) = gitlink_inspection_error {
+    if let Some(error) = dependencies.inspection_error {
         return (
             Status::StagingError,
             format!("submodule relationship inspection failed: {error}"),
@@ -208,10 +248,29 @@ async fn save_one_repo(
         HeadState::Branch(_) | HeadState::Unborn => {}
     }
 
+    if worktree.has_conflicts() {
+        return (
+            Status::StagingError,
+            "unresolved conflicts; resolve or abort the merge/rebase before save".to_string(),
+            true,
+        );
+    }
+
     let has_tracked_changes = worktree.has_tracked_changes();
     let has_untracked_changes = worktree.has_untracked_changes();
+    let has_changes_to_commit = has_tracked_changes || (include_untracked && has_untracked_changes);
+    let should_push_existing = matches!(worktree.head(), HeadState::Branch(_))
+        && (worktree
+            .ahead_behind()
+            .is_some_and(|counts| counts.ahead > 0)
+            || (auto_upstream && worktree.upstream().is_none()));
+    let leaves_untracked = has_untracked_changes && !include_untracked;
 
-    if !has_tracked_changes && has_untracked_changes && !include_untracked {
+    if !has_changes_to_commit
+        && !should_push_existing
+        && !dependencies.planned_change
+        && leaves_untracked
+    {
         return (
             Status::NoChanges,
             "only untracked changes; pass --all".to_string(),
@@ -219,65 +278,105 @@ async fn save_one_repo(
         );
     }
 
-    if !has_tracked_changes && !has_untracked_changes {
+    if !has_changes_to_commit && !should_push_existing && !dependencies.planned_change {
         return (Status::Synced, "clean".to_string(), false);
     }
 
     if dry_run {
-        let stage_mode = if include_untracked {
-            "stage all changes"
+        let message = if has_changes_to_commit {
+            let stage_mode = if include_untracked {
+                "stage all changes"
+            } else {
+                "stage tracked changes"
+            };
+            format!("{stage_mode}, commit, push")
+        } else if dependencies.planned_change {
+            "refresh submodule pointers, commit, push".to_string()
+        } else if leaves_untracked {
+            "push existing commits; leave untracked changes untouched".to_string()
         } else {
-            "stage tracked changes"
+            "push existing commits".to_string()
         };
         return (
             Status::Staged,
-            format!("{stage_mode}, commit, push"),
-            has_tracked_changes || has_untracked_changes,
+            message,
+            has_tracked_changes || has_untracked_changes || dependencies.planned_change,
         );
     }
 
-    let stage_result = if include_untracked {
-        stage_all_changes(repo_path).await
+    let committed = if has_changes_to_commit {
+        let stage_result = if include_untracked {
+            stage_all_changes(repo_path).await
+        } else {
+            stage_tracked_changes(repo_path).await
+        };
+
+        match stage_result {
+            Ok((true, _, _)) => {}
+            Ok((false, _, stderr)) => {
+                return (Status::StagingError, clean_error_message(&stderr), true);
+            }
+            Err(e) => return (Status::StagingError, format!("stage failed: {e}"), true),
+        }
+
+        match has_staged_changes(repo_path).await {
+            Ok(true) => {}
+            Ok(false) => return (Status::NoChanges, "nothing staged".to_string(), true),
+            Err(e) => {
+                return (
+                    Status::StagingError,
+                    format!("stage check failed: {e}"),
+                    true,
+                )
+            }
+        }
+
+        match commit_changes(repo_path, commit_message, false).await {
+            Ok((true, _, _)) => {}
+            Ok((false, _, stderr)) => {
+                return (Status::CommitError, clean_error_message(&stderr), true);
+            }
+            Err(e) => return (Status::CommitError, format!("commit failed: {e}"), true),
+        }
+        true
     } else {
-        stage_tracked_changes(repo_path).await
+        false
     };
 
-    match stage_result {
-        Ok((true, _, _)) => {}
-        Ok((false, _, stderr)) => {
-            return (Status::StagingError, clean_error_message(&stderr), true);
-        }
-        Err(e) => return (Status::StagingError, format!("stage failed: {e}"), true),
-    }
-
-    match has_staged_changes(repo_path).await {
-        Ok(true) => {}
-        Ok(false) => return (Status::NoChanges, "nothing staged".to_string(), true),
-        Err(e) => {
-            return (
-                Status::StagingError,
-                format!("stage check failed: {e}"),
-                true,
-            )
-        }
-    }
-
-    match commit_changes(repo_path, commit_message, false).await {
-        Ok((true, _, _)) => {}
-        Ok((false, _, stderr)) => {
-            return (Status::CommitError, clean_error_message(&stderr), true);
-        }
-        Err(e) => return (Status::CommitError, format!("commit failed: {e}"), true),
-    }
-
     let fetch_result = fetch_and_analyze(repo_path, auto_upstream).await;
-    if fetch_result.will_push(auto_upstream) {
-        let unpublished = crate::git::operations::unpublished_gitlinks(gitlink_prerequisites).await;
+    if fetch_result.will_push(auto_upstream) && !dependencies.prerequisites.is_empty() {
+        let current_prerequisites = match gitlink_prerequisites_at_head(
+            repo_path,
+            dependencies.prerequisites,
+        ) {
+            Ok(prerequisites) => prerequisites,
+            Err(error) => {
+                let prefix = if committed { "committed; " } else { "" };
+                return (
+                    Status::Error,
+                    format!(
+                        "{prefix}push blocked because committed submodule inspection failed: {error}"
+                    ),
+                    fetch_result.has_uncommitted,
+                );
+            }
+        };
+        let unpublished =
+            crate::git::operations::unpublished_gitlinks(&current_prerequisites).await;
         if !unpublished.is_empty() {
+            let prefix = if committed { "committed; " } else { "" };
+            let failed_dependency = unpublished
+                .iter()
+                .any(|name| dependencies.failed_children.contains(name));
+            let reason = if failed_dependency {
+                "dependent submodule save failed and its commit is not reachable"
+            } else {
+                "submodule commits are not reachable"
+            };
             return (
                 Status::Error,
                 format!(
-                    "committed; push blocked because submodule commits are not reachable from fetched remote refs: {}",
+                    "{prefix}push blocked because {reason} from fetched remote refs: {}",
                     unpublished.join(", ")
                 ),
                 fetch_result.has_uncommitted,
@@ -287,16 +386,32 @@ async fn save_one_repo(
     let (push_status, push_message, has_uncommitted) =
         push_if_needed(repo_path, &fetch_result, auto_upstream).await;
 
-    match push_status {
-        Status::Pushed | Status::Fetched | Status::Synced => (
-            Status::Committed,
-            format!("committed; {push_message}"),
+    if committed {
+        match push_status {
+            Status::Pushed | Status::Fetched | Status::Synced => (
+                Status::Committed,
+                format!("committed; {push_message}"),
+                has_uncommitted,
+            ),
+            other => (
+                other,
+                format!("committed; push skipped: {push_message}"),
+                has_uncommitted,
+            ),
+        }
+    } else if push_status == Status::Synced && leaves_untracked {
+        (
+            Status::NoChanges,
+            "only untracked changes; pass --all".to_string(),
+            true,
+        )
+    } else if push_status == Status::Pushed && leaves_untracked {
+        (
+            push_status,
+            format!("{push_message}; untracked changes left untouched"),
             has_uncommitted,
-        ),
-        other => (
-            other,
-            format!("committed; push skipped: {push_message}"),
-            has_uncommitted,
-        ),
+        )
+    } else {
+        (push_status, push_message, has_uncommitted)
     }
 }

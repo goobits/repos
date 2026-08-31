@@ -25,6 +25,7 @@ use goobits_repos::commands::sync::{
 use goobits_repos::git::{fetch_and_analyze, get_staging_status, push_if_needed, Status};
 use std::env;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -300,6 +301,308 @@ async fn test_push_command_with_single_repo_no_changes() {
         result.is_ok(),
         "Push command should complete without panicking: {:?}",
         result
+    );
+}
+
+struct PublishedNestedFixture {
+    parent: PathBuf,
+    child: PathBuf,
+    parent_remote: TempDir,
+    child_remote: TempDir,
+}
+
+fn setup_published_nested_fixture(root: &Path) -> PublishedNestedFixture {
+    let parent = root.join("parent");
+    let child = parent.join("child");
+    fs::create_dir_all(&child).expect("Failed to create nested repositories");
+    setup_git_repo(&parent).expect("Failed to initialize parent repository");
+    setup_git_repo(&child).expect("Failed to initialize child repository");
+    create_test_commit(&parent, "README.md", "parent", "Initial parent")
+        .expect("Failed to create parent commit");
+    create_test_commit(&child, "README.md", "child", "Initial child")
+        .expect("Failed to create child commit");
+
+    let child_remote = add_bare_remote(&child, true).expect("Failed to create child remote");
+    let child_head = get_head_commit(&child).expect("Failed to resolve child HEAD");
+    run_git_ok(
+        &parent,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &child_head,
+            "child",
+        ],
+    );
+    run_git_ok(&parent, &["commit", "-m", "Track child"]);
+    let parent_remote = add_bare_remote(&parent, true).expect("Failed to create parent remote");
+
+    PublishedNestedFixture {
+        parent,
+        child,
+        parent_remote,
+        child_remote,
+    }
+}
+
+fn bare_remote_path(remote: &TempDir) -> PathBuf {
+    remote.path().join("remote.git")
+}
+
+fn gitlink_target(repo: &Path, relative: &str) -> String {
+    let output = Command::new("git")
+        .args(["ls-tree", "HEAD", "--", relative])
+        .current_dir(repo)
+        .output()
+        .expect("Failed to inspect gitlink");
+    assert!(
+        output.status.success(),
+        "gitlink inspection failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .nth(2)
+        .expect("Gitlink target missing")
+        .to_string()
+}
+
+#[test]
+fn test_save_pushes_clean_ahead_child_before_parent() {
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let fixture = setup_published_nested_fixture(root.path());
+    create_test_commit(&fixture.child, "next.txt", "next", "Advance child")
+        .expect("Failed to advance child");
+    let child_head = get_head_commit(&fixture.child).expect("Failed to resolve child HEAD");
+
+    let save = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["save", "Fleet save"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos save");
+
+    assert!(
+        save.status.success(),
+        "dependency-aware save failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&save.stdout),
+        String::from_utf8_lossy(&save.stderr)
+    );
+    assert_eq!(
+        get_head_commit(&bare_remote_path(&fixture.child_remote))
+            .expect("Failed to inspect child remote"),
+        child_head
+    );
+    assert_eq!(gitlink_target(&fixture.parent, "child"), child_head);
+    assert_eq!(
+        gitlink_target(&bare_remote_path(&fixture.parent_remote), "child"),
+        child_head
+    );
+}
+
+#[test]
+fn test_save_dry_run_plans_parent_gitlink_refresh() {
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let fixture = setup_published_nested_fixture(root.path());
+    let child_head = get_head_commit(&fixture.child).expect("Failed to resolve child HEAD");
+    let parent_head = get_head_commit(&fixture.parent).expect("Failed to resolve parent HEAD");
+    fs::write(fixture.child.join("README.md"), "planned child update")
+        .expect("Failed to modify child");
+
+    let save = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["save", "Fleet save", "--dry-run"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos save dry-run");
+    let stdout = String::from_utf8_lossy(&save.stdout);
+
+    assert!(
+        save.status.success(),
+        "dependency-aware dry-run failed:\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&save.stderr)
+    );
+    assert!(
+        stdout.contains("Planned         2")
+            && stdout.contains("refresh submodule pointers, commit, push"),
+        "parent pointer refresh was not planned:\n{stdout}"
+    );
+    assert_eq!(
+        get_head_commit(&fixture.child).expect("Child HEAD changed during dry-run"),
+        child_head
+    );
+    assert_eq!(
+        get_head_commit(&fixture.parent).expect("Parent HEAD changed during dry-run"),
+        parent_head
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_save_blocks_refreshed_gitlink_after_child_push_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let fixture = setup_published_nested_fixture(root.path());
+    let published_parent =
+        get_head_commit(&bare_remote_path(&fixture.parent_remote)).expect("Parent remote HEAD");
+    create_test_commit(&fixture.child, "next.txt", "local only", "Advance child")
+        .expect("Failed to advance child");
+    let child_head = get_head_commit(&fixture.child).expect("Failed to resolve child HEAD");
+
+    let hook = fixture.child.join(".git/hooks/pre-push");
+    fs::write(
+        &hook,
+        "#!/bin/sh\necho 'intentional child push failure' >&2\nexit 1\n",
+    )
+    .expect("Failed to create child pre-push hook");
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
+        .expect("Failed to make child hook executable");
+
+    let save = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["save", "Fleet save"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos save");
+    let stdout = String::from_utf8_lossy(&save.stdout);
+
+    assert!(!save.status.success(), "failed child must fail fleet save");
+    assert!(
+        stdout.contains("committed; push blocked because depen")
+            && stdout.contains("intentional child push failure"),
+        "parent blocker was not reported:\n{stdout}"
+    );
+    assert_eq!(
+        get_head_commit(&bare_remote_path(&fixture.parent_remote)).expect("Parent remote HEAD"),
+        published_parent,
+        "parent remote must not receive an unpublished child gitlink"
+    );
+    assert_eq!(
+        gitlink_target(&fixture.parent, "child"),
+        child_head,
+        "the local parent commit should contain the target that was validated"
+    );
+}
+
+#[test]
+fn test_save_recovers_clean_ahead_parent_and_child() {
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let fixture = setup_published_nested_fixture(root.path());
+    create_test_commit(&fixture.child, "next.txt", "next", "Advance child")
+        .expect("Failed to advance child");
+    let child_head = get_head_commit(&fixture.child).expect("Failed to resolve child HEAD");
+    run_git_ok(
+        &fixture.parent,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &child_head,
+            "child",
+        ],
+    );
+    run_git_ok(&fixture.parent, &["commit", "-m", "Advance child pointer"]);
+    let parent_head = get_head_commit(&fixture.parent).expect("Failed to resolve parent HEAD");
+
+    let save = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["save", "Fleet save"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos save");
+
+    assert!(
+        save.status.success(),
+        "clean-ahead recovery failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&save.stdout),
+        String::from_utf8_lossy(&save.stderr)
+    );
+    assert_eq!(
+        get_head_commit(&bare_remote_path(&fixture.child_remote)).expect("Child remote HEAD"),
+        child_head
+    );
+    assert_eq!(
+        get_head_commit(&bare_remote_path(&fixture.parent_remote)).expect("Parent remote HEAD"),
+        parent_head
+    );
+}
+
+#[test]
+fn test_save_rejects_unresolved_conflicts() {
+    if !is_git_available() {
+        return;
+    }
+
+    let root = TempDir::new().expect("Failed to create test root");
+    let repo = root.path().join("repo");
+    fs::create_dir(&repo).expect("Failed to create repository");
+    setup_git_repo(&repo).expect("Failed to initialize repository");
+    create_test_commit(&repo, "conflict.txt", "base\n", "Initial commit")
+        .expect("Failed to create initial commit");
+    let remote = add_bare_remote(&repo, true).expect("Failed to create remote");
+    let published_head =
+        get_head_commit(&bare_remote_path(&remote)).expect("Failed to inspect remote HEAD");
+    let branch = Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(&repo)
+        .output()
+        .expect("Failed to inspect branch");
+    let branch = String::from_utf8_lossy(&branch.stdout).trim().to_string();
+
+    run_git_ok(&repo, &["checkout", "-b", "conflict-side"]);
+    create_test_commit(&repo, "conflict.txt", "side\n", "Side change")
+        .expect("Failed to create side commit");
+    run_git_ok(&repo, &["checkout", &branch]);
+    create_test_commit(&repo, "conflict.txt", "main\n", "Main change")
+        .expect("Failed to create main commit");
+    let conflicted_head = get_head_commit(&repo).expect("Failed to resolve conflicted HEAD");
+    let merge = Command::new("git")
+        .args(["merge", "conflict-side"])
+        .current_dir(&repo)
+        .output()
+        .expect("Failed to create merge conflict");
+    assert!(!merge.status.success(), "merge should create a conflict");
+
+    let save = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["save", "Do not commit conflict markers"])
+        .current_dir(root.path())
+        .output()
+        .expect("Failed to run repos save");
+    let stdout = String::from_utf8_lossy(&save.stdout);
+
+    assert!(!save.status.success(), "unresolved conflict must fail save");
+    assert!(
+        stdout.contains("merge conflict"),
+        "conflict guidance was not reported:\n{stdout}"
+    );
+    assert_eq!(get_head_commit(&repo).expect("Local HEAD"), conflicted_head);
+    assert_eq!(
+        get_head_commit(&bare_remote_path(&remote)).expect("Remote HEAD"),
+        published_head
+    );
+    let unmerged = Command::new("git")
+        .args(["ls-files", "-u"])
+        .current_dir(&repo)
+        .output()
+        .expect("Failed to inspect conflict entries");
+    assert!(
+        !unmerged.stdout.is_empty(),
+        "save must leave conflict entries unresolved"
     );
 }
 

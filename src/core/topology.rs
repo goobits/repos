@@ -248,6 +248,38 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     })
 }
 
+/// Re-resolves known child gitlinks from the exact parent commit that would be pushed.
+pub(crate) fn gitlink_prerequisites_at_head(
+    parent_path: &Path,
+    prerequisites: &[GitlinkPrerequisite],
+) -> Result<Vec<GitlinkPrerequisite>, String> {
+    let gitlinks = head_gitlinks(parent_path)?;
+    let normalized_parent = normalize_path(parent_path);
+
+    prerequisites
+        .iter()
+        .filter_map(|prerequisite| {
+            let normalized_child = normalize_path(&prerequisite.path);
+            let relative = match normalized_child.strip_prefix(&normalized_parent) {
+                Ok(relative) => relative,
+                Err(_) => {
+                    return Some(Err(format!(
+                        "submodule path is outside its parent: {}",
+                        prerequisite.path.display()
+                    )))
+                }
+            };
+            gitlinks.get(relative).map(|target| {
+                Ok(GitlinkPrerequisite {
+                    name: prerequisite.name.clone(),
+                    path: prerequisite.path.clone(),
+                    target: target.clone(),
+                })
+            })
+        })
+        .collect()
+}
+
 fn repository_level(index: usize, parents: &[Option<usize>]) -> usize {
     let mut level = 0;
     let mut current = parents[index];
@@ -276,6 +308,24 @@ fn indexed_gitlinks(parent_path: &Path) -> Result<HashMap<PathBuf, String>, Stri
     Ok(parse_gitlinks(&output.stdout))
 }
 
+fn head_gitlinks(parent_path: &Path) -> Result<HashMap<PathBuf, String>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(parent_path)
+        .args(["ls-tree", "-rz", "--full-tree", "HEAD"])
+        .output()
+        .map_err(|error| format!("failed to run git ls-tree: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "git ls-tree failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok(parse_tree_gitlinks(&output.stdout))
+}
+
 fn parse_gitlinks(output: &[u8]) -> HashMap<PathBuf, String> {
     output
         .split(|byte| *byte == 0)
@@ -284,6 +334,23 @@ fn parse_gitlinks(output: &[u8]) -> HashMap<PathBuf, String> {
             let metadata = std::str::from_utf8(&record[..tab]).ok()?;
             let mut fields = metadata.split_whitespace();
             if fields.next() != Some("160000") {
+                return None;
+            }
+            let target = fields.next()?.to_string();
+            let path = path_from_git_bytes(&record[tab + 1..]);
+            Some((path, target))
+        })
+        .collect()
+}
+
+fn parse_tree_gitlinks(output: &[u8]) -> HashMap<PathBuf, String> {
+    output
+        .split(|byte| *byte == 0)
+        .filter_map(|record| {
+            let tab = record.iter().position(|byte| *byte == b'\t')?;
+            let metadata = std::str::from_utf8(&record[..tab]).ok()?;
+            let mut fields = metadata.split_whitespace();
+            if fields.next() != Some("160000") || fields.next() != Some("commit") {
                 return None;
             }
             let target = fields.next()?.to_string();
@@ -367,6 +434,21 @@ mod tests {
             Some("abcdef")
         );
         assert!(!gitlinks.contains_key(Path::new("packages")));
+        assert!(!gitlinks.contains_key(Path::new("packages/other")));
+    }
+
+    #[test]
+    fn parses_committed_gitlink_targets_from_tree_output() {
+        let output = b"160000 commit abcdef\tpackages/shared module\0\
+              100644 blob fedcba\tpackages/other\0";
+        let gitlinks = parse_tree_gitlinks(output);
+
+        assert_eq!(
+            gitlinks
+                .get(Path::new("packages/shared module"))
+                .map(String::as_str),
+            Some("abcdef")
+        );
         assert!(!gitlinks.contains_key(Path::new("packages/other")));
     }
 
