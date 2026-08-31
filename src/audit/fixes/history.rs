@@ -1,17 +1,26 @@
 //! History-rewrite planning, execution, verification, and repository safety.
 
+mod replacements;
+
 use super::{
     ensure_command_success, write_private_temp_file, FixOptions, HISTORY_PUBLICATION_GUIDANCE,
 };
 use crate::audit::hygiene::scanner::check_large_files;
-use crate::audit::scanner::{scan_repository_secrets, ScannedSecret, TruffleScanMode};
+use crate::audit::scanner::{scan_repository_secrets, TruffleScanMode};
 use crate::git::operations::{get_upstream_push_target, run_git};
 use crate::git::remote::{inspect_remote, policy_violation, RemoteDirection};
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
+
+#[cfg(test)]
+use replacements::validate_secret_value;
+use replacements::{
+    add_secret_to_plan, blob_replacement_callback, collect_replacement_blobs,
+    encode_replacement_blobs, validate_repository_path,
+};
 
 #[derive(Default)]
 struct HistoryRewritePlan {
@@ -176,201 +185,6 @@ async fn build_history_rewrite_plan(
     Ok(plan)
 }
 
-fn add_secret_to_plan(plan: &mut HistoryRewritePlan, secret: ScannedSecret) -> Result<()> {
-    let file_path = secret.finding.file_path;
-    validate_repository_path(&file_path)?;
-
-    let mut values = Vec::new();
-    values.extend(secret.raw);
-    if secret.secret_parts.is_empty() {
-        // RawV2 is the best available complete representation for detectors
-        // without structured parts. It is validated against historical blob
-        // contents before use; a synthetic/nonexistent value causes the path
-        // to be removed instead.
-        values.extend(secret.raw_v2);
-    } else {
-        // Multipart detectors can use Raw as an identifier and RawV2 as a
-        // synthetic joined value. Redact every reported source component in
-        // the affected path rather than trusting that joined value.
-        values.extend(secret.secret_parts);
-    }
-    if values.is_empty()
-        || values
-            .iter()
-            .any(|value| validate_filter_literal(value, "secret value").is_err())
-    {
-        plan.remove_paths.insert(file_path.clone());
-        plan.replacements_by_path.remove(&file_path);
-    } else if !plan.remove_paths.contains(&file_path) {
-        plan.replacements_by_path
-            .entry(file_path)
-            .or_default()
-            .extend(values);
-    }
-    Ok(())
-}
-
-async fn collect_replacement_blobs(
-    repo_path: &Path,
-    plan: &mut HistoryRewritePlan,
-) -> Result<BTreeMap<String, BTreeSet<String>>> {
-    let mut replacements = BTreeMap::<String, BTreeSet<String>>::new();
-    let planned = plan.replacements_by_path.clone();
-    let mut fallback_paths = BTreeSet::new();
-    for (path, values) in planned {
-        if plan.remove_paths.contains(&path) {
-            continue;
-        }
-        let pathspec = format!(":(literal){path}");
-        let output = Command::new("git")
-            .args([
-                "-c",
-                "core.quotePath=false",
-                "rev-list",
-                "--objects",
-                "--all",
-                "--",
-                &pathspec,
-            ])
-            .current_dir(repo_path)
-            .output()
-            .await?;
-        ensure_command_success(&output, "resolving secret-containing history blobs")?;
-        let stdout = String::from_utf8(output.stdout)?;
-        let mut object_ids = BTreeSet::new();
-        for line in stdout.lines() {
-            let Some((object_id, object_path)) = line.split_once(' ') else {
-                continue;
-            };
-            if object_path != path {
-                continue;
-            }
-            if !matches!(object_id.len(), 40 | 64)
-                || !object_id.bytes().all(|byte| byte.is_ascii_hexdigit())
-            {
-                bail!("git returned an invalid historical blob identifier");
-            }
-            object_ids.insert(object_id.to_string());
-        }
-        if object_ids.is_empty() {
-            bail!("could not resolve historical blobs for secret path {path}");
-        }
-
-        let mut path_replacements = BTreeMap::<String, BTreeSet<String>>::new();
-        let mut observed_values = BTreeSet::new();
-        for object_id in object_ids {
-            let output = Command::new("git")
-                .args(["cat-file", "blob", &object_id])
-                .current_dir(repo_path)
-                .output()
-                .await?;
-            ensure_command_success(&output, "reading a secret-containing historical blob")?;
-            for value in &values {
-                if contains_bytes(&output.stdout, value.as_bytes()) {
-                    path_replacements
-                        .entry(object_id.clone())
-                        .or_default()
-                        .insert(value.clone());
-                    observed_values.insert(value.clone());
-                }
-            }
-        }
-
-        if observed_values != values {
-            // A detector may synthesize RawV2 or omit a multipart component.
-            // Removing the affected path is the only fail-closed rewrite when
-            // every planned credential component cannot be located verbatim.
-            fallback_paths.insert(path);
-            continue;
-        }
-        for (object_id, values) in path_replacements {
-            replacements.entry(object_id).or_default().extend(values);
-        }
-    }
-
-    for path in fallback_paths {
-        plan.replacements_by_path.remove(&path);
-        plan.remove_paths.insert(path);
-    }
-    Ok(replacements)
-}
-
-fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
-}
-
-fn encode_replacement_blobs(
-    replacements: BTreeMap<String, BTreeSet<String>>,
-) -> BTreeMap<String, Vec<String>> {
-    replacements
-        .into_iter()
-        .map(|(object_id, values)| {
-            let mut values = values.into_iter().collect::<Vec<_>>();
-            values
-                .sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
-            (
-                object_id,
-                values
-                    .into_iter()
-                    .map(|value| hex_encode(value.as_bytes()))
-                    .collect(),
-            )
-        })
-        .collect()
-}
-
-fn hex_encode(value: &[u8]) -> String {
-    value.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn blob_replacement_callback(plan_path: &Path) -> Result<String> {
-    let plan_path = plan_path
-        .to_str()
-        .ok_or_else(|| anyhow!("temporary rewrite plan path was not valid UTF-8"))?;
-    let encoded_path = hex_encode(plan_path.as_bytes());
-    Ok(format!(
-        concat!(
-            "if not hasattr(callback, '_repos_plan'):\n",
-            "    import json\n",
-            "    plan_path = bytes.fromhex('{encoded_path}').decode('utf-8')\n",
-            "    with open(plan_path, encoding='utf-8') as stream:\n",
-            "        encoded_plan = json.load(stream)\n",
-            "    callback._repos_plan = {{\n",
-            "        object_id.encode('ascii'): [bytes.fromhex(value) for value in values]\n",
-            "        for object_id, values in encoded_plan.items()\n",
-            "    }}\n",
-            "patterns = callback._repos_plan.get(blob.original_id)\n",
-            "if patterns:\n",
-            "    for pattern in patterns:\n",
-            "        blob.data = blob.data.replace(pattern, b'REDACTED')"
-        ),
-        encoded_path = encoded_path
-    ))
-}
-
-fn validate_repository_path(path: &str) -> Result<()> {
-    validate_filter_literal(path, "secret file path")?;
-    let path = Path::new(path);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
-    {
-        bail!("audit returned an unsafe repository-relative file path");
-    }
-    Ok(())
-}
-
-fn validate_filter_literal(value: &str, kind: &str) -> Result<()> {
-    if value.is_empty() || value.contains(['\n', '\r', '\0']) || value.contains("==>") {
-        bail!("{kind} cannot be represented safely for git filter-repo");
-    }
-    Ok(())
-}
-
 async fn create_backup_bundle(repo_path: &Path) -> Result<PathBuf> {
     let common_dir_output = Command::new("git")
         .args(["rev-parse", "--git-common-dir"])
@@ -529,8 +343,8 @@ async fn check_history_rewrite_tools() -> Result<()> {
 mod tests {
     use super::{
         add_secret_to_plan, blob_replacement_callback, collect_replacement_blobs,
-        create_backup_bundle, encode_replacement_blobs, validate_filter_literal,
-        validate_repository_path, HistoryRewritePlan,
+        create_backup_bundle, encode_replacement_blobs, validate_repository_path,
+        validate_secret_value, HistoryRewritePlan,
     };
     use crate::audit::scanner::{ScannedSecret, SecretFinding, SecretVerification};
     use std::collections::{BTreeMap, BTreeSet};
@@ -552,9 +366,11 @@ mod tests {
     }
 
     #[test]
-    fn filter_literals_reject_expression_injection() {
-        for value in ["", "line\nbreak", "line\rbreak", "nul\0byte", "a==>b"] {
-            assert!(validate_filter_literal(value, "test value").is_err());
+    fn secret_values_allow_content_but_remain_size_bounded() {
+        assert!(validate_secret_value("").is_err());
+        assert!(validate_secret_value(&"x".repeat(16 * 1024 + 1)).is_err());
+        for value in ["line\nbreak", "line\rbreak", "nul\0byte", "a==>b"] {
+            assert!(validate_secret_value(value).is_ok());
         }
     }
 
@@ -563,18 +379,20 @@ mod tests {
         assert!(validate_repository_path("config/secrets.env").is_ok());
         assert!(validate_repository_path("../outside").is_err());
         assert!(validate_repository_path("/absolute").is_err());
+        assert!(validate_repository_path("line\nbreak").is_err());
     }
 
     #[test]
     fn mixed_secret_plan_combines_replacement_and_file_removal() {
         let mut plan = HistoryRewritePlan::default();
+        let oversized = "x".repeat(16 * 1024 + 1);
         add_secret_to_plan(&mut plan, scanned_secret("safe.env", Some("safe-token")))
             .expect("safe replacement");
         add_secret_to_plan(&mut plan, scanned_secret("remove.env", Some("old-token")))
             .expect("initial replacement");
         add_secret_to_plan(&mut plan, scanned_secret("remove.env", None))
             .expect("missing raw fallback");
-        add_secret_to_plan(&mut plan, scanned_secret("unsafe.env", Some("multi\nline")))
+        add_secret_to_plan(&mut plan, scanned_secret("unsafe.env", Some(&oversized)))
             .expect("unsafe raw fallback");
 
         assert_eq!(
@@ -683,6 +501,45 @@ mod tests {
             BTreeSet::from(["secret.env".to_string()])
         );
         assert!(plan.replacement_literals().is_empty());
+    }
+
+    #[tokio::test]
+    async fn replacement_matching_handles_stream_chunk_boundaries() {
+        let directory = tempfile::tempdir().expect("temporary repository");
+        for args in [
+            vec!["init"],
+            vec!["config", "user.name", "Test User"],
+            vec!["config", "user.email", "test@example.com"],
+        ] {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(directory.path())
+                .output()
+                .expect("run git setup");
+            assert!(output.status.success());
+        }
+        let secret = "cross-boundary-secret";
+        let contents = format!("{}{secret}\n", "x".repeat(8 * 1024 - 5));
+        std::fs::write(directory.path().join("secret.env"), contents).expect("write fixture");
+        for args in [vec!["add", "secret.env"], vec!["commit", "-m", "Secret"]] {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(directory.path())
+                .output()
+                .expect("commit fixture");
+            assert!(output.status.success());
+        }
+
+        let mut plan = HistoryRewritePlan::default();
+        add_secret_to_plan(&mut plan, scanned_secret("secret.env", Some(secret)))
+            .expect("replacement plan");
+        let replacements = collect_replacement_blobs(directory.path(), &mut plan)
+            .await
+            .expect("resolve historical blobs");
+
+        assert_eq!(replacements.len(), 1);
+        assert!(replacements.values().any(|values| values.contains(secret)));
+        assert!(plan.remove_paths.is_empty());
     }
 
     #[test]
