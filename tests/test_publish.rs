@@ -1,10 +1,9 @@
-use goobits_repos::commands::publish::handle_publish_command;
 use std::fs;
+use std::process::Command;
 
 mod common;
 use common::fixtures::TestRepo;
 use common::git::is_git_available;
-use common::CurrentDirGuard;
 
 #[tokio::test]
 async fn test_publish_rejects_missing_requested_repository() {
@@ -14,24 +13,20 @@ async fn test_publish_rejects_missing_requested_repository() {
     }
 
     let repo = TestRepo::new().expect("Failed to create test repo");
-    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change directory");
-
-    let error = handle_publish_command(
-        vec!["missing-repository".to_string()],
-        true,
-        false,
-        false,
-        true,
-        false,
-    )
-    .await
-    .expect_err("missing explicit target must fail");
+    let output = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["publish", "--dry-run", "--all", "missing-repository"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos publish");
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        error
-            .to_string()
-            .contains("requested publish repositories not found: missing-repository"),
-        "{error}"
+        !output.status.success(),
+        "missing explicit target must fail"
+    );
+    assert!(
+        stderr.contains("requested publish repositories not found: missing-repository"),
+        "{stderr}"
     );
 }
 
@@ -59,23 +54,16 @@ version = "0.1.0"
 "#;
     fs::write(repo.path().join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
 
-    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
-
-    // Run publish command with dry_run = true
-    let result = handle_publish_command(
-        vec![], // target_repos
-        true,   // dry_run
-        false,  // tag
-        false,  // allow_dirty
-        true,   // all (to ignore visibility check since test repo might be private/unknown)
-        false,  // private_only
-    )
-    .await;
+    let result = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["publish", "--dry-run", "--all"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos publish");
 
     assert!(
-        result.is_ok(),
-        "Publish dry-run should succeed: {:?}",
-        result
+        result.status.success(),
+        "Publish dry-run should succeed: {}",
+        String::from_utf8_lossy(&result.stderr)
     );
 }
 
@@ -104,22 +92,15 @@ async fn test_publish_dry_run_npm() {
     fs::write(repo.path().join("package.json"), package_json)
         .expect("Failed to write package.json");
 
-    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
-
-    // Run publish command with dry_run = true
-    let result = handle_publish_command(
-        vec![], // target_repos
-        true,   // dry_run
-        false,  // tag
-        false,  // allow_dirty
-        true,   // all
-        false,  // private_only
-    )
-    .await;
+    let result = Command::new(env!("CARGO_BIN_EXE_repos"))
+        .args(["publish", "--dry-run", "--all"])
+        .current_dir(repo.path())
+        .output()
+        .expect("Failed to run repos publish");
 
     assert!(
-        result.is_ok(),
-        "Publish dry-run should succeed: {:?}",
-        result
+        result.status.success(),
+        "Publish dry-run should succeed: {}",
+        String::from_utf8_lossy(&result.stderr)
     );
 }
