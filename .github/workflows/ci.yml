@@ -1,0 +1,79 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Format, lint, and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install git-filter-repo
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/git-filter-repo"
+          "${RUNNER_TEMP}/git-filter-repo/bin/pip" install --disable-pip-version-check git-filter-repo==2.47.0
+          echo "${RUNNER_TEMP}/git-filter-repo/bin" >> "${GITHUB_PATH}"
+
+      - name: Verify history-rewrite tooling
+        run: |
+          git --version
+          git filter-repo --version
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint every target and feature
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Test every target and feature
+        run: cargo test --locked --all-targets --all-features
+        env:
+          REPOS_REQUIRE_HISTORY_REWRITE_TOOLS: "1"
+
+  msrv:
+    name: Rust 1.78 compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install minimum supported Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.78.0
+
+      - name: Test every target and feature
+        run: cargo test --locked --all-targets --all-features
+
+  security:
+    name: RustSec audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Audit locked dependencies
+        run: cargo audit

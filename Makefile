@@ -34,7 +34,7 @@ dev:
 
 # Run all unit and integration tests
 test:
-	cargo test
+	cargo test --all-targets --all-features
 
 # Format code using rustfmt
 fmt:
@@ -42,7 +42,7 @@ fmt:
 
 # Lint code using clippy with warnings treated as errors
 lint:
-	cargo clippy -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
 
 # Run the Agent Workspace CLI from the local checkout
 aw:
