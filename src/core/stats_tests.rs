@@ -548,9 +548,14 @@ mod tests {
     #[test]
     fn test_generate_push_report_lists_skipped_repository_with_next_step() {
         let stats = SyncStatistics::new();
+        let repo_path = std::env::current_dir()
+            .expect("current directory")
+            .join("assets")
+            .to_string_lossy()
+            .into_owned();
         stats.update(
             "assets",
-            "/workspace/assets",
+            &repo_path,
             &Status::NoUpstream,
             "no upstream",
             false,
