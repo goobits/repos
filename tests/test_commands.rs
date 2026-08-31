@@ -14,6 +14,7 @@ use common::git::{
     add_bare_remote, clone_repo, create_test_commit, get_head_commit, is_git_available, run_git_ok,
     setup_git_repo, IsolatedGitConfig,
 };
+use common::CurrentDirGuard;
 
 use goobits_repos::commands::staging::{
     handle_commit_command, handle_stage_command, handle_staging_status_command,
@@ -23,7 +24,6 @@ use goobits_repos::commands::sync::{
     handle_fetch_command, handle_push_command, handle_sync_command,
 };
 use goobits_repos::git::{fetch_and_analyze, get_staging_status, push_if_needed, Status};
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -146,13 +146,10 @@ async fn test_sync_command_with_no_repos() {
         return;
     }
 
-    let original_dir = env::current_dir().expect("Failed to get current dir");
     let empty_dir = TempDir::new().expect("Failed to create temp directory");
-    env::set_current_dir(empty_dir.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(empty_dir.path()).expect("Failed to change dir");
 
     let result = handle_sync_command(false, false, false, true, None, false).await;
-
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -207,13 +204,11 @@ async fn test_fetch_command_with_no_repos() {
         return;
     }
 
-    let original_dir = env::current_dir().expect("Failed to get current dir");
     let empty_dir = TempDir::new().expect("Failed to create temp directory");
-    env::set_current_dir(empty_dir.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(empty_dir.path()).expect("Failed to change dir");
 
     let result = handle_fetch_command(false, None, false).await;
 
-    let _ = env::set_current_dir(&original_dir);
     assert!(
         result.is_ok(),
         "Fetch should accept an empty directory: {result:?}"
@@ -245,8 +240,6 @@ async fn test_sync_command_with_single_repo_no_remote() {
         return;
     }
 
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-
     let repo = match TestRepo::new() {
         Ok(r) => r,
         Err(e) => {
@@ -255,11 +248,9 @@ async fn test_sync_command_with_single_repo_no_remote() {
         }
     };
 
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     let result = handle_sync_command(true, false, false, true, None, false).await;
-
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -276,8 +267,6 @@ async fn test_push_command_with_single_repo_no_changes() {
         return;
     }
 
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-
     // Create a test repository with a remote
     let repo = match TestRepo::new() {
         Ok(r) => r,
@@ -289,13 +278,10 @@ async fn test_push_command_with_single_repo_no_changes() {
     let _remote = add_bare_remote(repo.path(), true).expect("Failed to attach bare remote");
 
     // Change to repo directory so it gets discovered
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run push command - should complete without errors (even though push will fail due to no actual remote)
     let result = handle_push_command(false, false, false, true, None, false).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -866,8 +852,6 @@ async fn test_push_command_with_no_remote() {
         return;
     }
 
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-
     // Create a test repository without a remote
     let repo = match TestRepo::new() {
         Ok(r) => r,
@@ -878,13 +862,10 @@ async fn test_push_command_with_no_remote() {
     };
 
     // Change to repo directory
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run push command - should handle no remote gracefully
     let result = handle_push_command(false, false, false, true, None, false).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -1192,8 +1173,6 @@ async fn test_push_command_with_uncommitted_changes() {
         return;
     }
 
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-
     // Create a test repository
     let repo = match TestRepo::new() {
         Ok(r) => r,
@@ -1209,13 +1188,10 @@ async fn test_push_command_with_uncommitted_changes() {
     fs::write(&test_file, "uncommitted content").expect("Failed to write test file");
 
     // Change to repo directory
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run push command - should detect uncommitted changes
     let result = handle_push_command(false, false, false, true, None, false).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -1307,8 +1283,6 @@ async fn test_push_command_with_auto_upstream() {
         return;
     }
 
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-
     // Create a test repository with remote
     let repo = match TestRepo::new() {
         Ok(r) => r,
@@ -1320,13 +1294,10 @@ async fn test_push_command_with_auto_upstream() {
     let _remote = add_bare_remote(repo.path(), false).expect("Failed to attach bare remote");
 
     // Change to repo directory
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run push command with automatic upstream creation enabled.
     let result = handle_push_command(true, false, false, true, None, false).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -1725,14 +1696,10 @@ async fn test_stage_command_with_simple_pattern() {
     fs::write(&test_file, "test content").expect("Failed to write test file");
 
     // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run stage command
     let result = handle_stage_command("test.txt".to_string()).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(result.is_ok(), "Stage command should succeed: {:?}", result);
 
@@ -1774,14 +1741,10 @@ async fn test_stage_command_with_wildcard_pattern() {
     fs::write(repo.path().join("test.txt"), "text file").expect("Failed to write test.txt");
 
     // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run stage command with wildcard pattern
     let result = handle_stage_command("*.md".to_string()).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -1818,14 +1781,10 @@ async fn test_unstage_command_with_pattern() {
         .expect("Failed to stage file");
 
     // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run unstage command
     let result = handle_unstage_command("test.txt".to_string()).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -1841,8 +1800,6 @@ async fn test_commit_command_with_staged_changes() {
         eprintln!("Git not available, skipping test");
         return;
     }
-
-    let original_dir = env::current_dir().expect("Failed to get current dir");
 
     // Create a test repository
     let repo = match TestRepo::new() {
@@ -1878,13 +1835,10 @@ async fn test_commit_command_with_staged_changes() {
     );
 
     // Change to repo directory
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run commit command
     let result = handle_commit_command("Test commit message".to_string(), false).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -1915,14 +1869,10 @@ async fn test_commit_command_with_no_staged_changes() {
     };
 
     // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run commit command with no staged changes - should handle gracefully
     let result = handle_commit_command("Empty commit".to_string(), false).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -1949,14 +1899,10 @@ async fn test_commit_command_with_allow_empty_flag() {
     };
 
     // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run commit command with allow_empty flag
     let result = handle_commit_command("Empty commit".to_string(), true).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -1997,14 +1943,10 @@ async fn test_staging_status_command_with_changes() {
     fs::write(&unstaged_file, "unstaged content").expect("Failed to write unstaged file");
 
     // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run status command
     let result = handle_staging_status_command(Vec::new(), StatusFilters::default()).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -2031,14 +1973,10 @@ async fn test_staging_status_command_with_no_changes() {
     };
 
     // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run status command
     let result = handle_staging_status_command(Vec::new(), StatusFilters::default()).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
@@ -2103,14 +2041,10 @@ async fn test_stage_command_with_nonexistent_file() {
     };
 
     // Change to repo directory
-    let original_dir = env::current_dir().expect("Failed to get current dir");
-    env::set_current_dir(repo.path()).expect("Failed to change dir");
+    let _cwd = CurrentDirGuard::enter(repo.path()).expect("Failed to change dir");
 
     // Run stage command with non-existent file - should handle gracefully
     let result = handle_stage_command("nonexistent.txt".to_string()).await;
-
-    // Restore original directory before repo cleanup
-    let _ = env::set_current_dir(&original_dir);
 
     assert!(
         result.is_ok(),
