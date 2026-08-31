@@ -133,25 +133,6 @@ pub(super) async fn perform_commit_operation(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::commit_output_prefix;
-
-    #[test]
-    fn commit_output_prefix_is_unicode_safe() {
-        assert_eq!(
-            commit_output_prefix("[abc💥branch deadbee] message"),
-            "[abc💥br"
-        );
-    }
-
-    #[test]
-    fn commit_output_prefix_handles_short_or_empty_output() {
-        assert_eq!(commit_output_prefix("short"), "committed");
-        assert_eq!(commit_output_prefix(""), "committed");
-    }
-}
-
 pub(super) async fn perform_unstaging_operation(
     repo_path: &std::path::Path,
     pattern: &str,
@@ -172,5 +153,24 @@ pub(super) async fn perform_unstaging_operation(
             Status::StagingError,
             clean_error_message(&error.to_string()),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_output_prefix;
+
+    #[test]
+    fn commit_output_prefix_is_unicode_safe() {
+        assert_eq!(
+            commit_output_prefix("[abc💥branch deadbee] message"),
+            "[abc💥br"
+        );
+    }
+
+    #[test]
+    fn commit_output_prefix_handles_short_or_empty_output() {
+        assert_eq!(commit_output_prefix("short"), "committed");
+        assert_eq!(commit_output_prefix(""), "committed");
     }
 }
