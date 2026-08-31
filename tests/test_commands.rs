@@ -986,8 +986,9 @@ fn test_doctor_reports_http_pushurl_without_invoking_credentials() {
     );
     assert!(stdout.contains("origin uses HTTP(S) for push"), "{stdout}");
     assert!(
-        stdout
-            .contains("remote set-url --push 'origin' 'git@github.com:goobits/keychain-test.git'"),
+        stdout.contains(
+            "remote set-url --push -- 'origin' 'git@github.com:goobits/keychain-test.git'"
+        ),
         "{stdout}"
     );
     assert!(!stdout.contains("secret"), "{stdout}");
@@ -1034,8 +1035,9 @@ fn test_doctor_ssh_only_policy_blocks_http_pushurl_with_exact_fix() {
     );
     assert!(stdout.contains("ssh-only policy blocked push"), "{stdout}");
     assert!(
-        stdout
-            .contains("remote set-url --push 'origin' 'git@github.com:goobits/keychain-test.git'"),
+        stdout.contains(
+            "remote set-url --push -- 'origin' 'git@github.com:goobits/keychain-test.git'"
+        ),
         "{stdout}"
     );
     assert!(stdout.contains("path:"), "{stdout}");
@@ -1071,7 +1073,7 @@ fn assert_ssh_only_command_blocks_https_fetch(args: &[&str]) {
         "{stdout}"
     );
     assert!(
-        stdout.contains("remote set-url 'origin' 'git@github.com:goobits/keychain-test.git'"),
+        stdout.contains("remote set-url -- 'origin' 'git@github.com:goobits/keychain-test.git'"),
         "{stdout}"
     );
     assert!(!stdout.contains("secret-token"), "{stdout}");
@@ -1158,8 +1160,9 @@ fn test_ssh_only_push_reports_https_pushurl_fix() {
         "{stdout}"
     );
     assert!(
-        stdout
-            .contains("remote set-url --push 'origin' 'git@github.com:goobits/keychain-test.git'"),
+        stdout.contains(
+            "remote set-url --push -- 'origin' 'git@github.com:goobits/keychain-test.git'"
+        ),
         "{stdout}"
     );
     assert!(
