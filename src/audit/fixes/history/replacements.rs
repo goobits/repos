@@ -247,16 +247,20 @@ pub(super) fn blob_replacement_callback(plan_path: &Path) -> Result<String> {
     let encoded_path = hex_encode(plan_path.as_bytes());
     Ok(format!(
         concat!(
-            "if not hasattr(callback, '_repos_plan'):\n",
+            "global _repos_plan\n",
+            "try:\n",
+            "    patterns_by_id = _repos_plan\n",
+            "except NameError:\n",
             "    import json\n",
             "    plan_path = bytes.fromhex('{encoded_path}').decode('utf-8')\n",
             "    with open(plan_path, encoding='utf-8') as stream:\n",
             "        encoded_plan = json.load(stream)\n",
-            "    callback._repos_plan = {{\n",
+            "    _repos_plan = {{\n",
             "        object_id.encode('ascii'): [bytes.fromhex(value) for value in values]\n",
             "        for object_id, values in encoded_plan.items()\n",
             "    }}\n",
-            "patterns = callback._repos_plan.get(blob.original_id)\n",
+            "    patterns_by_id = _repos_plan\n",
+            "patterns = patterns_by_id.get(blob.original_id)\n",
             "if patterns:\n",
             "    for pattern in patterns:\n",
             "        blob.data = blob.data.replace(pattern, b'REDACTED')"

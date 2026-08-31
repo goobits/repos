@@ -548,6 +548,8 @@ mod tests {
             .expect("callback construction");
         assert!(callback.contains("2f746d702f707269766174652d706c616e2e6a736f6e"));
         assert!(callback.contains("blob.original_id"));
+        assert!(callback.contains("global _repos_plan"));
+        assert!(!callback.contains("hasattr(callback"));
         assert!(!callback.contains("shared-value"));
     }
 
