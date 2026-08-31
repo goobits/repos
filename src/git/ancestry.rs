@@ -14,11 +14,18 @@ pub(crate) struct AheadBehind {
 
 /// Counts both sides from one revision-graph snapshot.
 pub(crate) async fn ahead_behind(path: &Path) -> Result<AheadBehind> {
-    let (success, stdout, stderr) = run_git(
-        path,
-        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
-    )
-    .await?;
+    ahead_behind_between(path, "HEAD", "@{upstream}").await
+}
+
+/// Counts commits reachable only from two exact revisions.
+pub(crate) async fn ahead_behind_between(
+    path: &Path,
+    head: &str,
+    upstream: &str,
+) -> Result<AheadBehind> {
+    let range = format!("{head}...{upstream}");
+    let (success, stdout, stderr) =
+        run_git(path, &["rev-list", "--left-right", "--count", &range]).await?;
     if !success {
         anyhow::bail!(
             "{}",

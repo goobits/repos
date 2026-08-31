@@ -146,6 +146,90 @@ async fn test_pull_integrates_the_analyzed_upstream_snapshot() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_pull_refuses_a_branch_change_after_analysis() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "base.txt", "base", "Init")?;
+
+    let local_path = root.join("local");
+    Command::new("git")
+        .args([
+            "clone",
+            remote_path
+                .to_str()
+                .expect("temporary path should be UTF-8"),
+            local_path.to_str().expect("temporary path should be UTF-8"),
+        ])
+        .output()?;
+    setup_git_repo(&local_path)?;
+    create_test_commit(&remote_path, "remote.txt", "remote", "Remote update")?;
+
+    let fetch_result = fetch_and_analyze_for_pull(&local_path).await;
+    assert_eq!(fetch_result.behind_count, 1);
+    git_output(&local_path, &["checkout", "-b", "other"])?;
+    let switched_head = git_output(&local_path, &["rev-parse", "HEAD"])?;
+
+    let (status, message, _) = pull_if_needed(&local_path, &fetch_result, false).await;
+    assert_eq!(status, Status::PullError);
+    assert!(
+        message.contains("branch changed after pull analysis"),
+        "{message}"
+    );
+    assert_eq!(
+        git_output(&local_path, &["rev-parse", "HEAD"])?,
+        switched_head
+    );
+    assert!(!local_path.join("remote.txt").exists());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rebase_refuses_a_head_change_after_analysis() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "base.txt", "base", "Init")?;
+
+    let local_path = root.join("local");
+    Command::new("git")
+        .args([
+            "clone",
+            remote_path
+                .to_str()
+                .expect("temporary path should be UTF-8"),
+            local_path.to_str().expect("temporary path should be UTF-8"),
+        ])
+        .output()?;
+    setup_git_repo(&local_path)?;
+    create_test_commit(&remote_path, "remote.txt", "remote", "Remote update")?;
+
+    let fetch_result = fetch_and_analyze_for_pull(&local_path).await;
+    assert_eq!(fetch_result.behind_count, 1);
+    create_test_commit(&local_path, "local.txt", "local", "Late local update")?;
+    let changed_head = git_output(&local_path, &["rev-parse", "HEAD"])?;
+
+    let (status, message, _) = pull_if_needed(&local_path, &fetch_result, true).await;
+    assert_eq!(status, Status::PullError);
+    assert!(
+        message.contains("HEAD changed after pull analysis"),
+        "{message}"
+    );
+    assert_eq!(
+        git_output(&local_path, &["rev-parse", "HEAD"])?,
+        changed_head
+    );
+    assert!(!local_path.join("remote.txt").exists());
+
+    Ok(())
+}
+
 fn git_output(path: &std::path::Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git").args(args).current_dir(path).output()?;
     if !output.status.success() {

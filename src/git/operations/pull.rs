@@ -9,6 +9,8 @@ pub struct PullFetchResult {
     pub ahead_count: u32,
     pub behind_count: u32,
     pub upstream_name: Option<String>,
+    analyzed_branch: Option<String>,
+    analyzed_head_commit: Option<String>,
     upstream_commit: Option<String>,
     pub status: Status,
     pub message: String,
@@ -23,6 +25,8 @@ impl PullFetchResult {
             ahead_count: 0,
             behind_count: 0,
             upstream_name: None,
+            analyzed_branch: None,
+            analyzed_head_commit: None,
             upstream_commit: None,
             status: Status::Error,
             message,
@@ -37,6 +41,8 @@ impl PullFetchResult {
             ahead_count: 0,
             behind_count: 0,
             upstream_name: None,
+            analyzed_branch: None,
+            analyzed_head_commit: None,
             upstream_commit: None,
             status: Status::Error,
             message: failure.message.clone(),
@@ -74,6 +80,8 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
                 ahead_count: 0,
                 behind_count: 0,
                 upstream_name: None,
+                analyzed_branch: None,
+                analyzed_head_commit: None,
                 upstream_commit: None,
                 status: Status::Skip,
                 message: STATUS_DETACHED_HEAD.to_string(),
@@ -111,6 +119,8 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count: 0,
             behind_count: 0,
             upstream_name: None,
+            analyzed_branch: None,
+            analyzed_head_commit: None,
             upstream_commit: None,
             status: Status::NoRemote,
             message: STATUS_NO_REMOTE.to_string(),
@@ -170,7 +180,7 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             );
         }
     };
-    if final_state.head() != &HeadState::Branch(current_branch) {
+    if final_state.head() != &HeadState::Branch(current_branch.clone()) {
         return PullFetchResult::error(
             "branch changed while repository state was being inspected".to_string(),
             has_uncommitted,
@@ -183,6 +193,8 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count: 0,
             behind_count: 0,
             upstream_name: None,
+            analyzed_branch: Some(current_branch),
+            analyzed_head_commit: None,
             upstream_commit: None,
             status: Status::NoUpstream,
             message: STATUS_NO_UPSTREAM.to_string(),
@@ -191,27 +203,45 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
         };
     }
 
-    let Some(counts) = final_state.ahead_behind() else {
-        return PullFetchResult::error(
-            "upstream ancestry counts are missing".to_string(),
-            has_uncommitted,
-        );
+    let analyzed_head_commit = match resolve_commit(path, "HEAD^{commit}", "HEAD commit").await {
+        Ok(commit) => commit,
+        Err(error) => {
+            return PullFetchResult::error(
+                clean_error_message(&error.to_string()),
+                has_uncommitted,
+            );
+        }
     };
-    let ahead_count = counts.ahead;
-    let behind_count = counts.behind;
-    let upstream_commit = if behind_count > 0 {
-        match resolve_upstream_commit(path).await {
-            Ok(commit) => Some(commit),
+    let upstream_commit =
+        match resolve_commit(path, "@{upstream}^{commit}", "configured upstream commit").await {
+            Ok(commit) => commit,
             Err(error) => {
                 return PullFetchResult::error(
                     clean_error_message(&error.to_string()),
                     has_uncommitted,
                 );
             }
+        };
+    let counts = match crate::git::ancestry::ahead_behind_between(
+        path,
+        &analyzed_head_commit,
+        &upstream_commit,
+    )
+    .await
+    {
+        Ok(counts) => counts,
+        Err(error) => {
+            return PullFetchResult::error(
+                clean_error_message(&error.to_string()),
+                has_uncommitted,
+            );
         }
-    } else {
-        None
     };
+    let ahead_count = counts.ahead;
+    let behind_count = counts.behind;
+    let analyzed_branch = Some(current_branch);
+    let analyzed_head_commit = Some(analyzed_head_commit);
+    let upstream_commit = Some(upstream_commit);
 
     if ahead_count > 0 && behind_count > 0 {
         return PullFetchResult {
@@ -219,6 +249,8 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count,
             behind_count,
             upstream_name,
+            analyzed_branch,
+            analyzed_head_commit,
             upstream_commit,
             status: Status::PullError,
             message: format!(
@@ -235,6 +267,8 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count,
             behind_count: 0,
             upstream_name,
+            analyzed_branch,
+            analyzed_head_commit,
             upstream_commit,
             status: Status::Synced,
             message: STATUS_SYNCED.to_string(),
@@ -247,6 +281,8 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
             ahead_count,
             behind_count,
             upstream_name,
+            analyzed_branch,
+            analyzed_head_commit,
             upstream_commit,
             status: Status::Synced,
             message: format!("{behind_count} commits behind"),
@@ -256,19 +292,39 @@ pub(crate) async fn fetch_and_analyze_for_pull_with_state(
     }
 }
 
-async fn resolve_upstream_commit(path: &Path) -> Result<String> {
-    let (success, stdout, stderr) =
-        run_git(path, &["rev-parse", "--verify", "@{upstream}^{commit}"]).await?;
+async fn resolve_commit(path: &Path, revision: &str, label: &str) -> Result<String> {
+    let (success, stdout, stderr) = run_git(path, &["rev-parse", "--verify", revision]).await?;
     if !success {
         bail!(command_error(
             &stderr,
-            "configured upstream commit could not be resolved"
+            &format!("{label} could not be resolved")
         ));
     }
     if !matches!(stdout.len(), 40 | 64) || !stdout.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("configured upstream resolved to an invalid commit identifier");
+        bail!("{label} resolved to an invalid commit identifier");
     }
     Ok(stdout)
+}
+
+async fn validate_pull_snapshot(path: &Path, fetch_result: &PullFetchResult) -> Result<()> {
+    let state = inspect_refreshed_repository_state(path).await?;
+    let Some(analyzed_branch) = fetch_result.analyzed_branch.as_deref() else {
+        bail!("pull analysis omitted the local branch");
+    };
+    if state.head() != &HeadState::Branch(analyzed_branch.to_string()) {
+        bail!("branch changed after pull analysis; rerun the command");
+    }
+    if state.is_dirty() {
+        bail!("worktree changed after pull analysis; commit or stash, then rerun the command");
+    }
+    let Some(analyzed_head_commit) = fetch_result.analyzed_head_commit.as_deref() else {
+        bail!("pull analysis omitted the local HEAD commit");
+    };
+    let current_head = resolve_commit(path, "HEAD^{commit}", "HEAD commit").await?;
+    if current_head != analyzed_head_commit {
+        bail!("HEAD changed after pull analysis; rerun the command");
+    }
+    Ok(())
 }
 
 pub async fn pull_if_needed(
@@ -315,9 +371,16 @@ pub(crate) async fn pull_if_needed_with_context(
         );
     }
 
+    if let Err(error) = validate_pull_snapshot(path, fetch_result).await {
+        return pull_snapshot_changed(fetch_result, &error);
+    }
+
     let uses_lfs = check_uses_git_lfs(path).await;
     if uses_lfs {
         let _ = run_git(path, &["lfs", "fetch"]).await;
+        if let Err(error) = validate_pull_snapshot(path, fetch_result).await {
+            return pull_snapshot_changed(fetch_result, &error);
+        }
     }
     let Some(upstream_commit) = fetch_result.upstream_commit.as_deref() else {
         return GitOperationResult::new(
@@ -392,6 +455,19 @@ pub(crate) async fn pull_if_needed_with_context(
             GitOperationResult::failed(Status::PullError, failure, fetch_result.has_uncommitted)
         }
     }
+}
+
+fn pull_snapshot_changed(
+    fetch_result: &PullFetchResult,
+    error: &anyhow::Error,
+) -> GitOperationResult {
+    let message = crate::core::clean_error_message(&error.to_string());
+    let failure = GitFailure::from_message(
+        GitOperationPhase::Pull,
+        message,
+        fetch_result.remote.clone(),
+    );
+    GitOperationResult::failed(Status::PullError, failure, fetch_result.has_uncommitted)
 }
 
 async fn recover_failed_rebase(path: &Path, use_rebase: bool, error_message: &str) -> String {
