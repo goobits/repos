@@ -40,8 +40,10 @@ jobs:
       - name: Lint every target and feature
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      - name: Test every target and feature
-        run: cargo test --locked --all-targets --all-features
+      - name: Test every target, feature, and doctest
+        run: |
+          cargo test --locked --all-targets --all-features
+          cargo test --locked --doc --all-features
         env:
           REPOS_REQUIRE_HISTORY_REWRITE_TOOLS: "1"
 
@@ -58,8 +60,10 @@ jobs:
         with:
           toolchain: 1.78.0
 
-      - name: Test every target and feature
-        run: cargo test --locked --all-targets --all-features
+      - name: Test every target, feature, and doctest
+        run: |
+          cargo test --locked --all-targets --all-features
+          cargo test --locked --doc --all-features
 
   security:
     name: RustSec audit
@@ -76,4 +80,4 @@ jobs:
         uses: taiki-e/install-action@cargo-audit
 
       - name: Audit locked dependencies
-        run: cargo audit
+        run: cargo audit --deny warnings

@@ -35,6 +35,7 @@ dev:
 # Run all unit and integration tests
 test:
 	cargo test --all-targets --all-features
+	cargo test --doc --all-features
 
 # Format code using rustfmt
 fmt:
