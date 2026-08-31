@@ -28,7 +28,7 @@ Common issues and solutions for the repos tool.
 |-------|-------|----------|
 | Config conflicts between repos | Different configs in nested repos | Use `git config --local` directly in specific repos to set repo-specific values |
 | Email validation failures | Invalid email format | Use proper format: `user@example.com` |
-| `Permission denied` on `.git/config` | Read-only git config | Check file permissions: `chmod 644 .git/config` |
+| `Permission denied` on `.git/config` | Wrong ownership or missing owner access | Inspect ownership and permissions, then restore owner access only (for example, `chmod u+rw .git/config`) |
 | Config not applied | Wrong config scope | Verify with `git config --list --show-scope` |
 
 ## Performance Issues

@@ -114,8 +114,8 @@ Safe default:
 - Commits repositories with staged changes.
 - Pushes successful commits and clean branches that were already ahead.
 - Skips branches without upstream unless `--auto-upstream` is passed.
-- Saves nested children before parents; a failed child blocks its parent from
-  committing or publishing.
+- Saves nested children before parents; a failed child blocks parent publication
+  when the committed gitlink is not reachable from the child's remotes.
 - Refreshes and validates parent gitlinks from the parent's committed `HEAD`,
   then verifies each exact child commit against fetched remote refs before push.
 - Plans direct-parent gitlink refreshes in dry-run output without changing the
@@ -151,7 +151,8 @@ Default behavior:
 
 - Selects one deterministic remote; ambiguous multi-remote repositories fail
   with guidance instead of guessing.
-- Pulls with rebase against the exact upstream ref fetched during inspection.
+- Pins the fetched upstream commit and preserves the pre-fetch fork point when
+  rebasing a rewritten upstream.
 - Pushes local commits after the pull phase.
 - Scans once and prints one final report with exclusive repo outcomes plus named pull/push transfers.
 - Neither pulls nor pushes a dirty repository; no implicit stash is created.
@@ -251,8 +252,8 @@ is blocked unless the exact indexed child commit is reachable from freshly
 fetched child remote refs; a normal published detached checkout is allowed.
 Without an upstream, the command returns before inspecting push transport or
 uploading LFS objects unless `--auto-upstream` is explicitly supplied. LFS
-uploads use the local source branch (or `HEAD` for a detached checkout), even
-when the upstream branch has a different name.
+uploads use the local source branch, even when the upstream branch has a
+different name. Detached checkouts are skipped before publication.
 
 The final report uses exclusive `Pushed`, `Up to date`, `Failed`, and `Skipped`
 outcomes that add up to `Checked`. Pushed repositories are named; failures,
@@ -287,6 +288,13 @@ repos pull --rebase
 Parents are pulled before nested children so updated parent state is established
 first. This ordering does not replace `git submodule update` when a parent
 changes a submodule pointer.
+
+After fetching the selected remote, pull pins the analyzed local and upstream
+commits and rechecks the branch, `HEAD`, and worktree before integration. Rebase
+uses the pre-fetch upstream as its fork point, including after a forced remote
+rewrite. If the target contains Git LFS pointers, their objects are fetched from
+that selected remote for the pinned commit; a failed LFS fetch leaves `HEAD`
+unchanged.
 
 The final report mirrors `repos push`: exclusive outcomes, named pulled
 repositories, and one project-grouped section for actionable failures, skips,

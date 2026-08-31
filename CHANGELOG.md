@@ -52,8 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Pull and sync pin the local and upstream commits from their explicit fetch,
-  revalidate the branch, HEAD, and worktree before integration, and avoid a
-  second network round trip or moving-ref race.
+  revalidate the branch, HEAD, and worktree before integration, preserve the
+  pre-fetch rebase fork point, fetch LFS objects for the pinned target from the
+  inspected remote, and avoid a second Git fetch or moving-ref race.
+- Git remote names are passed after option terminators across fetch, push,
+  doctor, release-tag verification, LFS, and nested publication paths so names
+  beginning with `-` remain literal arguments.
 - `repos save` now rejects conflicts before staging, publishes clean branches that are already ahead, leaves untracked-only work untouched, and blocks parent publication after a child failure.
 - `repos sync` never pushes a dirty repository. Missing-upstream pushes return before transport or LFS side effects, LFS uses the local source ref, and failures cannot be hidden by later skips.
 - Package publishing now rejects missing requested targets, accepts only exact detached release-tag provenance, uploads only invocation-produced PyPI artifacts, and reports timed-out registry outcomes as unknown after cancelling the command (and its process group on Unix).

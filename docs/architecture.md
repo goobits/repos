@@ -138,20 +138,27 @@ large fleets do not create unbounded GitHub CLI or filesystem work.
 - Push and pull inspect remotes, branches, upstreams, and worktree state before
   mutation.
 - Upstream-aware transfers fetch the selected remote explicitly. Pull and sync
-  pin the analyzed local and upstream commits, then revalidate the branch,
-  `HEAD`, and worktree immediately before direct integration without a second
-  fetch. Automatic upstream creation checks `branch.<name>.pushRemote`,
+  pin the analyzed local commit, fetched upstream commit, and pre-fetch
+  upstream fork point. They fetch LFS objects for that exact upstream commit
+  from the inspected remote, then revalidate the branch, `HEAD`, and worktree
+  immediately before direct integration without a second Git fetch. Remote
+  names are separated from command options before network operations.
+  Automatic upstream creation checks `branch.<name>.pushRemote`,
   `remote.pushDefault`, and `branch.<name>.remote`, then uses `origin` or a sole
   remote; ambiguous multi-remote repositories fail before network mutation.
 - A push without an upstream returns before push-transport and LFS side effects
   unless automatic upstream creation was requested. LFS uploads use the local
-  source branch, with `HEAD` as the fallback when no branch name is available.
-- Pull uses fast-forward-only behavior unless the caller requests rebase.
+  source branch; detached checkouts are skipped before publication.
+- Pull uses fast-forward-only behavior unless the caller requests rebase. It
+  fetches LFS objects for the pinned incoming commit before checkout and retains
+  the pre-fetch upstream commit as the rebase fork point.
 - Missing or inaccessible remotes are failures, not clean/synced results.
-- `repos doctor` probes every configured remote with `git ls-remote` and exits
-  nonzero when it finds blockers. It batches raw configured URL inspection once
-  per repository, then checks effective fetch and push URLs separately so Git
-  rewrite rules and transport policy remain visible.
+- `repos doctor` inspects every configured remote and probes eligible non-HTTP
+  fetch remotes with `git ls-remote`; default-policy HTTP(S) probes are skipped
+  so credential helpers cannot run. It exits nonzero when it finds blockers,
+  batches raw configured URL inspection once per repository, and checks
+  effective fetch and push URLs separately so Git rewrite rules and transport
+  policy remain visible.
 - Audit target names are exact; a missing requested repository fails instead of
   silently narrowing the scan. Secret findings distinguish verified,
   unverified, and verification-unknown results. In verification mode, verified
