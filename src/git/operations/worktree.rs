@@ -162,7 +162,7 @@ pub async fn create_and_push_tag(path: &Path, tag_name: &str) -> (bool, String) 
     }
 
     let tag_refspec = format!("refs/tags/{tag_name}:refs/tags/{tag_name}");
-    match run_git(path, &["push", &remote_name, &tag_refspec]).await {
+    match run_git(path, &["push", "--", &remote_name, &tag_refspec]).await {
         Ok((true, _, _)) if existed => (true, format!("existing tag pushed {tag_name}")),
         Ok((true, _, _)) => (true, format!("tagged & pushed {tag_name}")),
         Ok((false, _, stderr)) => (

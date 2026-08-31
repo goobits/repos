@@ -340,7 +340,7 @@ async fn diagnose_remote(
         return;
     }
 
-    match run_git(path, &["ls-remote", "--heads", remote]).await {
+    match run_git(path, &["ls-remote", "--heads", "--", remote]).await {
         Ok((true, _, _)) => {}
         Ok((false, _, stderr)) => diagnosis.blockers.push(DoctorFinding::new(
             format!("{remote} access failed: {}", clean_error_message(&stderr)),

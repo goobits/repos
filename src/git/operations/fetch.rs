@@ -158,7 +158,7 @@ pub async fn fetch_and_analyze(path: &Path, auto_upstream: bool) -> FetchResult 
         return FetchResult::failed(failure, has_uncommitted, current_branch);
     }
 
-    let fetch_args = ["fetch", "--quiet", fetch_remote.as_str()];
+    let fetch_args = ["fetch", "--quiet", "--", fetch_remote.as_str()];
     let fetch_error = match run_git(path, &fetch_args).await {
         Ok((true, _, _)) => None,
         Ok((false, _, stderr)) => Some(command_error(&stderr, "fetch failed")),

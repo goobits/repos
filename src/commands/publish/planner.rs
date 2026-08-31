@@ -260,7 +260,7 @@ async fn verify_detached_tag_release(path: &Path, tag: &str) -> anyhow::Result<(
     let peeled_ref = format!("{tag_ref}^{{}}");
     let (success, refs, stderr) = run_git(
         path,
-        &["ls-remote", "--tags", &remote, &tag_ref, &peeled_ref],
+        &["ls-remote", "--tags", "--", &remote, &tag_ref, &peeled_ref],
     )
     .await?;
     if !success {

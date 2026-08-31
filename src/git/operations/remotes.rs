@@ -83,7 +83,7 @@ pub(crate) async fn fetch_remote_updates(path: &Path) -> GitOperationResult {
     };
 
     for (remote, context) in fetch_remotes {
-        let fetch_error = match run_git(path, &["fetch", "--quiet", remote]).await {
+        let fetch_error = match run_git(path, &["fetch", "--quiet", "--", remote]).await {
             Ok((true, _, _)) => None,
             Ok((false, _, stderr)) => Some(command_error(&stderr, "fetch failed")),
             Err(error) => Some(clean_error_message(&error.to_string())),
@@ -153,7 +153,7 @@ pub(crate) async fn remote_refs_contain_commit(path: &Path, commit: &str) -> Res
             }
         }
 
-        match run_git(path, &["fetch", "--quiet", remote]).await {
+        match run_git(path, &["fetch", "--quiet", "--", remote]).await {
             Ok((true, _, _)) => fetched_any = true,
             Ok((false, _, stderr)) => {
                 failures.push(format!(

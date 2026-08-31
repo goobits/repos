@@ -119,7 +119,13 @@ pub(crate) async fn push_if_needed_with_context(
                 );
             }
         };
-        let push_args = vec!["push", "-u", &remote_name, &fetch_result.current_branch];
+        let push_args = vec![
+            "push",
+            "-u",
+            "--",
+            &remote_name,
+            &fetch_result.current_branch,
+        ];
         return match run_git(path, &push_args).await {
             Ok((true, _, _)) => {
                 let msg = if uses_lfs {
@@ -158,7 +164,7 @@ pub(crate) async fn push_if_needed_with_context(
     } else {
         format!("{}:{}", fetch_result.current_branch, target_branch)
     };
-    let push_args = vec!["push", &remote_name, &push_refspec];
+    let push_args = vec!["push", "--", &remote_name, &push_refspec];
     match run_git(path, &push_args).await {
         Ok((true, _, _)) => {
             let commits_word = if fetch_result.ahead_count == 1 {
@@ -236,6 +242,22 @@ async fn count_new_upstream_commits(path: &Path, remote: &str, branch: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+
+    fn git(path: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("git should run");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
 
     fn no_upstream_fetch_result() -> FetchResult {
         FetchResult {
@@ -269,5 +291,49 @@ mod tests {
     fn lfs_push_uses_the_local_source_ref() {
         assert_eq!(lfs_source_ref("local-feature"), "local-feature");
         assert_eq!(lfs_source_ref(""), "HEAD");
+    }
+
+    #[tokio::test]
+    async fn fetch_and_push_treat_an_option_like_remote_name_literally() {
+        let directory = tempfile::tempdir().expect("temporary root");
+        let repository = directory.path().join("repository");
+        let remote = directory.path().join("remote.git");
+        std::fs::create_dir(&repository).expect("create repository");
+        git(&repository, &["init"]);
+        git(&repository, &["config", "user.name", "repos test"]);
+        git(
+            &repository,
+            &["config", "user.email", "repos@example.invalid"],
+        );
+        git(
+            directory.path(),
+            &["init", "--bare", remote.to_str().unwrap()],
+        );
+        git(
+            &repository,
+            &["remote", "add", "--", "--all", remote.to_str().unwrap()],
+        );
+        std::fs::write(repository.join("tracked.txt"), "initial").expect("write fixture");
+        git(&repository, &["add", "tracked.txt"]);
+        git(&repository, &["commit", "-m", "Initial"]);
+
+        let first_fetch = fetch_and_analyze(&repository, true).await;
+        assert_eq!(first_fetch.status, Status::NoUpstream);
+        let first_push = push_if_needed_with_context(&repository, &first_fetch, true).await;
+        assert_eq!(first_push.status, Status::Pushed, "{}", first_push.message);
+
+        std::fs::write(repository.join("tracked.txt"), "updated").expect("update fixture");
+        git(&repository, &["add", "tracked.txt"]);
+        git(&repository, &["commit", "-m", "Update"]);
+        let second_fetch = fetch_and_analyze(&repository, false).await;
+        assert_eq!(second_fetch.status, Status::Synced);
+        assert_eq!(second_fetch.ahead_count, 1);
+        let second_push = push_if_needed_with_context(&repository, &second_fetch, false).await;
+        assert_eq!(
+            second_push.status,
+            Status::Pushed,
+            "{}",
+            second_push.message
+        );
     }
 }

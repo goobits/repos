@@ -177,7 +177,7 @@ pub(crate) async fn inspect_remote(
     if direction == RemoteDirection::Push {
         args.push("--push");
     }
-    args.extend(["--all", remote]);
+    args.extend(["--all", "--", remote]);
 
     let (success, urls, stderr) = run_git(path, &args).await?;
     if !success {
@@ -312,9 +312,10 @@ fn safe_ssh_identity(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_github_remote_url, policy_violation_for, safe_http_details, safe_ssh_identity,
-        RemoteContext, RemoteDirection, RemoteTransport, TransportPolicy,
+        inspect_remote, is_github_remote_url, policy_violation_for, safe_http_details,
+        safe_ssh_identity, RemoteContext, RemoteDirection, RemoteTransport, TransportPolicy,
     };
+    use std::process::Command;
 
     fn context(transport: RemoteTransport) -> RemoteContext {
         RemoteContext {
@@ -446,5 +447,39 @@ mod tests {
         assert!(!is_github_remote_url(
             "https://example.com/github.com/repos.git"
         ));
+    }
+
+    #[tokio::test]
+    async fn inspects_an_option_like_remote_name_literally() {
+        let directory = tempfile::tempdir().expect("temporary repository");
+        let remote = directory.path().join("remote.git");
+        let repository = directory.path().join("repository");
+
+        let bare = Command::new("git")
+            .args(["init", "--bare"])
+            .arg(&remote)
+            .output()
+            .expect("git should initialize the remote");
+        assert!(bare.status.success());
+        let local = Command::new("git")
+            .args(["init"])
+            .arg(&repository)
+            .output()
+            .expect("git should initialize the repository");
+        assert!(local.status.success());
+        let configured = Command::new("git")
+            .args(["remote", "add", "--", "--all"])
+            .arg(&remote)
+            .current_dir(&repository)
+            .output()
+            .expect("git should configure the remote");
+        assert!(configured.status.success());
+
+        let contexts = inspect_remote(&repository, "--all", RemoteDirection::Fetch)
+            .await
+            .expect("option-like remote should be inspected literally");
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].remote, "--all");
+        assert_eq!(contexts[0].transport, RemoteTransport::Local);
     }
 }
