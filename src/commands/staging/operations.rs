@@ -2,6 +2,15 @@
 
 use super::*;
 
+fn commit_output_prefix(stdout: &str) -> String {
+    stdout
+        .lines()
+        .next()
+        .filter(|line| line.chars().count() > 7)
+        .map(|line| line.chars().take(7).collect())
+        .unwrap_or_else(|| "committed".to_string())
+}
+
 pub(super) async fn perform_staging_operation(
     repo_path: &std::path::Path,
     pattern: &str,
@@ -107,15 +116,7 @@ pub(super) async fn perform_commit_operation(
 
     match commit_changes(repo_path, message, include_empty).await {
         Ok((true, stdout, _)) => {
-            let commit_info = if let Some(first_line) = stdout.lines().next() {
-                if first_line.len() > 7 {
-                    &first_line[0..7]
-                } else {
-                    "committed"
-                }
-            } else {
-                "committed"
-            };
+            let commit_info = commit_output_prefix(&stdout);
             (Status::Committed, format!("committed {commit_info}"))
         }
         Ok((false, _, stderr)) => {
@@ -129,6 +130,25 @@ pub(super) async fn perform_commit_operation(
             }
         }
         Err(error) => (Status::CommitError, clean_error_message(&error.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_output_prefix;
+
+    #[test]
+    fn commit_output_prefix_is_unicode_safe() {
+        assert_eq!(
+            commit_output_prefix("[abc💥branch deadbee] message"),
+            "[abc💥br"
+        );
+    }
+
+    #[test]
+    fn commit_output_prefix_handles_short_or_empty_output() {
+        assert_eq!(commit_output_prefix("short"), "committed");
+        assert_eq!(commit_output_prefix(""), "committed");
     }
 }
 

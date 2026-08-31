@@ -110,23 +110,12 @@ impl ValidationReport {
     }
 }
 
-/// Convert path to string with proper error handling
-fn path_to_str(path: &Path) -> Result<&str> {
-    path.to_str()
-        .context("Path contains invalid UTF-8 characters")
-}
-
 /// Read the exact HEAD identity and timestamp from one object snapshot.
 fn get_head_metadata(path: &Path) -> Result<(String, i64)> {
     let output = Command::new("git")
-        .args([
-            "-C",
-            path_to_str(path)?,
-            "show",
-            "-s",
-            "--format=%H%x00%ct",
-            "HEAD",
-        ])
+        .arg("-C")
+        .arg(path)
+        .args(["show", "-s", "--format=%H%x00%ct", "HEAD"])
         .output()
         .context("Failed to inspect nested repository HEAD")?;
 
@@ -156,7 +145,9 @@ fn get_current_commit(path: &Path) -> Result<String> {
 /// inspection failure.
 fn get_remote_url(path: &Path) -> Result<Option<String>> {
     let output = Command::new("git")
-        .args(["-C", path_to_str(path)?, "remote", "get-url", "origin"])
+        .arg("-C")
+        .arg(path)
+        .args(["remote", "get-url", "origin"])
         .output()
         .context("Failed to run git remote")?;
 
@@ -215,11 +206,10 @@ fn remote_key(host: &str, path: &str) -> String {
 /// There's an async version in `git::operations`, but this module requires
 /// sync operations.
 fn has_uncommitted_changes(path: &Path) -> Result<bool> {
-    let path_str = path_to_str(path)?;
     let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
         .args([
-            "-C",
-            path_str,
             "status",
             "--porcelain=v2",
             "-z",

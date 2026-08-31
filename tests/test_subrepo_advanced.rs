@@ -184,6 +184,106 @@ async fn test_update_allows_fast_forward_commit() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_update_uses_advertised_remote_head_after_default_branch_change() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "f.txt", "v1", "Initial")?;
+    let initial = get_head_commit(&remote_path)?;
+
+    let parent_path = root.join("parent");
+    std::fs::create_dir(&parent_path)?;
+    setup_git_repo(&parent_path)?;
+    let sub_path = parent_path.join("sub");
+    clone_repo(&remote_path, &sub_path)?;
+
+    let checkout = Command::new("git")
+        .args(["checkout", "-b", "release"])
+        .current_dir(&remote_path)
+        .output()?;
+    assert!(checkout.status.success());
+    create_test_commit(&remote_path, "f.txt", "v2", "New default branch")?;
+    let release_tip = get_head_commit(&remote_path)?;
+
+    let instance = SubrepoInstance {
+        parent_repo: "parent".to_string(),
+        parent_path,
+        subrepo_name: "upstream".to_string(),
+        subrepo_path: sub_path.clone(),
+        relative_path: "sub".to_string(),
+        commit_hash: initial.clone(),
+        short_hash: initial[..7].to_string(),
+        remote_url: Some(remote_path.to_string_lossy().into_owned()),
+        has_uncommitted: false,
+        commit_timestamp: 0,
+        checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
+    };
+    let report = ValidationReport {
+        total_nested: 1,
+        by_remote: HashMap::from([(remote_path.to_string_lossy().into_owned(), vec![instance])]),
+        no_remote: Vec::new(),
+        uninitialized_submodules: Vec::new(),
+    };
+
+    update_subrepo_with_report("upstream", false, &report).await?;
+
+    assert_eq!(get_head_commit(&sub_path)?, release_tip);
+    assert_ne!(release_tip, initial);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_update_accepts_non_utf8_checkout_paths() -> Result<()> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path();
+    let remote_path = root.join("upstream");
+    std::fs::create_dir(&remote_path)?;
+    setup_git_repo(&remote_path)?;
+    create_test_commit(&remote_path, "f.txt", "v1", "Initial")?;
+    let initial = get_head_commit(&remote_path)?;
+
+    let parent_path = root.join("parent");
+    std::fs::create_dir(&parent_path)?;
+    setup_git_repo(&parent_path)?;
+    let sub_path = parent_path.join(OsString::from_vec(b"sub-\xff".to_vec()));
+    clone_repo(&remote_path, &sub_path)?;
+
+    create_test_commit(&remote_path, "f.txt", "v2", "Remote update")?;
+    let remote_tip = get_head_commit(&remote_path)?;
+
+    let instance = SubrepoInstance {
+        parent_repo: "parent".to_string(),
+        parent_path,
+        subrepo_name: "upstream".to_string(),
+        subrepo_path: sub_path.clone(),
+        relative_path: "sub".to_string(),
+        commit_hash: initial.clone(),
+        short_hash: initial[..7].to_string(),
+        remote_url: Some(remote_path.to_string_lossy().into_owned()),
+        has_uncommitted: false,
+        commit_timestamp: 0,
+        checkout_kind: goobits_repos::subrepo::NestedCheckoutKind::Independent,
+    };
+    let report = ValidationReport {
+        total_nested: 1,
+        by_remote: HashMap::from([(remote_path.to_string_lossy().into_owned(), vec![instance])]),
+        no_remote: Vec::new(),
+        uninitialized_submodules: Vec::new(),
+    };
+
+    update_subrepo_with_report("upstream", false, &report).await?;
+
+    assert_eq!(get_head_commit(&sub_path)?, remote_tip);
+    Ok(())
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn test_update_uses_one_immutable_target_for_every_copy() -> Result<()> {

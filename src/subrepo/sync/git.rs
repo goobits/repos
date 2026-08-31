@@ -7,17 +7,11 @@ use std::process::Command;
 use crate::git::operations::run_git;
 use crate::git::remote::{inspect_remote, policy_violation, RemoteDirection};
 
-fn path_to_str(path: &Path) -> Result<&str> {
-    path.to_str()
-        .context("Path contains invalid UTF-8 characters")
-}
-
 pub(super) fn has_uncommitted_changes(path: &Path) -> Result<bool> {
-    let path_str = path_to_str(path)?;
     let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
         .args([
-            "-C",
-            path_str,
             "status",
             "--porcelain=v1",
             "--untracked-files=normal",
@@ -38,9 +32,9 @@ pub(super) fn has_uncommitted_changes(path: &Path) -> Result<bool> {
 
 pub(super) fn stash_changes(path: &Path) -> Result<()> {
     let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
         .args([
-            "-C",
-            path_to_str(path)?,
             "stash",
             "push",
             "--include-untracked",
@@ -60,7 +54,7 @@ pub(super) fn stash_changes(path: &Path) -> Result<()> {
 
 pub(super) fn checkout_commit(path: &Path, commit: &str, force: bool) -> Result<()> {
     let mut command = Command::new("git");
-    command.args(["-C", path_to_str(path)?, "checkout"]);
+    command.arg("-C").arg(path).arg("checkout");
     if force {
         command.arg("--force");
     }
@@ -79,14 +73,9 @@ pub(super) fn checkout_commit(path: &Path, commit: &str, force: bool) -> Result<
 
 pub(super) fn is_ancestor(path: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
     let output = Command::new("git")
-        .args([
-            "-C",
-            path_to_str(path)?,
-            "merge-base",
-            "--is-ancestor",
-            ancestor,
-            descendant,
-        ])
+        .arg("-C")
+        .arg(path)
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
         .output()
         .context("Failed to run git merge-base")?;
 
@@ -121,7 +110,9 @@ async fn fetch_origin(path: &Path) -> Result<()> {
 fn commit_exists(path: &Path, commit: &str) -> Result<bool> {
     let object = format!("{commit}^{{commit}}");
     let output = Command::new("git")
-        .args(["-C", path_to_str(path)?, "cat-file", "-e", &object])
+        .arg("-C")
+        .arg(path)
+        .args(["cat-file", "-e", &object])
         .output()
         .context("Failed to inspect target commit")?;
     Ok(output.status.success())
@@ -143,20 +134,28 @@ pub(super) async fn ensure_commit_available(path: &Path, commit: &str) -> Result
 }
 
 pub(super) async fn fetch_latest_commit(path: &Path) -> Result<String> {
-    let path_str = path_to_str(path)?;
     fetch_origin(path).await?;
 
-    for branch in &["origin/HEAD", "origin/main", "origin/master"] {
-        let output = Command::new("git")
-            .args(["-C", path_str, "rev-parse", branch])
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                return Ok(String::from_utf8(output.stdout)?.trim().to_string());
+    let (success, stdout, stderr) = run_git(path, &["ls-remote", "--symref", "origin", "HEAD"])
+        .await
+        .context("Failed to inspect nested origin HEAD")?;
+    if !success {
+        anyhow::bail!(
+            "git ls-remote failed: {}",
+            if stderr.trim().is_empty() {
+                "remote HEAD was not advertised"
+            } else {
+                stderr.trim()
             }
-        }
+        );
     }
 
-    anyhow::bail!("Could not determine latest commit from remote")
+    stdout
+        .lines()
+        .find_map(|line| {
+            let (object, name) = line.split_once('\t')?;
+            (name == "HEAD" && !object.starts_with("ref: ")).then(|| object.to_string())
+        })
+        .filter(|object| !object.is_empty())
+        .context("Remote did not advertise a commit for HEAD")
 }

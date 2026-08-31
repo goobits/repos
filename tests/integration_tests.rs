@@ -77,14 +77,16 @@ async fn test_git_staging_operations() {
     fs::write(&test_file, "test content").expect("Failed to write test file");
 
     // Test has_staged_changes - should be false initially
-    let has_changes = has_staged_changes(repo_path).await;
-    if let Ok(changes) = has_changes {
-        assert!(!changes, "Should have no staged changes initially");
-    }
+    let has_changes = has_staged_changes(repo_path)
+        .await
+        .expect("Failed to inspect initial staging state");
+    assert!(!has_changes, "Should have no staged changes initially");
 
     // Test staging a file
-    let stage_result = stage_files(repo_path, "test.txt").await;
-    assert!(stage_result.is_ok(), "Staging should succeed");
+    let (success, _, stderr) = stage_files(repo_path, "test.txt")
+        .await
+        .expect("Failed to run staging operation");
+    assert!(success, "Staging should succeed: {stderr}");
 
     // Validate staging actually worked by checking git status
     let status_output = std::process::Command::new("git")
@@ -101,36 +103,39 @@ async fn test_git_staging_operations() {
     );
 
     // Test has_staged_changes - should be true after staging
-    let has_changes = has_staged_changes(repo_path).await;
-    if let Ok(changes) = has_changes {
-        assert!(changes, "Should have staged changes after staging");
-    }
+    let has_changes = has_staged_changes(repo_path)
+        .await
+        .expect("Failed to inspect staged file");
+    assert!(has_changes, "Should have staged changes after staging");
 
     // Test committing
-    let commit_result = commit_changes(repo_path, "Test commit", false).await;
-    if let Ok((success, stdout, _stderr)) = commit_result {
-        assert!(success, "Commit should succeed");
-
-        // Validate commit hash is returned
-        assert!(!stdout.is_empty(), "Commit should return output with hash");
-        assert!(
-            stdout.len() >= 7,
-            "Commit hash should be at least 7 characters"
-        );
-    }
+    let (success, stdout, stderr) = commit_changes(repo_path, "Test commit", false)
+        .await
+        .expect("Failed to run commit operation");
+    assert!(success, "Commit should succeed: {stderr}");
+    assert!(!stdout.is_empty(), "Commit should return output with hash");
+    assert!(
+        stdout.len() >= 7,
+        "Commit hash should be at least 7 characters"
+    );
 
     // Test has_staged_changes - should be false after commit
-    let has_changes = has_staged_changes(repo_path).await;
-    if let Ok(changes) = has_changes {
-        assert!(!changes, "Should have no staged changes after commit");
-    }
+    let has_changes = has_staged_changes(repo_path)
+        .await
+        .expect("Failed to inspect post-commit staging state");
+    assert!(!has_changes, "Should have no staged changes after commit");
 
     // Test unstaging (stage again first)
     fs::write(&test_file, "modified content").expect("Failed to modify test file");
-    let _stage_result = stage_files(repo_path, "test.txt").await;
+    let (success, _, stderr) = stage_files(repo_path, "test.txt")
+        .await
+        .expect("Failed to restage modified file");
+    assert!(success, "Restaging should succeed: {stderr}");
 
-    let unstage_result = unstage_files(repo_path, "test.txt").await;
-    assert!(unstage_result.is_ok(), "Unstaging should succeed");
+    let (success, _, stderr) = unstage_files(repo_path, "test.txt")
+        .await
+        .expect("Failed to run unstaging operation");
+    assert!(success, "Unstaging should succeed: {stderr}");
 
     // Validate unstaging actually worked
     let status_output = std::process::Command::new("git")
@@ -147,10 +152,13 @@ async fn test_git_staging_operations() {
     );
 
     // Test has_staged_changes - should be false after unstaging
-    let has_changes = has_staged_changes(repo_path).await;
-    if let Ok(changes) = has_changes {
-        assert!(!changes, "Should have no staged changes after unstaging");
-    }
+    let has_changes = has_staged_changes(repo_path)
+        .await
+        .expect("Failed to inspect post-unstage state");
+    assert!(
+        !has_changes,
+        "Should have no staged changes after unstaging"
+    );
 }
 
 #[tokio::test]
@@ -191,8 +199,10 @@ async fn test_staging_with_patterns() {
     fs::write(repo_path.join("test.txt"), "text file modified").expect("Failed to modify test.txt");
 
     // Test staging with wildcard pattern
-    let stage_result = stage_files(repo_path, "*.md").await;
-    assert!(stage_result.is_ok(), "Staging with pattern should work");
+    let (success, _, stderr) = stage_files(repo_path, "*.md")
+        .await
+        .expect("Failed to stage wildcard pattern");
+    assert!(success, "Staging with pattern should work: {stderr}");
 
     // Validate pattern staging worked - check both .md files are staged
     let status_output = std::process::Command::new("git")
@@ -217,8 +227,10 @@ async fn test_staging_with_patterns() {
     );
 
     // Test unstaging with wildcard pattern
-    let unstage_result = unstage_files(repo_path, "*.md").await;
-    assert!(unstage_result.is_ok(), "Unstaging with pattern should work");
+    let (success, _, stderr) = unstage_files(repo_path, "*.md")
+        .await
+        .expect("Failed to unstage wildcard pattern");
+    assert!(success, "Unstaging with pattern should work: {stderr}");
 
     // Validate pattern unstaging worked
     let status_output = std::process::Command::new("git")
@@ -243,8 +255,10 @@ async fn test_staging_with_patterns() {
     );
 
     // Test staging all files
-    let stage_all_result = stage_files(repo_path, ".").await;
-    assert!(stage_all_result.is_ok(), "Staging all files should work");
+    let (success, _, stderr) = stage_files(repo_path, ".")
+        .await
+        .expect("Failed to stage all files");
+    assert!(success, "Staging all files should work: {stderr}");
 }
 
 #[test]
@@ -326,49 +340,50 @@ async fn test_error_scenarios() {
     }
 
     // Test staging non-existent file - should fail gracefully
-    let stage_result = stage_files(repo_path, "nonexistent.txt").await;
-    if let Ok((success, _stdout, stderr)) = stage_result {
-        // Git add with non-existent file should fail
-        assert!(!success, "Staging non-existent file should fail");
+    let (success, _stdout, stderr) = stage_files(repo_path, "nonexistent.txt")
+        .await
+        .expect("Failed to run invalid staging operation");
+    assert!(!success, "Staging non-existent file should fail");
+    assert!(
+        !stderr.is_empty(),
+        "Should have error message for non-existent file"
+    );
+
+    // Test commit with no staged changes - should fail
+    let (success, _stdout, stderr) = commit_changes(repo_path, "Empty commit", false)
+        .await
+        .expect("Failed to run empty commit operation");
+    assert!(!success, "Commit with no changes should fail");
+    // Note: Some git versions return empty stderr for "nothing to commit"
+    if !stderr.is_empty() {
         assert!(
-            !stderr.is_empty(),
-            "Should have error message for non-existent file"
+            stderr.contains("nothing to commit")
+                || stderr.contains("no changes added")
+                || stderr.contains("working tree clean"),
+            "Should indicate nothing to commit, got: '{}'",
+            stderr
         );
     }
 
-    // Test commit with no staged changes - should fail
-    let commit_result = commit_changes(repo_path, "Empty commit", false).await;
-    if let Ok((success, _stdout, stderr)) = commit_result {
-        assert!(!success, "Commit with no changes should fail");
-        // Note: Some git versions return empty stderr for "nothing to commit"
-        if !stderr.is_empty() {
-            assert!(
-                stderr.contains("nothing to commit")
-                    || stderr.contains("no changes added")
-                    || stderr.contains("working tree clean"),
-                "Should indicate nothing to commit, got: '{}'",
-                stderr
-            );
-        }
-        // The failure (success = false) itself is the main indicator
-    }
-
     // Test commit with allow_empty flag - should succeed
-    let empty_commit_result = commit_changes(repo_path, "Empty commit", true).await;
-    if let Ok((success, _stdout, _stderr)) = empty_commit_result {
-        assert!(success, "Empty commit with allow_empty should succeed");
-    }
+    let (success, _stdout, stderr) = commit_changes(repo_path, "Empty commit", true)
+        .await
+        .expect("Failed to run allowed empty commit");
+    assert!(
+        success,
+        "Empty commit with allow_empty should succeed: {stderr}"
+    );
 
     // Test unstaging non-existent file - should handle gracefully
-    let unstage_result = unstage_files(repo_path, "nonexistent.txt").await;
-    if let Ok((success, _stdout, stderr)) = unstage_result {
-        // Unstaging non-existent file might succeed or fail depending on git version
-        if !success {
-            assert!(
-                !stderr.is_empty(),
-                "Should have error message for invalid unstage"
-            );
-        }
+    let (success, _stdout, stderr) = unstage_files(repo_path, "nonexistent.txt")
+        .await
+        .expect("Failed to run invalid unstaging operation");
+    // Unstaging non-existent file might succeed or fail depending on git version
+    if !success {
+        assert!(
+            !stderr.is_empty(),
+            "Should have error message for invalid unstage"
+        );
     }
 }
 
