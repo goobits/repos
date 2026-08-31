@@ -480,9 +480,9 @@ mod tests {
         );
 
         assert!(fetch.message.contains("origin uses HTTP(S)"));
-        assert!(fetch.next.contains("remote set-url 'origin'"));
+        assert!(fetch.next.contains("remote set-url -- 'origin'"));
         assert!(!fetch.next.contains("--push"));
-        assert!(push.next.contains("remote set-url --push 'origin'"));
+        assert!(push.next.contains("remote set-url --push -- 'origin'"));
         for output in [&fetch.message, &fetch.next, &push.message, &push.next] {
             assert!(!output.contains("token"));
             assert!(!output.contains("hidden"));

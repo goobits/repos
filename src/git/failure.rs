@@ -324,7 +324,7 @@ mod tests {
 
         assert_eq!(
             failure.next_action("./sketch-api/O'Brien/aw"),
-            "git -C './sketch-api/O'\\''Brien/aw' remote set-url --push 'origin' 'git@github.com:goobits/aw.git'"
+            "git -C './sketch-api/O'\\''Brien/aw' remote set-url --push -- 'origin' 'git@github.com:goobits/aw.git'"
         );
     }
 
@@ -345,7 +345,7 @@ mod tests {
 
         assert_eq!(
             failure.next_action("./repo"),
-            "git -C './repo' remote set-url 'upstream' '<SSH clone URL>'"
+            "git -C './repo' remote set-url -- 'upstream' '<SSH clone URL>'"
         );
     }
 
